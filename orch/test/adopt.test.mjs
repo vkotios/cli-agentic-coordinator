@@ -91,7 +91,7 @@ test('T4: dry-run changes nothing; real run creates exactly the listed files; a 
     const text = fs.readFileSync(path.join(repo, f), 'utf8');
     assert.ok(!text.includes('{{KIT}}'), `${f}: {{KIT}} rendered`);
   }
-  assert.match(fs.readFileSync(path.join(repo, '.claude/skills/orchestrate/workflow.md'), 'utf8'), /node "C:\/[^"]*\/orch\/bin\/orch\.mjs"/);
+  assert.match(fs.readFileSync(path.join(repo, '.claude/skills/orchestrate/workflow.md'), 'utf8'), /node "[A-Za-z]:\/[^"]*\/orch\/bin\/orch\.mjs"/);
 
   const again = await orch(['adopt', '--repo', repo, '--json'], c.env);
   assert.equal(again.code, 0, again.stderr);

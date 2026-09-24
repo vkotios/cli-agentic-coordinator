@@ -391,8 +391,18 @@ test('r2-14/r3-6: the mtime scan has no entry cap and reports truncation with a 
 
 /* ------------------------------------------------- adapters (kept) -------- */
 
+/**
+ * Build with a fake opencode.exe so these tests never need a real opencode install.
+ * @template T @param {() => T} fn @returns {T}
+ */
+function withFakeOpencode(fn) {
+  const prev = process.env.ORCH_OPENCODE_EXE;
+  process.env.ORCH_OPENCODE_EXE = path.join(WT, 'fake-bin', 'opencode.exe');
+  try { return fn(); } finally { if (prev === undefined) delete process.env.ORCH_OPENCODE_EXE; else process.env.ORCH_OPENCODE_EXE = prev; }
+}
+
 test('r2-2: no adapter ever routes a worker through cmd.exe or a .cmd shim', () => {
-  const built = opencode.build({ model: 'localai/qwen3.8-flash-next', dir: WT, flags: [], agent: null });
+  const built = withFakeOpencode(() => opencode.build({ model: 'localai/qwen3.8-flash-next', dir: WT, flags: [], agent: null }));
   assert.ok(String(built.file).toLowerCase().endsWith('.exe'));
   assert.notEqual(path.basename(String(built.file)).toLowerCase(), 'cmd.exe');
   assert.ok(!built.args.includes('/c') && !built.args.includes('/d'));
@@ -407,7 +417,7 @@ test('r2-2: no adapter ever routes a worker through cmd.exe or a .cmd shim', () 
 test('r2-2: values that used to need cmd.exe escaping now pass through untouched', () => {
   const nasty = path.join(WT, 'a&b %VAR% ^c');
   fs.mkdirSync(nasty, { recursive: true });
-  const built = opencode.build({ model: 'm', dir: nasty, flags: ['--x=a|b'], agent: 'a b' });
+  const built = withFakeOpencode(() => opencode.build({ model: 'm', dir: nasty, flags: ['--x=a|b'], agent: 'a b' }));
   assert.ok(built.args.includes(nasty), 'a directory with shell metacharacters is passed as one argv element');
   assert.ok(built.args.includes('--x=a|b'));
   assert.ok(built.args.includes('a b'));

@@ -43,7 +43,8 @@ async function withEnv(vars, fn) {
 }
 
 function tmpDir(t, name) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), `orch-portable-${name}-`));
+  // long form: the temp dir can be an 8.3 short path (CI runners), resolvers return the long one
+  const d = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `orch-portable-${name}-`)));
   t.after(() => fs.rmSync(d, { recursive: true, force: true })); // only what this test created
   return d;
 }
