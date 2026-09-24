@@ -1,0 +1,37 @@
+I0923 17:16:04.358605       1 resolver.go:85] Model ID gemini-3.8-flash-high not in local config, defaulting to CCPA
+I0923 17:16:04.360115       1 resolver.go:111] Model resolved via default
+E0923 17:16:06.276864       1 launchsteps.go:84] Failed to resolve GeminiDir ".gemini": .gemini must be an absolute path: path is not absolute, falling back to default
+I0923 17:16:06.276864       1 common.go:173] CLI app data directory: C:\Users\example\.gemini\antigravity-cli
+I0923 17:16:06.277369       1 server.go:315] Creating CLI server backend: product=antigravity workspaceDirs=[C:\work\sandbox\reviews\rv-20260101-000000-bbbbbb] appDataDir=C:\Users\example\.gemini\antigravity-cli cascadeManager=true codeAssist=true
+I0923 17:16:06.309595       1 printmode.go:181] Print mode: starting (promptLength=559, model="gemini-3.8-flash-high", conversationID="")
+I0923 17:16:06.436871     355 browser.go:265] token refreshed, new expiry=2026-09-23 18:16:05.4368713 +0000 UTC m=+3602.303864901
+I0923 17:16:08.563538     362 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000001
+I0923 17:16:09.841871     359 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels Trace: 0x0000000000000002
+I0923 17:16:09.862462       1 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 17:16:09.862982       1 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 17:16:09.864024     139 quota_manager.go:45] doRefreshQuota: starting reload (force=true)
+I0923 17:16:11.903965     421 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000003
+I0923 17:16:17.906567     421 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000004
+I0923 17:16:18.015349     421 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 17:16:18.015349     421 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 17:16:18.015349     139 quota_manager.go:45] doRefreshQuota: starting reload (force=true)
+I0923 17:16:18.015349     454 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 17:16:18.015349     454 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 17:16:18.065393       1 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 17:16:18.065902       1 conversation_manager.go:512] Starting new conversation (agent=false)
+I0923 17:16:18.107858       1 conversation_manager.go:559] project: switching to conversation belonging to project ID: default-cli-project
+I0923 17:16:18.107858       1 conversation_manager.go:605] project: synced active project to "CLI Project" (id=default-cli-project) from conversation switch
+I0923 17:16:18.107858       1 conversation_manager.go:887] Streaming conversation 00000000-0000-7000-8000-000000000001
+I0923 17:16:18.161996       1 conversation_manager.go:699] Forwarding user message to conversation 00000000-0000-7000-8000-000000000001 (items=2, media=0)
+I0923 17:16:18.189458     139 quota_manager.go:45] doRefreshQuota: starting reload (force=true)
+I0923 17:16:18.878399     453 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000005
+I0923 17:16:19.241298     266 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000006 ResponseID: RESPONSE0001
+I0923 17:16:22.676398      10 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000007 ResponseID: RESPONSE0002
+I0923 17:16:26.272064     997 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000008 ResponseID: RESPONSE0003
+I0923 17:16:30.172361    1048 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000009 ResponseID: RESPONSE0004
+I0923 17:16:38.577146    1120 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000010 ResponseID: RESPONSE0005
+I0923 17:16:44.400630    1172 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000011 ResponseID: RESPONSE0006
+I0923 17:16:47.569665    1230 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000012 ResponseID: RESPONSE0007
+I0923 17:16:51.392877    1365 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000013 ResponseID: RESPONSE0008
+I0923 17:16:56.351225    1469 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x0000000000000014 ResponseID: RESPONSE0009
+I0923 17:16:58.318813       1 conversation_manager.go:844] Stopping conversation stream

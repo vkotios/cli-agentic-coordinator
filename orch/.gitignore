@@ -1,0 +1,6 @@
+node_modules/
+.state/
+.state-test/
+# The lane directory: one advisory holder file per lane, derived from the per-user
+# identifier (src/lanescope.mjs). Runtime state, never source.
+.lane/

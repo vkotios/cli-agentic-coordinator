@@ -1,0 +1,12 @@
+{
+  "_comment": "EXAMPLE roster. Copy to orch/roster.json (git-ignored) and replace every entry with models you can really launch; the ids below are placeholders. Fields: docs/MODELS.md. workloads = what `orch pick` may propose the model for ([] = never proposed). lane local => XS/S slices only and one run at a time. requires_permission => never proposed by pick, and `orch run` needs --owner-approved-model. Only list models an orch adapter (opencode, vibe, codex, agy) can launch.",
+  "models": [
+    { "cli": "opencode", "model": "localai/example-coder-30b", "family": "example-coder", "lane": "local", "workloads": ["implement", "review"], "cost_class": "local-free", "playbook_note": "XS/S edits and tests; task-level review with a small file list" },
+    { "cli": "opencode", "model": "localai/example-reasoner-120b", "family": "example-reasoner", "lane": "local", "workloads": ["implement"], "cost_class": "local-free", "playbook_note": "larger single-file logic, under review" },
+    { "cli": "opencode", "model": "localai/example-small-8b", "family": "example-small", "lane": "local", "workloads": [], "cost_class": "local-free", "playbook_note": "untested: tool-call smoke test first; not proposed until then" },
+    { "cli": "vibe", "model": "example-mistral-medium", "family": "mistral", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "metered", "playbook_note": "multi-file mechanical changes" },
+    { "cli": "agy", "model": "example-gemini-model", "family": "gemini", "lane": "cloud", "workloads": ["review"], "cost_class": "subscription", "playbook_note": "whole-branch reviewer; use an id agy knows, or attribution is unknown" },
+    { "cli": "codex", "model": "example-gpt-model", "family": "gpt", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "subscription", "playbook_note": "cloud implementer and reviewer" },
+    { "cli": "codex", "model": "example-gpt-large-model", "family": "gpt", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "expensive", "requires_permission": true, "playbook_note": "only with the owner's permission for that run" }
+  ]
+}

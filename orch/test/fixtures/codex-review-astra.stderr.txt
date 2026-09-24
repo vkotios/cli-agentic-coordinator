@@ -1,0 +1,17 @@
+codex : OpenAI Codex v0.154.0
+At C:\Users\example\AppData\Local\Temp\scratch\launch-cod
+ereview.ps1:15 char:13
++   $prompt | codex exec -m gpt-6-astra -c model_reasoning_effort=mediu ...
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (OpenAI Codex v0.154.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+--------
+workdir: C:\work\sandbox\codereview-codex
+model: gpt-6-astra
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: medium
+reasoning summaries: none
+session id: 00000000-0000-7000-8000-000000000005

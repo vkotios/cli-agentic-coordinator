@@ -1,0 +1,21 @@
+I0923 10:24:24.086171       1 resolver.go:85] Model ID gemini-3.8-flash-high not in local config, defaulting to CCPA
+I0923 10:24:24.087166       1 resolver.go:111] Model resolved via default
+I0923 10:24:24.593398       1 printmode.go:181] Print mode: starting (promptLength=2764, model="gemini-3.8-flash-high", conversationID="")
+I0923 10:24:24.616910       1 session.go:77] Print mode: --dangerously-skip-permissions set, auto-approving all tool permissions
+I0923 10:24:24.616910       1 printmode.go:814] Print mode: applying agent mode plan
+I0923 10:24:24.805852     409 browser.go:265] token refreshed, new expiry=2026-09-23 11:24:23.8058526 +0000 UTC m=+3600.399777801
+I0923 10:24:25.797445     184 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000015
+I0923 10:24:26.790404     356 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels Trace: 0x0000000000000016
+I0923 10:24:26.815695       1 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 10:24:26.816221       1 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 10:24:26.816221     326 quota_manager.go:45] doRefreshQuota: starting reload (force=true)
+I0923 10:24:27.680821     191 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000017
+I0923 10:24:28.107458     191 http_helpers.go:305] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist Trace: 0x0000000000000018
+I0923 10:24:28.205646     191 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 10:24:28.205646     191 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 10:24:28.205646     326 quota_manager.go:45] doRefreshQuota: starting reload (force=true)
+I0923 10:24:28.205646     465 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 10:24:28.205646     465 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.8 Flash (High)"
+I0923 10:24:28.216446       1 model_resolver.go:93] Resolving model gemini-3.8-flash-high
+I0923 10:24:28.217039       1 conversation_manager.go:512] Starting new conversation (agent=false)
+I0923 10:24:28.247359       1 server.go:1239] Created conversation 00000000-0000-7000-8000-000000000002

@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Runtime state written by orch (never source)
+orch/.state/
+orch/.state-test/
+orch/.lane/
+.reviews/
+
+# Per-user configuration (copy the *.example.json files)
+orch.config.json
+orch/roster.json
+
+# Logs and run output
+*.log
+bench-results*.json

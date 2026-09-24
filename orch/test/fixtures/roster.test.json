@@ -1,0 +1,17 @@
+{
+  "_comment": "Roster used by the test suite (helpers.mjs points ORCH_ROSTER here). Model ids only; nothing here is launched.",
+  "models": [
+    { "cli": "opencode", "model": "localai/qwen3-coder-30b", "family": "qwen", "lane": "local", "workloads": ["implement", "review"], "cost_class": "local-free" },
+    { "cli": "opencode", "model": "localai/qwen3.8-flash-next", "family": "qwen", "lane": "local", "workloads": ["implement"], "cost_class": "local-free" },
+    { "cli": "opencode", "model": "localai/gpt-oss-120b", "family": "gpt-oss", "lane": "local", "workloads": ["implement"], "cost_class": "local-free" },
+    { "cli": "opencode", "model": "localai/qwen3.8-27b", "family": "qwen", "lane": "local", "workloads": ["review"], "cost_class": "local-free" },
+    { "cli": "opencode", "model": "localai/nemotron3-super", "family": "nemotron", "lane": "local", "workloads": ["implement", "review"], "cost_class": "local-free" },
+    { "cli": "opencode", "model": "localai/minimax-m2.7", "family": "minimax", "lane": "local", "workloads": [], "cost_class": "local-free" },
+    { "cli": "agy", "model": "gemini-3.8-flash-high", "family": "gemini", "lane": "cloud", "workloads": ["review"], "cost_class": "subscription" },
+    { "cli": "vibe", "model": "mistral-medium-3.5", "family": "mistral", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "metered" },
+    { "cli": "vibe", "model": "mistral-large-latest", "family": "mistral", "lane": "cloud", "workloads": ["review"], "cost_class": "metered" },
+    { "cli": "codex", "model": "gpt-5.6-terra", "family": "gpt", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "subscription" },
+    { "cli": "codex", "model": "gpt-5.6-sol", "family": "gpt", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "subscription" },
+    { "cli": "codex", "model": "gpt-6-astra", "family": "gpt", "lane": "cloud", "workloads": ["implement", "review"], "cost_class": "expensive", "requires_permission": true }
+  ]
+}

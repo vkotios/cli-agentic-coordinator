@@ -1,0 +1,35 @@
+{
+  "name": "cli-agentic-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "orch: launch, supervise, review and record worker coding-CLI runs for one orchestrator agent (Windows).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vkotios/cli-agentic-coordinator.git"
+  },
+  "homepage": "https://github.com/vkotios/cli-agentic-coordinator#readme",
+  "bugs": {
+    "url": "https://github.com/vkotios/cli-agentic-coordinator/issues"
+  },
+  "type": "module",
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "orch": "bin/orch.mjs"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 --test-force-exit --test-timeout=1800000 test/unit.test.mjs test/audit.test.mjs test/lane.test.mjs test/keeper.test.mjs test/monitor.test.mjs test/cancel.test.mjs test/waitlane.test.mjs test/review.test.mjs test/workflow.test.mjs test/review-s4.test.mjs test/gate.test.mjs test/ledger.test.mjs test/adapters.test.mjs test/fixround.test.mjs test/guard.test.mjs test/mcp.test.mjs test/adopt.test.mjs test/kitfiles.test.mjs test/s3fix.test.mjs test/portable.test.mjs",
+    "test:stress": "node --test --test-concurrency=1 --test-force-exit --test-timeout=1800000 test/unit.test.mjs test/audit.test.mjs test/lane.test.mjs test/keeper.test.mjs test/monitor.test.mjs test/cancel.test.mjs test/waitlane.test.mjs test/review.test.mjs test/workflow.test.mjs test/review-s4.test.mjs test/gate.test.mjs test/ledger.test.mjs test/adapters.test.mjs test/fixround.test.mjs test/guard.test.mjs test/mcp.test.mjs test/adopt.test.mjs test/kitfiles.test.mjs test/s3fix.test.mjs test/portable.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  }
+}

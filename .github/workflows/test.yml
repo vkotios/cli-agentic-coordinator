@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "fast (npm test) or stress (npm run test:stress, full repetition counts)"
+        required: true
+        default: stress
+        type: choice
+        options: [fast, stress]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Windows only for now: orch relies on named pipes, process-tree termination and PowerShell.
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: orch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+          cache: npm
+          cache-dependency-path: orch/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Every push / PR: the fast suite (each stress test runs once).
+      - if: github.event_name != 'workflow_dispatch' || inputs.suite == 'fast'
+        run: npm test
+      # Manual only (Actions > test > Run workflow): the full repetition counts.
+      - if: github.event_name == 'workflow_dispatch' && inputs.suite == 'stress'
+        run: npm run test:stress

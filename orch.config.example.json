@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to orch.config.json (git-ignored) and keep only the keys you need. Every key is optional; environment variables override this file, command-line flags override both. Relative paths resolve against this directory. See README.md, section Configuration.",
+  "stateRoot": "orch/.state",
+  "laneRoot": "orch/.lane",
+  "reviewRoot": "D:/orch-reviews",
+  "roster": "orch/roster.json",
+  "ledger": "orch/.state/ledger.jsonl",
+  "gatewayUrl": "http://10.0.0.2:8080/v1",
+  "bench": { "models": ["example-coder-30b", "example-reasoner-120b"] },
+  "exe": {
+    "opencode": "C:/Users/example/AppData/Roaming/npm/node_modules/opencode-ai/bin/opencode.exe",
+    "codex": "C:/tools/codex/codex.exe",
+    "agy": "C:/tools/agy/agy.exe",
+    "vibe": "C:/Users/example/.local/bin/vibe.exe",
+    "wt": "wt.exe",
+    "powershell": "powershell.exe"
+  },
+  "codexSessionsDir": "C:/Users/example/.codex/sessions",
+  "vibeLogDir": "C:/Users/example/.vibe/logs"
+}
