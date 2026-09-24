@@ -28,6 +28,27 @@ What `orch` enforces:
 The protocol the orchestrator follows is `ORCHESTRATOR.md`; the step-by-step skill is
 `skills/orchestrate/workflow.md`.
 
+## How you use it
+
+You talk to your orchestrator (Claude Code or Codex) in a repository you have adopted, as you normally
+would: "add CSV export to the report command", "fix issue 42". The orchestrator does not write the code.
+It follows the `orchestrate` skill and drives `orch` (as a CLI or through its MCP tools):
+
+1. **Claim** the work package, so a second orchestrator cannot act on it at the same time.
+2. **Plan and slice** it into small handoffs (`templates/handoff.md`): allowed files, anchors, acceptance
+   checks. You approve the plan before anything runs.
+3. **Pick** a worker model (`orch pick`, rotating through your roster) and **run** it in its own git
+   worktree (`orch run`). A log window shows the worker's output; the orchestrator checks `orch status`
+   on a schedule instead of waiting.
+4. **Check scope**: any file outside the handoff's allowlist sends the run back.
+5. **Review** with a different model in a blinded, read-only copy (`orch review`), grade the findings,
+   and let the gate decide: converged, another round, or stop and ask you.
+6. **Record** the result in the ledger, then merge (or discard) the worktree. Follow-ups that were out of
+   scope are filed, not fixed on the side.
+
+You stay in charge of the decisions: plans, merges, anything destructive, and anything the gate
+escalates.
+
 ## Requirements
 
 - **Windows 10 or 11.** macOS and Linux are not supported yet: every `orch` command stops with a
@@ -53,7 +74,7 @@ The protocol the orchestrator follows is `ORCHESTRATOR.md`; the step-by-step ski
 ## Install
 
 ```powershell
-git clone <this repository> cli-agentic-coordinator
+git clone https://github.com/vkotios/cli-agentic-coordinator.git
 cd cli-agentic-coordinator\orch
 npm ci
 node bin\orch.mjs --help
