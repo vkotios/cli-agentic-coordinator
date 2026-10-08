@@ -144,6 +144,8 @@ resolve against the directory the file is in. An invalid file is an error, never
 | Windows Terminal / PowerShell for the log window | `exe.wt`, `exe.powershell` | `ORCH_WT_EXE`, `ORCH_PS_EXE` | `wt.exe`, `powershell.exe` |
 | codex session rollouts (model attribution) | `codexSessionsDir` | `ORCH_CODEX_SESSIONS` | `$CODEX_HOME\sessions`, else `%USERPROFILE%\.codex\sessions` |
 | vibe logs | `vibeLogDir` | `ORCH_VIBE_LOG_DIR` | `%USERPROFILE%\.vibe\logs` |
+| queue driver worker model (only `orch/tools/queue-driver.mjs`, see `docs/QUEUE_DRIVER.md`) | `queueDriver.model` | `ORCH_QUEUE_MODEL` (flag `--model`) | none: required by the queue driver |
+| queue driver handoff files | `queueDriver.handoffDir` | `ORCH_QUEUE_HANDOFF_DIR` | `<state root>\queue-handoffs` |
 
 Notes:
 
@@ -208,8 +210,10 @@ and pull request; the stress suite runs only when started by hand (Actions > tes
 Tests write under `orch/.state-test`, the lane directory (test lanes only) and the OS temp directory,
 and remove what they created.
 
-Before a release, run `node orch/tools/release-scan.mjs`: it scans the tree for personal data,
-machine-specific paths, private ids and secret patterns (exit 0 = clean).
+Before a release, run `node orch/tools/release-scan.mjs`: it scans exactly the files git would commit
+(`git ls-files --cached --others --exclude-standard`; git-ignored files such as `orch.config.json` or
+`orch/.state/` are not scanned) for personal data, machine-specific paths, private ids and secret
+patterns (exit 0 = clean). Outside a git work tree it falls back to walking the whole directory and says so.
 
 ## License
 

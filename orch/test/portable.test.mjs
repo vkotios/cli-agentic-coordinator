@@ -1,5 +1,5 @@
 // Public-release portability: platform guard, configuration precedence, the user-created
-// roster, run-time CLI discovery, requires_permission, the review-root default and the
+// roster, run-time CLI discovery, requires_permission, the review-root default, the release scan and the
 // gateway benchmark tool. Nothing here needs a real worker CLI or a real gateway.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { KIT, ORCH_BIN, TEST_ROSTER, makeCase, orch } from './helpers.mjs';
 import { assertSupportedPlatform } from '../src/platform.mjs';
@@ -20,6 +20,7 @@ import { resolveOpencodeExe } from '../src/adapters/opencode.mjs';
 import { resolveCliExe } from '../src/exe.mjs';
 import { defaultReviewRoot, resolveReviewRoot, assertNeutralRoot } from '../src/review.mjs';
 import { parseBenchArgs, runBench, rosterLines, summaryTable } from '../tools/bench-gateway.mjs';
+import { scan as releaseScan, PATTERNS as SCAN_PATTERNS } from '../tools/release-scan.mjs';
 
 const FAKE_PLATFORM = path.join(KIT, 'test', 'fixtures', 'fake-platform.mjs');
 const SYSTEM32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
@@ -334,4 +335,48 @@ test('P5: bench-gateway runs models one at a time against a local fake gateway a
   assert.deepEqual([entry.cli, entry.model, entry.lane, entry.workloads], ['opencode', 'localai/m-one', 'local', []]);
   assert.match(summaryTable(results), /\| m-one \|/);
   assert.equal(logs.length, 2);
+});
+
+/* ---------------------------------------------------------- release scan -- */
+
+test('P6: release-scan scans exactly the files git would commit; git-ignored files are not reported', (t) => {
+  const repo = tmpDir(t, 'scan-git');
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init', '-q');
+  // Hit text is built from the scan's own samples, so this test file never matches itself.
+  const hit = `gateway ${SCAN_PATTERNS['lan-ip-192.168'].sample}\n`;
+  fs.writeFileSync(path.join(repo, 'LICENSE'), `Copyright (c) 2026 ${SCAN_PATTERNS['owner-name'].sample} Example\n`);
+  fs.writeFileSync(path.join(repo, '.gitignore'), 'private.local.md\nstate/\n');
+  fs.writeFileSync(path.join(repo, 'tracked.md'), hit);
+  fs.writeFileSync(path.join(repo, 'private.local.md'), hit);
+  fs.mkdirSync(path.join(repo, 'state'));
+  fs.writeFileSync(path.join(repo, 'state', 'run.json'), hit);
+  fs.writeFileSync(path.join(repo, 'untracked.md'), hit); // not ignored: it would be committed
+  git('add', 'LICENSE', '.gitignore', 'tracked.md');
+  const r = releaseScan(repo);
+  assert.equal(r.mode, 'git');
+  assert.ok(r.controls.every((c) => c.ok), JSON.stringify(r.controls.filter((c) => !c.ok)));
+  const reported = [...new Set(r.unexpected.map((h) => h.file))].sort();
+  assert.deepEqual(reported, ['tracked.md', 'untracked.md'], 'the tracked and the committable untracked file are reported');
+  assert.ok(!reported.includes('private.local.md') && !reported.includes('state/run.json'), 'git-ignored files are never reported');
+  assert.deepEqual(r.expected.map((h) => h.file), ['LICENSE']);
+});
+
+test('P6: outside a git work tree release-scan falls back to walking the directory, and says so', (t) => {
+  const dir = tmpDir(t, 'scan-plain');
+  fs.writeFileSync(path.join(dir, 'LICENSE'), `Copyright (c) 2026 ${SCAN_PATTERNS['owner-name'].sample} Example\n`);
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'private.local.md\n');
+  fs.writeFileSync(path.join(dir, 'private.local.md'), `gateway ${SCAN_PATTERNS['lan-ip-192.168'].sample}\n`);
+  // Stop git from finding a repository above the temp directory (e.g. one in the user profile).
+  // Both spellings: `dir` is the long form, os.tmpdir() may be an 8.3 short path.
+  const ceiling = [...new Set([path.dirname(dir), os.tmpdir()])].join(path.delimiter);
+  const prev = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = ceiling;
+  try {
+    const r = releaseScan(dir);
+    assert.equal(r.mode, 'walk');
+    assert.deepEqual(r.unexpected.map((h) => h.file), ['private.local.md'], 'without git there is no ignore list: everything is scanned');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = prev;
+  }
 });

@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-// Release scan: run before every release. Walks the whole repository (except node_modules,
-// the git-ignored runtime directories orch/.state*, orch/.lane, and RELEASE_CHECK.md) and
-// reports every line that looks like personal data, a machine-specific path, a private
-// project name, a private run/session id or a secret.
+// Release scan: run before every release. Scans exactly the files git would commit: the
+// output of `git ls-files --cached --others --exclude-standard` run in the scanned
+// directory (tracked files plus untracked files that are not git-ignored), except
+// RELEASE_CHECK.md, and reports every line that looks like personal data, a
+// machine-specific path, a private project name, a private run/session id or a secret.
+// Git-ignored files (per-user config, runtime state, local notes) are never published
+// and are not scanned. Only when the directory is not a git work tree (or git cannot be
+// run) does it fall back to walking the whole directory (except node_modules, .git,
+// .state*, .lane), and the output says so.
 //
 //   node orch/tools/release-scan.mjs [<repo root>]
 //
@@ -15,6 +20,7 @@
 // file never matches itself.
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const B = String.fromCharCode(92); // backslash
@@ -63,13 +69,32 @@ const SKIP_ROOT_FILES = new Set(['RELEASE_CHECK.md']);
 /** The one expected hit: the copyright holder in LICENSE. */
 const EXPECTED = { file: 'LICENSE', pattern: 'owner-name', line: /^Copyright \(c\) \d{4} \S+ \S+$/ };
 
-export function scan(root) {
-  const controls = [];
-  for (const [name, { re, sample }] of Object.entries(PATTERNS)) {
-    controls.push({ control: `pattern self-test: ${name}`, ok: re.test(sample) });
+/**
+ * The files git would commit under `root` (relative, forward slashes, sorted), or null when
+ * `root` is not inside a git work tree or git cannot be run. argv only, never a shell string.
+ * @param {string} root
+ * @returns {string[]|null}
+ */
+export function gitFiles(root) {
+  let out;
+  try {
+    out = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null;
   }
-  const hits = [];
-  let files = 0;
+  return [...new Set(out.split('\0').filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+/** Fallback for a directory that is not a git work tree: every file except under SKIP_DIRS. */
+function walkFiles(root) {
+  /** @type {string[]} */
+  const files = [];
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const p = path.join(dir, e.name);
@@ -77,24 +102,52 @@ export function scan(root) {
         if (!SKIP_DIRS.has(e.name)) walk(p);
         continue;
       }
-      if (dir === root && SKIP_ROOT_FILES.has(e.name)) continue;
-      files++;
-      const rel = path.relative(root, p).replace(/\\/g, '/');
-      fs.readFileSync(p, 'utf8').split(/\r?\n/).forEach((text, i) => {
-        for (const [name, { re }] of Object.entries(PATTERNS)) if (re.test(text)) hits.push({ file: rel, line: i + 1, pattern: name, text });
-      });
+      files.push(path.relative(root, p).replace(/\\/g, '/'));
     }
   };
   walk(root);
+  return files;
+}
+
+export function scan(root) {
+  const controls = [];
+  for (const [name, { re, sample }] of Object.entries(PATTERNS)) {
+    controls.push({ control: `pattern self-test: ${name}`, ok: re.test(sample) });
+  }
+  const listed = gitFiles(root);
+  /** 'git' = exactly the files git would commit; 'walk' = fallback, not a git work tree */
+  const mode = listed ? 'git' : 'walk';
+  const hits = [];
+  let files = 0;
+  for (const rel of listed || walkFiles(root)) {
+    if (!rel.includes('/') && SKIP_ROOT_FILES.has(rel)) continue;
+    const p = path.join(root, rel);
+    let content;
+    try {
+      if (!fs.statSync(p).isFile()) continue;
+      content = fs.readFileSync(p, 'utf8');
+    } catch {
+      continue; // tracked but deleted from the working tree: nothing on disk to publish
+    }
+    files++;
+    content.split(/\r?\n/).forEach((text, i) => {
+      for (const [name, { re }] of Object.entries(PATTERNS)) if (re.test(text)) hits.push({ file: rel, line: i + 1, pattern: name, text });
+    });
+  }
   const isExpected = (h) => h.file === EXPECTED.file && h.pattern === EXPECTED.pattern && EXPECTED.line.test(h.text);
   controls.push({ control: 'LICENSE copyright line found by owner-name', ok: hits.some(isExpected) });
-  return { files, controls, expected: hits.filter(isExpected), unexpected: hits.filter((h) => !isExpected(h)) };
+  return { mode, files, controls, expected: hits.filter(isExpected), unexpected: hits.filter((h) => !isExpected(h)) };
 }
 
 function main() {
   const root = path.resolve(process.argv[2] || fileURLToPath(new URL('../../', import.meta.url)));
   const r = scan(root);
   const out = [`release-scan: ${r.files} files, ${Object.keys(PATTERNS).length} patterns (root: ${path.basename(root)})`];
+  out.push(
+    r.mode === 'git'
+      ? 'files: git ls-files --cached --others --exclude-standard (git-ignored files are not scanned)'
+      : 'files: FALLBACK - not a git work tree (or git could not be run): walked the whole directory except node_modules, .git, .state*, .lane',
+  );
   for (const c of r.controls) out.push(`CONTROL ${c.ok ? 'hit ' : 'MISS'}  ${c.control}`);
   for (const h of r.expected) out.push(`EXPECTED ${h.file}:${h.line}  [${h.pattern}]  (copyright holder)`);
   // The matched text is never printed: a hit could be a secret. File, line and pattern only.

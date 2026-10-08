@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { makeCase, orch, idFrom, waitForStatus, readRunRecord, readRunFile } from './helpers.mjs';
 import { g, makeRepo, commitAll, repoFingerprint } from './wf-helpers.mjs';
-import { globToRegex } from '../src/review.mjs';
+import { globToRegex, compareSourceStatus } from '../src/review.mjs';
 
 const json = (r) => {
   try {
@@ -18,9 +18,9 @@ const json = (r) => {
 };
 
 /** Repo + claim + worktree + a finished fake implementer run with a commit to review. */
-async function setupImpl(c, { model = 'localai/qwen3-coder-30b' } = {}) {
+async function setupImpl(c, { model = 'localai/qwen3-coder-30b', extraFiles = {} } = {}) {
   const repo = path.join(c.base, 'repo');
-  makeRepo(repo, { 'src/a.js': '1\n', 'secret/answer.md': 'the answer\n', 'secret/deep/x.md': 'x\n', 'README.md': 'r\n' });
+  makeRepo(repo, { 'src/a.js': '1\n', 'secret/answer.md': 'the answer\n', 'secret/deep/x.md': 'x\n', 'README.md': 'r\n', ...extraFiles });
   assert.equal((await orch(['claim', 'WP-R', '--by', 'codex'], c.env)).code, 0);
   const w = json(await orch(['worktree', 'create', '--repo', repo, '--wp', 'WP-R', '--slice', 's1', '--by', 'codex', '--json'], c.env));
   const r = await orch(['run', '--cli', 'fake', '--model', model, '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-R', '--slice', 's1', '--by', 'codex', '--allow', 'src/a.js', '--no-window'], c.env);
@@ -161,6 +161,87 @@ test('S4: the review root must be neutral (not temp/scratch, not inside the repo
   r = await orch([...reviewArgs(s, c).map((a) => (a === 'codex' ? 'owner' : a)), '--model', 'gemini-x'], c.env);
   assert.equal(r.code, 2);
   assert.match(r.stderr, /held by codex/);
+});
+
+/* ================================================================= K01 ==== */
+/* Kit fix K01: git-IGNORED entries ("!!") in the SOURCE repo or the implementer    */
+/* worktree are noise - a plugin rotating its logs (.plugin-logs/...), caches       */
+/* (__pycache__, .mypy_cache) - and so is the ORDER of the entries. They must not   */
+/* breach. The review worktree's own status stays STRICT: an ignored file written   */
+/* there is a reviewer writing in its throwaway copy.                               */
+
+test('K01: ignored files appearing in the source repo or the implementer worktree during a review are not breaches', { timeout: 180000 }, async (t) => {
+  const c = makeCase('s4-k01-ignored');
+  t.after(() => c.cleanup());
+  const s = await setupImpl(c, { extraFiles: { '.gitignore': '__pycache__/\n.plugin-logs/\n*.log\n' } });
+  // (a) a cache file appears in the SOURCE repo while the reviewer runs
+  fs.mkdirSync(path.join(s.repo, '__pycache__'), { recursive: true }); // empty dir: invisible to git status
+  const srcPyc = path.join(s.repo, '__pycache__', 'mod.cpython-312.pyc');
+  let r = await orch([...reviewArgs(s, c), '--model', 'gemini-3.8-flash-high', '--flag', '--write-abs', '--flag', srcPyc], c.env);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  let rv = json(r);
+  assert.ok(fs.existsSync(srcPyc), 'the ignored file really appeared in the source repo');
+  assert.equal(rv.containment, 'clean', JSON.stringify(rv.breaches));
+  assert.deepEqual(rv.breaches, []);
+  // the decision stays auditable: the raw difference AND the filtered comparison are both recorded
+  assert.ok(rv.evidence.source_status_after.some((l) => l.includes('!! __pycache__/mod.cpython-312.pyc')), JSON.stringify(rv.evidence));
+  assert.deepEqual(rv.evidence.source_status_filtered_before, rv.evidence.source_status_filtered_after);
+  assertWorktreeGone(s, rv);
+  // (b) the same noise in the IMPLEMENTER worktree
+  fs.mkdirSync(path.join(s.wt.path, '__pycache__'), { recursive: true });
+  const implPyc = path.join(s.wt.path, '__pycache__', 'mod.cpython-312.pyc');
+  r = await orch([...reviewArgs(s, c), '--model', 'gemini-3.8-flash-high', '--flag', '--write-abs', '--flag', implPyc], c.env);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  rv = json(r);
+  assert.ok(fs.existsSync(implPyc), 'the ignored file really appeared in the implementer worktree');
+  assert.equal(rv.containment, 'clean', JSON.stringify(rv.breaches));
+  assert.ok(rv.evidence.source_impl_status_after.some((l) => l.includes('!! __pycache__/mod.cpython-312.pyc')), JSON.stringify(rv.evidence));
+  assert.deepEqual(rv.evidence.source_impl_status_filtered_before, rv.evidence.source_impl_status_filtered_after);
+  assertWorktreeGone(s, rv);
+});
+
+test('K01: a reviewer modifying a TRACKED file of the source repo is still a breach', { timeout: 180000 }, async (t) => {
+  const c = makeCase('s4-k01-modified');
+  t.after(() => c.cleanup());
+  const s = await setupImpl(c);
+  const r = await orch([...reviewArgs(s, c), '--model', 'gemini-3.8-flash-high', '--flag', '--write-abs', '--flag', path.join(s.repo, 'src', 'a.js')], c.env);
+  assert.equal(r.code, 5, r.stdout + r.stderr);
+  const rv = json(r);
+  assert.equal(rv.containment, 'containment-breach');
+  assert.ok(rv.breaches.includes('source status changed'), JSON.stringify(rv.breaches));
+  assert.ok(rv.evidence.source_status_after.some((l) => l.includes('M src/a.js')), JSON.stringify(rv.evidence));
+  assert.ok(rv.evidence.source_status_filtered_after.includes(' M src/a.js'), 'the filtered comparison is recorded next to the raw one');
+  assertWorktreeGone(s, rv);
+});
+
+test('K01: a reviewer writing an IGNORED file inside its own review worktree is still a breach', { timeout: 180000 }, async (t) => {
+  const c = makeCase('s4-k01-wt-ignored');
+  t.after(() => c.cleanup());
+  const s = await setupImpl(c, { extraFiles: { '.gitignore': '__pycache__/\n*.log\n' } });
+  const r = await orch([...reviewArgs(s, c), '--model', 'gemini-3.8-flash-high', '--flag', '--write-file', '--flag', 'review-notes.log'], c.env);
+  assert.equal(r.code, 5, r.stdout + r.stderr);
+  const rv = json(r);
+  assert.equal(rv.containment, 'containment-breach');
+  assert.ok(rv.breaches.some((b) => /review worktree changed: !! review-notes\.log/.test(b)), JSON.stringify(rv.breaches));
+  assert.ok(rv.evidence.worktree_status_after.includes('!! review-notes.log'), 'the evidence is recorded');
+  assertWorktreeGone(s, rv);
+});
+
+test('K01 (unit): the source status comparison ignores "!!" entries and order', () => {
+  const pre = '?? a.txt\0!! .plugin-logs/2026-09-25.log\0 M src/a.js\0';
+  // the same non-ignored entries, reordered, with different ignored noise -> not changed
+  const reordered = ' M src/a.js\0?? a.txt\0!! .plugin-logs/2026-09-27.log\0!! __pycache__/m.pyc\0';
+  assert.equal(compareSourceStatus(pre, reordered).changed, false);
+  // an ignored entry appearing or vanishing alone -> not changed
+  assert.equal(compareSourceStatus(pre, '?? a.txt\0 M src/a.js\0').changed, false);
+  // a new untracked file -> changed
+  assert.equal(compareSourceStatus(pre, `${pre}?? intruder.txt\0`).changed, true);
+  // a modified tracked file -> changed
+  assert.equal(compareSourceStatus(pre, `${pre} M README.md\0`).changed, true);
+  // ignored noise cannot mask a real change
+  assert.equal(compareSourceStatus(pre, '?? a.txt\0 M src/a.js\0 M README.md\0!! gone.log\0').changed, true);
+  // the filtered, sorted sets are what the evidence records
+  assert.deepEqual(compareSourceStatus(pre, reordered).before, [' M src/a.js', '?? a.txt']);
 });
 
 test('globToRegex (unit)', () => {

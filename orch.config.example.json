@@ -16,5 +16,6 @@
     "powershell": "powershell.exe"
   },
   "codexSessionsDir": "C:/Users/example/.codex/sessions",
-  "vibeLogDir": "C:/Users/example/.vibe/logs"
+  "vibeLogDir": "C:/Users/example/.vibe/logs",
+  "queueDriver": { "model": "example-coder-30b", "handoffDir": "orch/.state/queue-handoffs" }
 }

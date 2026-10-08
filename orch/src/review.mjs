@@ -15,7 +15,10 @@
 //     (plus a file orch itself wrote, while byte-identical), its HEAD and reflog must be
 //     unchanged, and every source snapshot must be unchanged - otherwise the review is
 //     `containment-breach`, with the evidence. A snapshot that could not be read makes
-//     the answer `unknown`, never `clean`;
+//     the answer `unknown`, never `clean`; (K01) a source-side status is compared as a
+//     SET of non-ignored entries, so git-ignored noise (a plugin rotating its logs,
+//     caches) and the entry order never breach - the review worktree's own status
+//     stays strict;
 //  7. remove the review worktree (orch created and recorded it).
 //
 // Files: <state-root>/reviews/<review-id>.json  (sole writer: the `orch review` process
@@ -206,6 +209,22 @@ async function snapshotSource(cfg, source, implDir) {
 /** Porcelain v1 -z status entries: `XY path`. */
 function statusEntries(raw) {
   return splitZ(raw);
+}
+
+/**
+ * K01: did a SOURCE-side status really change? Compared as SETS of non-ignored
+ * entries: git-ignored entries ("!! ...") are dropped - a plugin rotating its logs
+ * (.plugin-logs/...), caches (__pycache__, .mypy_cache) appear and vanish while a
+ * reviewer runs, without anyone touching the repository - and the entry order is
+ * normalised, because it carries no meaning. The review worktree's own status is
+ * NOT compared this way; it stays strict.
+ * @returns {{changed: boolean, before: string[], after: string[]}} the filtered, sorted sets
+ */
+export function compareSourceStatus(before, after) {
+  const set = (raw) => [...new Set(splitZ(raw).filter((e) => !e.startsWith('!! ')))].sort();
+  const a = set(before);
+  const b = set(after);
+  return { changed: a.length !== b.length || a.some((e, i) => e !== b[i]), before: a, after: b };
 }
 
 /* -------------------------------------------------------------- command -- */
@@ -565,6 +584,23 @@ async function doFinish(cfg, rv, file, args, io) {
       const b = srcPost[k];
       if (a === null || b === null || b === undefined) {
         unknown.push(`source ${k} unreadable`);
+        continue;
+      }
+      // K01: a source-side status may differ only in git-IGNORED entries ("!!") or
+      // only in their order, while nothing about the repository changed. The source
+      // and implementer statuses are compared as SETS of non-ignored entries; the
+      // review worktree's own status above stays strict. Both the raw and the
+      // filtered comparison are recorded whenever the raw status differs, so the
+      // decision (breach or not) stays auditable.
+      if (k === 'status' || k === 'impl_status') {
+        const cmp = compareSourceStatus(a, b);
+        if (a !== b) {
+          evidence[`source_${k}_before`] = trimLines(a);
+          evidence[`source_${k}_after`] = trimLines(b);
+          evidence[`source_${k}_filtered_before`] = cmp.before.slice(0, 60);
+          evidence[`source_${k}_filtered_after`] = cmp.after.slice(0, 60);
+        }
+        if (cmp.changed) breaches.push(`source ${k} changed`);
         continue;
       }
       if (a !== b) {

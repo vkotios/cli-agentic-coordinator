@@ -67,6 +67,16 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   `-p` mode.
 - **vibe decodes stdin as cp1252, not UTF-8** (verified): non-ASCII arrives as mojibake; ASCII is exact.
   orch refuses a non-ASCII handoff for vibe unless `--allow-non-ascii` is given.
+- **vibe crashes on non-cp1252 output** (verified on 2.25.8): a model reply containing e.g. `→` (U+2192)
+  killed runs with `'charmap' codec can't encode character` on stderr (exit 1), or ended them with exit 0
+  mid-task and nothing edited. orch's vibe adapter therefore sets `PYTHONIOENCODING=utf-8` and
+  `PYTHONUTF8=1` in the worker environment (verified: `A → B — C` printed, exit 0). If you start vibe
+  yourself outside orch, set both variables too.
+- **Session layout changed in 2.25.8** (verified): sessions live in `~/.vibe/logs/session/unified/<id>/`;
+  `meta.json` has `working_directory` and `config: null`; the model actually used is
+  `session_metadata.active_model` in the latest `generations/<n>/runtime-state.json`. The older
+  `session_*/meta.json` layout is no longer written. orch reads both layouts and resolves the alias
+  through the worktree's `.vibe/config.toml` (the `[[models]]` table orch wrote).
 - `--output streaming` is NDJSON, one object per event about a second apart: a first-class heartbeat
   (verified).
 - **Turn cap signature** (verified): exit 1, empty stdout (even with `--output json`), and stderr contains
@@ -150,3 +160,16 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - The subagents `escalation-reviewer` (Sonnet) and `escalation-reviewer-opus` (Opus) are read-only
   (Read, Grep, Glob) and use `templates/review-prompt.md`. They run inside Claude Code, not through orch,
   and only under `ORCHESTRATOR.md` section 6.
+
+## Queue driver (unattended backlog runs over orch)
+
+- `orch/tools/queue-driver.mjs` runs a plan folder's task backlog end to end: one `orch run --cli vibe`
+  per task, `orch status` polling, one repair round on failed checks, a commit per task, everything
+  appended to `<plan>/RUNLOG.md`.
+- Generic tool: worktree, plan folder, model, checks commands and forbidden paths are all options
+  (`--wt`, `--plan`, `--checks`, `--model`, `--cli`, `--forbid`, `--stall-minutes`, `--from`, `--only`,
+  `--dry-run`). The model has no built-in default (`--model`, `ORCH_QUEUE_MODEL` or `queueDriver.model`).
+  Manual and examples: `docs/QUEUE_DRIVER.md`; unit tests: `orch/test/queuedriver.test.mjs`.
+- It deletes `MISTRAL_API_KEY` before starting (with it set, vibe bills that API key instead of the CLI
+  plan's allowance) and stops the whole queue on a model fallback, a forbidden path, a stall, a task with
+  no changes, a failed commit, or two consecutive tasks with failing checks.

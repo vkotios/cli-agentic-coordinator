@@ -216,17 +216,23 @@ function deepFind(obj, key, depth = 0) {
  * @returns {{file:string|null, reason:string, candidates:number}}
  */
 export function findSessionMeta(sessionsDir, { dir, startedAtMs, endedAtMs, slackMs = 5000 }) {
-  let entries;
-  try {
-    entries = fs.readdirSync(sessionsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
-  } catch {
-    return { file: null, reason: 'no-session-directory', candidates: 0 };
+  // Legacy layout: session/session_*/meta.json. vibe >= 2.25.8: session/unified/<id>/meta.json.
+  const dirs = [];
+  for (const root of [sessionsDir, path.join(sessionsDir, 'unified')]) {
+    try {
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        if (e.isDirectory()) dirs.push(path.join(root, e.name));
+      }
+    } catch {
+      /* layout not present */
+    }
   }
+  if (dirs.length === 0) return { file: null, reason: 'no-session-directory', candidates: 0 };
   const from = (startedAtMs || 0) - slackMs;
   const to = (endedAtMs || Date.now()) + slackMs;
   const matches = [];
-  for (const e of entries) {
-    const file = path.join(sessionsDir, e.name, 'meta.json');
+  for (const sessionDir of dirs) {
+    const file = path.join(sessionDir, 'meta.json');
     let st;
     try {
       st = fs.statSync(file);
@@ -249,6 +255,36 @@ export function findSessionMeta(sessionsDir, { dir, startedAtMs, endedAtMs, slac
     return { file: null, reason: 'ambiguous-several-sessions-match', candidates: matches.length };
   }
   return { file: matches[0].file, reason: 'bound-by-workdir-and-window', candidates: 1 };
+}
+
+/**
+ * vibe >= 2.25.8 (unified layout): meta.json has `config: null`; the alias in force is
+ * `session_metadata.active_model` in the latest `generations/<n>/runtime-state.json`.
+ * @returns {string|null}
+ */
+export function unifiedActiveModel(sessionDir) {
+  let gens;
+  try {
+    gens = fs.readdirSync(path.join(sessionDir, 'generations')).filter((n) => /^\d+$/.test(n)).sort();
+  } catch {
+    return null;
+  }
+  for (let i = gens.length - 1; i >= 0; i--) {
+    const rs = readJson(path.join(sessionDir, 'generations', gens[i], 'runtime-state.json'), null);
+    const alias = rs && rs.session_metadata && rs.session_metadata.active_model;
+    if (typeof alias === 'string' && alias) return alias;
+  }
+  return null;
+}
+
+/** alias -> model name from the [[models]] tables of a vibe config.toml (the worktree's, which orch wrote). */
+export function aliasNameFromConfigToml(text, alias) {
+  for (const block of String(text).split(/^\[\[models\]\]\s*$/m).slice(1)) {
+    const body = block.split(/^\[/m)[0];
+    const get = (k) => (new RegExp(`^\\s*${k}\\s*=\\s*"([^"]*)"`, 'm').exec(body) || [])[1];
+    if (get('alias') === alias && get('name')) return get('name');
+  }
+  return null;
 }
 
 function sameDir(a, b) {
@@ -327,9 +363,10 @@ export default {
       file: exe,
       args,
       cwd: ctx.dir,
-      envSet: { PWD: ctx.dir },
+      // vibe writes to a cp1252 console on Windows and crashes on e.g. U+2192 (2026-09-24).
+      envSet: { PWD: ctx.dir, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
       envDelete: [],
-      notes: [`vibe exe: ${exe}`, 'PWD forced to --workdir in the child env'],
+      notes: [`vibe exe: ${exe}`, 'PWD forced to --workdir in the child env', 'PYTHONIOENCODING=utf-8 and PYTHONUTF8=1 set'],
     };
   },
 
@@ -377,7 +414,20 @@ export default {
       const meta = found.file ? { file: found.file } : null;
       if (meta) {
         const json = readJson(meta.file, null);
-        const picked = pickModelFromMeta(json);
+        let picked = pickModelFromMeta(json);
+        if (picked.source === 'none' || picked.source === 'deep-search') {
+          const alias = unifiedActiveModel(path.dirname(meta.file));
+          if (alias) {
+            let cfg = '';
+            try {
+              cfg = fs.readFileSync(path.join(ctx.dir, '.vibe', 'config.toml'), 'utf8');
+            } catch {
+              /* no worktree config */
+            }
+            const resolved = aliasNameFromConfigToml(cfg, alias);
+            picked = { alias, resolved, routedDefault: null, source: resolved ? 'unified-runtime-state' : 'unified-alias-only' };
+          }
+        }
         out.actual_model_alias = picked.alias;
         out.actual_model = picked.resolved; // the resolved model NAME, or null - never the routing default
         out.routed_default_model = picked.routedDefault; // recorded separately, never as "the model used"
@@ -389,7 +439,7 @@ export default {
           );
         } else if (!picked.resolved) {
           out.warnings.push(
-            `vibe session alias "${picked.alias}" was not found in config.models, so the model it resolves to is unknown`,
+            `vibe session alias "${picked.alias}" was not found in the model tables, so the model it resolves to is unknown`,
           );
         }
         if (picked.alias && ctx.alias && picked.alias !== ctx.alias) {

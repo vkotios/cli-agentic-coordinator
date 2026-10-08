@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { KIT, makeCase, orch, idFrom, waitForStatus, readRunRecord, readRunFile, hostileHandoff } from './helpers.mjs';
 import codex, { extractCodexModel } from '../src/adapters/codex.mjs';
 import agy, { extractAgyModel, MAX_PROMPT_CHARS } from '../src/adapters/agy.mjs';
+import vibe from '../src/adapters/vibe.mjs';
 import { deriveStatus } from '../src/statusrules.mjs';
 
 const FIX = path.join(KIT, 'test', 'fixtures');
@@ -252,4 +253,17 @@ test('S7: a per-run heartbeat LOG counts as activity through the monitor; keepal
   assert.equal(rec.last_activity_signal, 'cli-log');
   await waitForStatus(c.stateRoot, id, ['completed', 'failed'], { timeoutMs: 60000 });
   assert.equal(readRunFile(c.stateRoot, id, 'stdout.log').trim(), '', 'the worker itself stayed silent');
+});
+
+test('vibe: child env forces UTF-8 stdio (a cp1252 console crashed vibe on U+2192)', () => {
+  // A fake exe path: build() never spawns, and no real vibe install is needed.
+  const wt = path.join(TMP, 'vibe-wt');
+  const prev = process.env.ORCH_VIBE_EXE;
+  process.env.ORCH_VIBE_EXE = path.join(TMP, 'fake-bin', 'vibe.exe');
+  try {
+    const b = vibe.build({ model: 'zai-glm-5-3', dir: wt, flags: [] });
+    assert.deepEqual(b.envSet, { PWD: wt, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
+  } finally {
+    if (prev === undefined) delete process.env.ORCH_VIBE_EXE; else process.env.ORCH_VIBE_EXE = prev;
+  }
 });

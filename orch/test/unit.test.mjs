@@ -14,7 +14,7 @@ import { Tailer } from '../src/tailer.mjs';
 import { laneScope, userLaneIdentifier, assertLaneOverrideAllowed, laneHome } from '../src/lanescope.mjs';
 import { resolveStateRoot } from '../src/config.mjs';
 import { keeperFacts, TERMINAL } from '../src/store.mjs';
-import { mergeVibeConfig, pickModelFromMeta, findSessionMeta, fallbackWarningsSince, isModelMismatch, messageText } from '../src/adapters/vibe.mjs';
+import { mergeVibeConfig, pickModelFromMeta, findSessionMeta, unifiedActiveModel, aliasNameFromConfigToml, fallbackWarningsSince, isModelMismatch, messageText } from '../src/adapters/vibe.mjs';
 import vibe from '../src/adapters/vibe.mjs';
 import opencode from '../src/adapters/opencode.mjs';
 import { scanNewestMtime, Deadline, withDeadline, readTailLines } from '../src/util.mjs';
@@ -523,4 +523,23 @@ test('a deadline whose step timed out reports expired even if its clock has not 
   const ok = new Deadline(10000, 'status');
   assert.equal(await withDeadline(Promise.resolve(1), 20, 'FB', ok), 1);
   assert.equal(ok.expired(), false, 'a step that finished in time must not mark the deadline');
+});
+
+test('vibe 2.25.8 unified layout: session bound by worktree, model read from runtime-state, alias resolved via worktree config', () => {
+  const sessions = path.join(TMP, 'sessions-unified');
+  const sd = path.join(sessions, 'unified', 'abc');
+  fs.mkdirSync(path.join(sd, 'generations', '0000000000000004'), { recursive: true });
+  fs.mkdirSync(path.join(sd, 'generations', '0000000000000005'), { recursive: true });
+  fs.writeFileSync(path.join(sd, 'meta.json'), JSON.stringify({ environment: { working_directory: WT }, config: null }));
+  fs.writeFileSync(path.join(sd, 'generations', '0000000000000004', 'runtime-state.json'), JSON.stringify({ session_metadata: { active_model: 'old' } }));
+  fs.writeFileSync(path.join(sd, 'generations', '0000000000000005', 'runtime-state.json'), JSON.stringify({ session_metadata: { active_model: 'zaiglm53' } }));
+  const now = Date.now();
+  const found = findSessionMeta(sessions, { dir: WT, startedAtMs: now - 1000, endedAtMs: now + 1000 });
+  assert.equal(found.file, path.join(sd, 'meta.json'));
+  assert.equal(pickModelFromMeta({ config: null }).source, 'none');
+  assert.equal(unifiedActiveModel(sd), 'zaiglm53', 'the latest generation wins');
+  const toml = 'active_model = "zaiglm53"\n\n[[models]]\nname = "other"\nalias = "x"\n\n[[models]]\nname = "zai-glm-5-3"\nprovider = "mistral"\nalias = "zaiglm53"\n';
+  assert.equal(aliasNameFromConfigToml(toml, 'zaiglm53'), 'zai-glm-5-3');
+  assert.equal(aliasNameFromConfigToml(toml, 'missing'), null);
+  assert.equal(unifiedActiveModel(path.join(TMP, 'nope')), null);
 });
