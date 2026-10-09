@@ -214,6 +214,77 @@ can discard content but cannot bypass ownership or process checks. Review prompt
 retained as audit evidence; this cleanup command does not implement age-based log retention or create
 scratch repositories. External scratch repositories are outside automatic cleanup ownership.
 
+## Transcript retention
+
+Storage maintenance is separate from worktree cleanup and `orch gc` (lane housekeeping).
+It is **disabled by default**. Preview without writing or deleting anything:
+
+```powershell
+orch maintain --dry-run --json
+```
+
+To opt in, add a `retention` object to `<state-root>/config.json`, preserving its other settings:
+
+```json
+{
+  "retention": {
+    "mode": "manual",
+    "successDays": 30,
+    "otherDays": 90,
+    "maxRuns": 20,
+    "maxBytes": 67108864,
+    "maxMs": 2000,
+    "minIntervalMs": 3600000
+  }
+}
+```
+
+These are examples to select, not an installed policy. `manual` runs only on explicit
+`orch maintain --apply`; `on-use` also runs bounded maintenance before later launches and after
+successful package finalization. It does not clean installations while orch is unused.
+`disabled` prevents automatic collection. Read-only status, result, log and preview calls never collect.
+Malformed settings refuse collection and leave ordinary launches/finalization available with a
+maintenance warning. Budgets are checked between operations; a single filesystem operation can
+exceed the time budget. `next_after` allows manual continuation with `--after <id>`; on-use resumes
+its inventory automatically. Budget-limited runs are `deferred`, with `deferred_bytes` included in
+`eligible_bytes` and separated from safety-protected storage. Do not combine `--run` with `--after`.
+Protected bytes can exceed the budget without being deleted. Collection and enrollment enforce an
+8 MiB payload limit, including files that grow during a read. Larger payloads remain intact with a
+read-limit reason; this first collector does not provide streaming retirement of larger logs.
+
+Successful retention applies to completed, accepted runs; all other terminal dispositions use
+`otherDays`. Age starts at the later terminal/package closure time. Runs need a durable disposition,
+finished package, resolved gates/reviews and confirmed process quiescence. Active or uncertain runs,
+reopened packages, incomplete cleanup, containment incidents and investigation pins remain protected.
+Only stdout, stderr and the run's prompt copy are eligible. Compact final messages (up to 64 KiB,
+with an explicit truncation flag), requested/actual model evidence, run/process records, reviews,
+gates, routing ledger and cleanup receipts remain. `result` reads the compact answer after collection;
+`status` and `log` distinguish purged transcripts from empty or unexpectedly missing output.
+An invalid compact receipt reports an integrity error. Verified original transcripts remain readable;
+absent output never falls back to invalid compact evidence. Preserved keeper/events logs remain
+readable independently of transcript receipts.
+
+New runs record creation ownership automatically. Old runs remain inventory-only until explicitly
+inspected and enrolled, one run at a time:
+
+```powershell
+orch maintain --enroll <id> --by <operator> --reason "verified historical run"
+orch maintain --pin <id> --by <operator> --reason "investigation"
+orch maintain --unpin <id> --by <operator> --reason "investigation closed"
+orch maintain --apply
+```
+
+Enrollment also explicitly finalizes a terminal standalone run, including an already owned new run,
+which still needs its ledger disposition. Original creation evidence is preserved, and repeating
+finalization does not reset its retention clock. Enrollment does not change package closure or bypass safety/age checks. With retention
+disabled, `--apply --run <id> --by <operator> --reason <text>` explicitly selects that one verified run
+for immediate collection; the receipt records operator, reason, time and overridden policy before
+deletion and preserves this original authority on retries. Enabled policies enforce their configured ages.
+Interrupted collection keeps compact evidence and retries only unchanged, individually recorded
+files. Uncertain locks require inspection; nothing takes them over automatically. Full metadata,
+monitor-event retirement, active-log rotation and an installed scheduler are not included here.
+The MCP `maintain` tool exposes the same preview, enrollment, pin and apply controls.
+
 ## Limitations
 
 - **Windows only for now.** Named pipes, `taskkill`, the process-table snapshots and the PowerShell log

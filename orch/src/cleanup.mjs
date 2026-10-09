@@ -8,6 +8,7 @@ import { nowIso, writeJsonAtomic } from './util.mjs';
 import { ledgerPath, readLedger } from './ledger.mjs';
 import { readRounds, computeGate } from './gate.mjs';
 import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, removeResource, dependentRunBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
+import { maintainOnUse } from './retention.mjs';
 
 const emit = (args, io, out) => io.log(args.json ? JSON.stringify(out, null, 2) : [
   `${out.wp}: ${out.state}`,
@@ -89,7 +90,9 @@ export async function cmdFinish(cfg, args, io) {
   const wp = (args._ || [])[0];
   if (!wp || !args.by) throw new OrchError('usage: orch finish <WP> --by <holder> [--retain <decisions.json>]', 'missing-arg');
   if (args.force || args['dry-run'] || args['delete-branch']) throw new OrchError('finish does not support --force, --dry-run or --delete-branch; preview with cleanup --dry-run', 'bad-cleanup-option');
-  return withWpOperation(cfg, wp, async () => {
+  const outputIo = io;
+  if (args.json) io = { log() {} }; // emit one JSON result after optional maintenance
+  const result = await withWpOperation(cfg, wp, async () => {
     const previous = readClosure(cfg, wp);
     const authority = cleanupAuthority(cfg, wp, args.by);
     const current = readClaim(cfg, wp);
@@ -149,4 +152,13 @@ export async function cmdFinish(cfg, args, io) {
     emit(args, io, out);
     return { ...out, exitCode: out.state === 'finished' ? 0 : 3 };
   });
+  if (result.state === 'finished' && !result.exitCode) {
+    const maintenance = await maintainOnUse(cfg);
+    if (maintenance && maintenance.state === 'pending' && !args.json) io.log(`maintenance pending: ${maintenance.reason || 'retry with orch maintain'}`);
+    const out = maintenance ? { ...result, maintenance } : result;
+    if (args.json) emit(args, outputIo, out);
+    return out;
+  }
+  if (args.json) emit(args, outputIo, result);
+  return result;
 }

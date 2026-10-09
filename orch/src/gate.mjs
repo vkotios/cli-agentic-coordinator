@@ -15,6 +15,7 @@
 // Files: <state-root>/gates/<wp-key>/<slice-key>/round-<n>.json, each created once
 // (exclusive publication; a round is never rewritten).
 import fs from 'node:fs';
+import { withWpOperation } from './resources.mjs';
 import path from 'node:path';
 import { OrchError } from './errors.mjs';
 import { nowIso, readJson } from './util.mjs';
@@ -154,7 +155,7 @@ function parseFindingsArg(v) {
 
 export async function cmdGate(cfg, args, io) {
   const sub = (args._ || [])[0];
-  if (sub === 'record') return gateRecord(cfg, args, io);
+  if (sub === 'record') return withWpOperation(cfg, args.wp, () => gateRecord(cfg, args, io));
   if (sub === 'status') return gateStatus(cfg, args, io);
   throw new OrchError('usage: orch gate record|status --wp <WP> --slice <id> ...', 'missing-arg');
 }

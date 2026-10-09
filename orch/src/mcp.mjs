@@ -74,6 +74,12 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  maintain: {
+    cmd: 'maintain',
+    description: 'orch maintain: read-only retention preview, opt-in exact transcript collection, explicit legacy enrollment and investigation pins. Preserves compact results and process/model evidence.',
+    opts: { 'dry-run': B('--dry-run'), apply: B('--apply'), run: S('--run <id> (scoped collection)'), after: S('--after <id> (resume bounded inventory)'), enroll: S('--enroll <id>'), pin: S('--pin <id>'), unpin: S('--unpin <id>'), by: S('--by <operator>'), reason: S('--reason <text>') },
+    required: [],
+  },
   run: {
     cmd: 'run',
     description:
