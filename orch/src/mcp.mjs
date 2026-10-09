@@ -147,6 +147,21 @@ export const TOOLS = {
     description: 'orch claims: every claim with its age; never reclaimed automatically. Read-only.',
     opts: {},
   },
+  cleanup: {
+    cmd: 'cleanup',
+    description: 'Preview owned WP resources with dry-run, or explicitly apply safe cleanup. Active/uncertain dependencies and valuable content are retained; failed removals can be retried.',
+    opts: { wp: S('--wp <WP>'), 'dry-run': B('--dry-run: read-only inventory'), apply: B('--apply: recheck and remove eligible owned resources'), by: S('--by <claim holder or recorded closing identity>'), retain: S('--retain <JSON decision file: id, reason, revisit>') },
+    required: ['wp'],
+    boundMs: 120000,
+  },
+  finish: {
+    cmd: 'finish',
+    description: 'Finalize a WP after all runs have dispositions and reviews/gates are finalized. Records cleanup decisions before releasing its claim; retries pending cleanup without rewriting review findings.',
+    pos: [{ key: 'wp', desc: 'work package id', required: true }],
+    opts: { by: S('--by <holder>'), retain: S('--retain <JSON decision file: id, reason, revisit>') },
+    required: ['by'],
+    boundMs: 120000,
+  },
   worktree_create: {
     cmd: 'worktree',
     sub: ['create'],

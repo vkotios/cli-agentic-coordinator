@@ -16,6 +16,7 @@ import { git, gitOk, splitZ, topLevel, resolveCommit, worktreeList, samePath } f
 import { requireClaim, wpKey } from './claims.mjs';
 import { paths, readRun, keeperFacts } from './store.mjs';
 import { evaluateScope } from './scope.mjs';
+import { beginResource, confirmResource, readResource, withWpOperation, withResourceLock, removeResource, assertPackageOpen } from './resources.mjs';
 
 const wtDir = (cfg) => path.join(cfg.stateRoot, 'worktrees');
 const wtFile = (cfg, id) => path.join(wtDir(cfg), `${id}.json`);
@@ -48,9 +49,12 @@ export function worktreeRecordForDir(cfg, dir) {
 
 export async function cmdWorktree(cfg, args, io) {
   const sub = (args._ || [])[0];
-  if (sub === 'create') return worktreeCreate(cfg, args, io);
+  if (sub === 'create') return withWpOperation(cfg, args.wp, () => worktreeCreate(cfg, args, io));
   if (sub === 'list') return worktreeListCmd(cfg, args, io);
-  if (sub === 'remove') return worktreeRemove(cfg, args, io);
+  if (sub === 'remove') {
+    const rec = readJson(wtFile(cfg, (args._ || [])[1] || ''), null);
+    return withWpOperation(cfg, rec && rec.wp, () => worktreeRemove(cfg, args, io));
+  }
   throw new OrchError('usage: orch worktree create|list|remove ...', 'missing-arg');
 }
 
@@ -62,6 +66,7 @@ async function worktreeCreate(cfg, args, io) {
   const wk = wpKey(wp);
   const sk = sliceKey(slice);
   requireClaim(cfg, wp, by);
+  assertPackageOpen(cfg, wp, by);
 
   const repo = path.resolve(repoArg);
   if (!fs.existsSync(repo)) throw new OrchError(`--repo does not exist: ${repo}`, 'bad-repo');
@@ -79,14 +84,18 @@ async function worktreeCreate(cfg, args, io) {
   if (br.ok && br.stdout.trim()) throw new OrchError(`refusing: branch ${branch} already exists`, 'branch-exists');
 
   const exclude = await ensureWorktreesExcluded(top);
-  await gitOk(['worktree', 'add', '-b', branch, wtPath, baseline], { cwd: top, timeoutMs: 120000 });
+  const id = `wt-${wk}-${sk}-${crypto.randomBytes(3).toString('hex')}`;
+  const resource = await beginResource(cfg, { id, kind: 'implementation', wp, by, slice, repo: top, root: path.join(top, '.worktrees'), path: wtPath, branch, baseline });
+  await withResourceLock(cfg, resource, async () => {
+    await gitOk(['worktree', 'add', '-b', branch, wtPath, baseline], { cwd: top, timeoutMs: 120000 });
+    await confirmResource(cfg, resource);
+  });
   let real = wtPath;
   try {
     real = fs.realpathSync.native(wtPath);
   } catch {
     /* keep the resolved path */
   }
-  const id = `wt-${wk}-${sk}-${crypto.randomBytes(3).toString('hex')}`;
   const rec = {
     id,
     wp,
@@ -109,13 +118,15 @@ async function worktreeCreate(cfg, args, io) {
 async function worktreeListCmd(cfg, args, io) {
   const rows = [];
   for (const r of listWorktreeRecords(cfg)) {
+    const resource = readResource(cfg, r.id);
+    const removedAt = resource?.state === 'removed' ? resource.removed_at : r.removed_at;
     const exists = fs.existsSync(r.path);
     let dirty = null;
-    if (exists && !r.removed_at) {
+    if (exists && !removedAt) {
       const st = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: r.path });
       dirty = st.ok ? splitZ(st.stdout).length : null;
     }
-    rows.push({ id: r.id, wp: r.wp, slice: r.slice, path: r.path, branch: r.branch, baseline: r.baseline, created_at: r.created_at, removed_at: r.removed_at || null, exists, dirty_entries: dirty });
+    rows.push({ id: r.id, wp: r.wp, slice: r.slice, path: r.path, branch: r.branch, baseline: r.baseline, created_at: r.created_at, removed_at: removedAt || null, cleanup_state: resource?.state || null, exists, dirty_entries: dirty });
   }
   if (args.json) io.log(JSON.stringify({ worktrees: rows }, null, 2));
   else if (!rows.length) io.log('(no recorded worktrees)');
@@ -141,6 +152,13 @@ async function worktreeRemove(cfg, args, io) {
     return { ...out, exitCode: 0 };
   }
   const force = !!args.force;
+  const resource = readResource(cfg, id);
+  if (!resource) {
+    const out = { id, remove: 'refused', reason: 'legacy record has no confirmed resource identity; retained for inspection' };
+    emit(args, io, out, out.reason);
+    return { ...out, exitCode: 3 };
+  }
+  return withResourceLock(cfg, resource, async () => {
   const list = await worktreeList(rec.repo);
   if (!list) throw new OrchError(`cannot list worktrees of ${rec.repo}; nothing removed`, 'git-failed');
   const entry = list.find((w) => samePath(w.path, rec.path));
@@ -158,7 +176,12 @@ async function worktreeRemove(cfg, args, io) {
     emit(args, io, out, `remove refused: ${rec.path} has ${dirty.length} uncommitted entr${dirty.length === 1 ? 'y' : 'ies'}:\n  ${dirty.slice(0, 20).join('\n  ')}\nCommit them, or pass --force to discard them.`);
     return { ...out, exitCode: 3 };
   }
-  await gitOk(['worktree', 'remove', ...(force ? ['--force'] : []), rec.path], { cwd: rec.repo, timeoutMs: 120000 });
+  const rm = await removeResource(cfg, resource, { force });
+  if (rm.state !== 'removed') {
+    const out = { id, remove: 'refused', reason: rm.reason, cleanup: rm };
+    emit(args, io, out, `remove refused: ${rm.reason}`);
+    return { ...out, exitCode: 3 };
+  }
   let branchResult = 'kept';
   if (args['delete-branch']) {
     // -d refuses an unmerged branch; -D only with --force.
@@ -176,6 +199,7 @@ async function worktreeRemove(cfg, args, io) {
   const out = { id, remove: 'removed', forced: force, discarded_entries: rec.discarded_entries.length, branch: rec.branch, branch_result: branchResult, path_still_exists: stillThere };
   emit(args, io, out, `removed ${id} (${rec.path})${force && dirty.length ? ` - ${dirty.length} uncommitted entries DISCARDED (--force)` : ''}; branch ${rec.branch}: ${branchResult}${stillThere ? '\n  WARNING: the directory still exists on disk' : ''}`);
   return { ...out, exitCode: 0 };
+  });
 }
 
 /**

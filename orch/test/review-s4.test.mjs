@@ -41,6 +41,11 @@ function assertWorktreeGone(s, rv) {
   assert.ok(!fs.existsSync(rv.worktree), 'the review worktree directory is gone');
   assert.ok(!g(s.repo, 'worktree', 'list', '--porcelain').toLowerCase().includes(path.basename(rv.worktree).toLowerCase()), 'and git no longer lists it');
 }
+function assertIncidentRetained(s, rv) {
+  assert.equal(rv.worktree_removed, false, 'incident resources are retained for evidence');
+  assert.ok(fs.existsSync(rv.worktree));
+  assert.ok(g(s.repo, 'worktree', 'list', '--porcelain').includes(path.basename(rv.worktree)));
+}
 
 test('S4: the same canonical model is refused (localai/qwen3-coder-30b vs qwen3-coder-30b); same family only warns', { timeout: 180000 }, async (t) => {
   const c = makeCase('s4-same');
@@ -101,7 +106,7 @@ test('S4: a clean reviewer with blinding -> clean; blinded files invisible to it
   assert.equal(json(again).containment, 'clean');
 });
 
-test('S4: a reviewer that WRITES a file is flagged containment-breach; worktree still removed; source untouched', { timeout: 180000 }, async (t) => {
+test('S4: a reviewer that WRITES a file is flagged containment-breach; evidence retained; source untouched', { timeout: 180000 }, async (t) => {
   const c = makeCase('s4-write');
   t.after(() => c.cleanup());
   const s = await setupImpl(c);
@@ -113,7 +118,7 @@ test('S4: a reviewer that WRITES a file is flagged containment-breach; worktree 
   assert.ok(rv.breaches.some((b) => /review worktree changed: \?\? review-notes\.txt/.test(b)), JSON.stringify(rv.breaches));
   assert.ok(rv.evidence.worktree_status_after.includes('?? review-notes.txt'), 'the evidence is recorded');
   assert.deepEqual(rv.blinded, ['secret/answer.md'], '`*` does not cross a directory');
-  assertWorktreeGone(s, rv);
+  assertIncidentRetained(s, rv);
   assert.deepEqual(repoFingerprint(s.repo), before);
 });
 
@@ -130,7 +135,7 @@ test('S4: a reviewer that COMMITS is flagged containment-breach (HEAD + reflog m
   assert.ok(rv.breaches.some((b) => /review worktree HEAD moved/.test(b)), JSON.stringify(rv.breaches));
   assert.ok(rv.breaches.some((b) => /reflog changed/.test(b)));
   assert.ok(rv.evidence.new_commits.some((l) => /a reviewer must never commit/.test(l)));
-  assertWorktreeGone(s, rv);
+  assertIncidentRetained(s, rv);
   assert.deepEqual(repoFingerprint(s.repo), before, 'a detached-worktree commit moves no ref of the source repo');
 });
 
@@ -145,7 +150,7 @@ test('S4: a reviewer that writes into the SOURCE repo is flagged, with before/af
   assert.equal(rv.containment, 'containment-breach');
   assert.ok(rv.breaches.includes('source status changed'), JSON.stringify(rv.breaches));
   assert.ok(rv.evidence.source_status_after.some((l) => l.includes('intruder.txt')));
-  assertWorktreeGone(s, rv);
+  assertIncidentRetained(s, rv);
   assert.ok(fs.existsSync(intruder), 'orch reports; it never cleans up the source repo on its own');
 });
 
@@ -214,7 +219,7 @@ test('K01: a reviewer modifying a TRACKED file of the source repo is still a bre
   assert.ok(rv.breaches.includes('source status changed'), JSON.stringify(rv.breaches));
   assert.ok(rv.evidence.source_status_after.some((l) => l.includes('M src/a.js')), JSON.stringify(rv.evidence));
   assert.ok(rv.evidence.source_status_filtered_after.includes(' M src/a.js'), 'the filtered comparison is recorded next to the raw one');
-  assertWorktreeGone(s, rv);
+  assertIncidentRetained(s, rv);
 });
 
 test('K01: a reviewer writing an IGNORED file inside its own review worktree is still a breach', { timeout: 180000 }, async (t) => {
@@ -227,7 +232,7 @@ test('K01: a reviewer writing an IGNORED file inside its own review worktree is 
   assert.equal(rv.containment, 'containment-breach');
   assert.ok(rv.breaches.some((b) => /review worktree changed: !! review-notes\.log/.test(b)), JSON.stringify(rv.breaches));
   assert.ok(rv.evidence.worktree_status_after.includes('!! review-notes.log'), 'the evidence is recorded');
-  assertWorktreeGone(s, rv);
+  assertIncidentRetained(s, rv);
 });
 
 test('K01 (unit): the source status comparison ignores "!!" entries and order', () => {

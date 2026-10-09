@@ -26,6 +26,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { OrchError } from './errors.mjs';
 import { loadConfig, setting, localAppData } from './config.mjs';
 import { nowIso, readJson, writeJsonAtomic, readTailLines, sleep, newRunId } from './util.mjs';
@@ -36,6 +37,7 @@ import { getAdapter } from './adapters/index.mjs';
 import { canonicalId, familyOf, loadRoster } from './models.mjs';
 import { normalizeRepoPath, sha256File } from './scope.mjs';
 import { cmdRun } from './commands.mjs';
+import { beginResource, confirmResource, readResource, saveResource, withWpOperation, withResourceLock, removeResource, cleanupAuthority, assertPackageOpen } from './resources.mjs';
 
 /**
  * The default review root: a neutral per-user directory, never the temp directory and
@@ -314,21 +316,28 @@ export async function cmdReview(args, io = console) {
   // ANY failure removes the worktree again (orch created and recorded it) and says so.
   let handoffFile = promptFile;
   try {
+    await withWpOperation(cfg, wp, async () => {
+    assertPackageOpen(cfg, wp, by);
+    const resource = await beginResource(cfg, { id: reviewId, kind: 'review', review_id: reviewId, wp, by, repo: source, root, path: wt, baseline: commit });
+    await withResourceLock(cfg, resource, async () => {
     await gitOk(['worktree', 'add', '--detach', wt, commit], { cwd: source, timeoutMs: 120000 });
+    await confirmResource(cfg, resource);
     rv.worktree_created = true;
     writeJsonAtomic(reviewFile(cfg, reviewId), rv);
     handoffFile = await prepareReview(cfg, rv, { wt, source, impl, warnings, promptFile });
+    });
+    });
   } catch (e) {
     rv.status = 'setup-failed';
     rv.setup_error = String((e && e.message) || e);
-    const rm = rv.worktree_created || fs.existsSync(wt) ? await removeReviewWorktree(rv) : { removed: true, error: null };
-    rv.worktree_removed = rm.removed;
-    rv.worktree_remove_error = rm.error;
     rv.finished_at = nowIso();
     rv.outcome = 'setup-failed';
     rv.containment = 'not-applicable';
     delete rv.pre;
     writeJsonAtomic(reviewFile(cfg, reviewId), rv);
+    const rm = rv.worktree_created || fs.existsSync(wt) ? await withWpOperation(cfg, wp, () => removeReviewWorktree(cfg, rv)) : { removed: true, error: null };
+    rv.worktree_removed = rm.removed;
+    rv.worktree_remove_error = rm.error;
     throw new OrchError(
       `review ${reviewId} failed during setup (nothing was launched): ${rv.setup_error}. Review worktree ${wt}: ${rm.removed ? 'removed' : `NOT removed (${rm.error})`}`,
       'review-setup-failed',
@@ -442,23 +451,29 @@ async function prepareReview(cfg, rv, { wt, source, impl, warnings, promptFile }
   const promptText = fs.readFileSync(promptFile, 'utf8');
   if (promptText.includes('{{WORKTREE}}')) {
     handoffFile = path.join(reviewsDir(cfg), `${reviewId}.prompt.txt`);
-    fs.writeFileSync(handoffFile, promptText.split('{{WORKTREE}}').join(wt));
+    const materialized = promptText.split('{{WORKTREE}}').join(wt);
+    const resource = readResource(cfg, reviewId);
+    resource.artifacts = [{ purpose: 'review-prompt', path: handoffFile, root: reviewsDir(cfg), state: 'intent', sha256: crypto.createHash('sha256').update(materialized).digest('hex'), created_at: nowIso() }];
+    saveResource(cfg, resource);
+    fs.writeFileSync(handoffFile, materialized, { flag: 'wx' });
+    resource.artifacts[0].state = 'present';
+    saveResource(cfg, resource);
     rv.prompt_materialized = handoffFile;
   }
   return handoffFile;
 }
 
 /** Remove an orch-created review worktree; never anything unregistered. */
-async function removeReviewWorktree(rv) {
-  const wt = rv.worktree;
-  const list = await worktreeList(rv.source_repo);
-  const registered = list ? list.some((w) => samePath(w.path, wt)) : null;
-  if (registered === false && !fs.existsSync(wt)) return { removed: true, error: null };
-  if (!registered) return { removed: false, error: registered === null ? 'could not list worktrees' : `${wt} exists but is not a registered worktree; left alone` };
-  const r = await git(['worktree', 'remove', '--force', wt], { cwd: rv.source_repo, timeoutMs: 120000 });
-  if (!r.ok) return { removed: false, error: r.stderr.trim() };
-  if (fs.existsSync(wt)) return { removed: false, error: 'git reported success but the directory still exists' };
-  return { removed: true, error: null };
+async function removeReviewWorktree(cfg, rv) {
+  const r = readResource(cfg, rv.id);
+  if (!r) return { removed: !!rv.worktree_removed, error: 'legacy resource: confirmed identity unavailable' };
+  if (r.state === 'removed') return { removed: true, error: null };
+  return withResourceLock(cfg, r, async () => {
+    const run = rv.run_id ? readRun(cfg, rv.run_id) : null;
+    if (run && run.orch_written) { r.owned_files = run.orch_written; saveResource(cfg, r); }
+    const result = await removeResource(cfg, r, { review: rv });
+    return { removed: result.state === 'removed', error: result.reason || null };
+  });
 }
 
 /** Wait (no kill, ever) for the reviewer's worker exit, then briefly for the final record. */
@@ -486,9 +501,22 @@ async function finishReview(cfg, reviewId, args, io) {
   const file = reviewFile(cfg, reviewId);
   const rv = readJson(file, null);
   if (!rv) throw new OrchError(`no such review: ${reviewId}`, 'no-such-review');
+  return withWpOperation(cfg, rv.wp, () => finishReviewLocked(cfg, reviewId, args, io, file, rv));
+}
+
+async function finishReviewLocked(cfg, reviewId, args, io, file, rv) {
   if (rv.finished_at) {
-    emit(args, io, rv, reviewText(rv));
-    return { ...rv, exitCode: exitFor(rv) };
+    const r = readResource(cfg, rv.id);
+    if (r && r.state !== 'removed') {
+      if (rv.wp) cleanupAuthority(cfg, rv.wp, args.by);
+      const rm = await removeReviewWorktree(cfg, rv);
+      const out = { ...rv, worktree_removed: rm.removed, worktree_remove_error: rm.error };
+      emit(args, io, out, reviewText(out));
+      return { ...out, exitCode: exitFor(out) || (rm.removed ? 0 : 3) };
+    }
+    const out = r ? { ...rv, worktree_removed: true, worktree_remove_error: null } : rv;
+    emit(args, io, out, reviewText(out));
+    return { ...out, exitCode: exitFor(out) };
   }
   // CODE-REVIEW FIX c3: inspecting and REMOVING a WP review's worktree is a WP action -
   // the caller's --by must hold the claim now (not merely have held it at launch).
@@ -613,15 +641,6 @@ async function doFinish(cfg, rv, file, args, io) {
 
   const containment = breaches.length ? 'containment-breach' : unknown.length ? 'unknown' : 'clean';
 
-  // 7. remove the review worktree - orch created and recorded it.
-  let removed = false;
-  let removeError = null;
-  if (rv.worktree_created) {
-    const rm = await removeReviewWorktree(rv);
-    removed = rm.removed;
-    removeError = rm.error;
-  }
-
   // CODE-REVIEW FIX a1: containment says what the reviewer did to the repositories; the
   // OUTCOME says whether a review happened at all. A reviewer that was never launched
   // (lane busy, spawn failure, refused preflight) or whose run did not complete is NOT a
@@ -639,16 +658,19 @@ async function doFinish(cfg, rv, file, args, io) {
     breaches,
     unknown,
     evidence,
-    worktree_removed: removed,
-    worktree_remove_error: removeError,
+    worktree_removed: false,
+    worktree_remove_error: null,
     reviewer_run_status: runRec ? runRec.status : null,
     reviewer_run_reason: runRec ? runRec.reason : null,
     reviewer_model_actual: runRec ? runRec.model_actual || null : null,
   });
   delete rv.pre; // bulky; the evidence of any difference is kept above
   writeJsonAtomic(file, rv);
-  emit(args, io, rv, reviewText(rv));
-  return { ...rv, exitCode: exitFor(rv) };
+  // Logical result is durable and immutable before any cleanup attempt.
+  const rm = rv.worktree_created ? await removeReviewWorktree(cfg, rv) : { removed: true, error: null };
+  const out = { ...rv, worktree_removed: rm.removed, worktree_remove_error: rm.error };
+  emit(args, io, out, reviewText(out));
+  return { ...out, exitCode: exitFor(out) || (rm.removed ? 0 : 3) };
 }
 
 /** Is `file` the only file under `dir` (recursively)? */

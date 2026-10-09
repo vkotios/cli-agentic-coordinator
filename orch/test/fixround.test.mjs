@@ -122,7 +122,8 @@ test('c4: a failure after the worktree exists (unreadable prompt) removes the wo
   const recs = fs.readdirSync(path.join(c.stateRoot, 'reviews')).filter((f) => /^rv-.*\.json$/.test(f));
   const rv = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'reviews', recs[0]), 'utf8'));
   assert.equal(rv.outcome, 'setup-failed');
-  assert.equal(rv.worktree_removed, true);
+  const cleanup = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'resources', `${rv.id}.json`), 'utf8'));
+  assert.equal(cleanup.state, 'removed', 'cleanup is separate from the immutable review result');
   assert.ok(!fs.existsSync(rv.worktree), 'no leaked worktree directory');
   assert.ok(!registered(s.repo, rv.worktree), 'and git does not list it');
 });

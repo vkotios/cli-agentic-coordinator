@@ -83,7 +83,7 @@ test('T5: the orchestrate skill - Claude Code and Codex wrappers over one shared
   const wf = fs.readFileSync(path.join(ROOT, 'skills', 'orchestrate', 'workflow.md'), 'utf8');
   assert.match(wf, /ORCHESTRATOR\.md/, 'points to ORCHESTRATOR.md for the why');
   // the sequence, in order
-  const steps = ['orch claim', 'orch pick', 'orch worktree create', 'templates/handoff.md', 'orch run', 'orch status', 'orch scope', 'own checks', 'orch review', 'orch gate record', 'another-round', 'orch record', 'orch release'];
+  const steps = ['orch claim', 'orch pick', 'orch worktree create', 'templates/handoff.md', 'orch run', 'orch status', 'orch scope', 'own checks', 'orch review', 'orch gate record', 'another-round', 'orch record', 'orch cleanup', 'orch finish'];
   let at = -1;
   for (const s of steps) {
     const i = wf.indexOf(s, at + 1);
