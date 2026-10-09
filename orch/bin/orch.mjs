@@ -46,6 +46,9 @@ Workflow (slice 2)
   orch record <run-id> --disposition <accepted|accepted-with-fixes|rejected|blocked|inconclusive-timeout|failed-launch>
            [--notes <t>] [--attempt N] [--turns N] [--checks <json>] [--ledger <file>] ...
   orch pick --workload implement|review --size XS|S|M [--for-run <id>] [--json]
+  orch cleanup --wp <WP> --dry-run [--json]
+  orch cleanup --wp <WP> --apply --by <holder> [--retain <decisions.json>] [--json]
+  orch finish <WP> --by <holder> [--retain <decisions.json>] [--json]
 
 Integration (slice 3)
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands

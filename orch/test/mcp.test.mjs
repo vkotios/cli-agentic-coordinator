@@ -13,7 +13,7 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
-  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick',
+  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish',
 ];
 
 /** A minimal JSON-RPC client over the server's stdio. */
@@ -277,6 +277,13 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
   assert.equal(free.structuredContent.exit_code, 0, text(free));
   await equalCli('wait_lane (free)', free, ['wait-lane', '--lane', 'local', '--timeout', '20']);
 
+  // cleanup preview is read-only; finish refuses the unrecorded reviewer run.
+  await equalCli('cleanup', await srv.call('cleanup', { wp: 'WP-M', 'dry-run': true }), ['cleanup', '--wp', 'WP-M', '--dry-run']);
+  const incomplete = await srv.call('finish', { wp: 'WP-M', by: 'claude-code' });
+  assert.equal(incomplete.structuredContent.exit_code, 3, text(incomplete));
+  assert.equal(incomplete.structuredContent.output.state, 'incomplete');
+  assert.ok(fs.existsSync(wtPath), 'incomplete package closure preserves the implementation worktree');
+
   // release
   const rel = await srv.call('release', { wp: 'WP-M', by: 'claude-code' });
   assert.equal(rel.structuredContent.exit_code, 0, text(rel));
@@ -329,7 +336,16 @@ test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency 
   assert.equal(claims.structuredContent.output.claims[0].wp, 'WP-SDK');
   const cli = await cliJson(['claims'], c.env);
   assert.deepEqual(stable(claims.structuredContent.output), stable(cli.out));
+  const preview = /** @type {any} */ (await client.callTool({ name: 'cleanup', arguments: { wp: 'WP-SDK', 'dry-run': true } }));
+  assert.equal(preview.isError, false);
+  assert.equal(preview.structuredContent.output.dry_run, true);
+  assert.equal(preview.structuredContent.output.resources.length, 0);
+  const finish = /** @type {any} */ (await client.callTool({ name: 'finish', arguments: { wp: 'WP-SDK', by: 'owner' } }));
+  assert.equal(finish.isError, false);
+  assert.equal(finish.structuredContent.output.state, 'finished');
+  const after = /** @type {any} */ (await client.callTool({ name: 'claims', arguments: {} }));
+  assert.equal(after.structuredContent.output.claims.length, 0, 'MCP finish releases the claim only after its closure receipt');
   const err = await client.callTool({ name: 'result', arguments: { id: 'nope' } });
   assert.equal(err.isError, true);
-  console.log(`T3 interop: SDK client connected (server ${JSON.stringify(client.getServerVersion())}), ${tools.length} tools, claim/claims/result called`);
+  console.log(`T3 interop: SDK client connected (server ${JSON.stringify(client.getServerVersion())}), ${tools.length} tools, claim/claims/cleanup/finish/result called`);
 });

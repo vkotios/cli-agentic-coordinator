@@ -26,6 +26,7 @@ import { parseAllowBlock, sha256File } from './scope.mjs';
 import { topLevel as gitTopLevel, resolveCommit } from './git.mjs';
 import { worktreeRecordForDir, sliceKey } from './worktrees.mjs';
 import { rolePrompt } from './role-packet.mjs';
+import { withWpOperation, guardRunResource, assertPackageOpen } from './resources.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -42,6 +43,15 @@ const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
  *   reviewer through this exact machinery and link the record to the implementer run.
  */
 export async function cmdRun(args, io = console, opts = {}) {
+  const cfg = loadConfig(args['state-root']);
+  const wp = args.wp || opts.recordExtra && opts.recordExtra.wp;
+  return withWpOperation(cfg, wp, () => {
+    assertPackageOpen(cfg, wp, args.by || opts.recordExtra && opts.recordExtra.by);
+    return args.dir ? guardRunResource(cfg, path.resolve(args.dir), () => runLocked(args, io, opts)) : runLocked(args, io, opts);
+  });
+}
+
+async function runLocked(args, io, opts) {
   const cfg = loadConfig(args['state-root']);
   ensureDirs(cfg);
 

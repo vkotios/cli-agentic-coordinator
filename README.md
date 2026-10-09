@@ -185,6 +185,35 @@ Notes:
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
 
+## Cleanup and finalization
+
+After recording every run and finishing reviews, preview the owned resources and close the package:
+
+```powershell
+orch cleanup --wp <WP> --dry-run
+orch finish <WP> --by <holder>
+```
+
+`finish` checks dispositions, reviews and acceptance gates, records resource decisions, then releases
+the claim. A failed removal is reported as `cleanup-pending`; repeat `finish` or explicitly run
+`orch cleanup --wp <WP> --apply --by <holder>`. Finished review findings stay unchanged during retries.
+If a retry reports `retained`, supply an explicit retention decision; the package's logical closure
+stays recorded. Use `cleanup --dry-run` for previews: `finish` rejects `--dry-run`, `--force` and
+`--delete-branch`.
+
+Cleanup protects active or uncertain processes, modified/untracked/ignored content, unmerged commits,
+changed worktree identities and foreign resources. Incident review worktrees remain available as evidence.
+To intentionally keep resources, supply `--retain <decisions.json>` with an array such as
+`[{"id":"<resource-id>","reason":"investigation","revisit":"after investigation"}]`.
+Missing ownership evidence is a reason for inspection, never a deletion permit. Interrupted operation
+locks require inspection and are not taken over automatically. Direct `release` is an operator action;
+it does not perform package finalization.
+
+Implementation branches stay separate from directory cleanup. An explicit `worktree remove --force`
+can discard content but cannot bypass ownership or process checks. Review prompts and receipts are
+retained as audit evidence; this cleanup command does not implement age-based log retention or create
+scratch repositories. External scratch repositories are outside automatic cleanup ownership.
+
 ## Limitations
 
 - **Windows only for now.** Named pipes, `taskkill`, the process-table snapshots and the PowerShell log

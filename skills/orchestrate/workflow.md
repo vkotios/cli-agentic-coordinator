@@ -7,7 +7,7 @@ The why of every step: `{{KIT}}/ORCHESTRATOR.md`. Worker launch details: `{{KIT}
 Below, `orch` means `node "{{KIT}}/orch/bin/orch.mjs"` (in the kit repo itself, `{{KIT}}` is the repo root).
 The same commands exist as MCP tools of the `orch` server (`orch mcp`): run, status, result, log_tail,
 cancel, wait_lane, claim, release, claims, worktree_create, worktree_list, scope, review, review_finish,
-gate_record, gate_status, record, pick. Supported claim identities are `claude-code`, `codex`,
+gate_record, gate_status, record, pick, cleanup, finish. Supported claim identities are `claude-code`, `codex`,
 and `owner`; the same identity must hold and release the claim. OpenCode/Vibe controller
 qualification and dedicated claim identities remain pending; preparing their instructions does
 not establish end-to-end controller support.
@@ -54,5 +54,14 @@ is not a sandbox - the rule above is yours to keep, not the guard's.
 12. **Record** - `orch record <run-id> --disposition accepted|accepted-with-fixes|rejected|blocked|inconclusive-timeout|failed-launch
     --attempt <n> --notes "<quirks>"` for every run (implementer and reviewer). File every follow-up
     (TASKS.md / docs/OPEN_QUESTIONS.md / `orch record --notes`) before closing.
-13. **Release** - `orch release <WP> --by <you>`. Remove the slice worktree only through
-    `orch worktree remove <id>` after the merge.
+13. **Cleanup and finish** - preview `orch cleanup --wp <WP> --dry-run`, then
+    `orch finish <WP> --by <you>`. It requires recorded dispositions and completed reviews;
+    accepted implementation needs a converged gate and a clean independent review. Every resource
+    has an explicit cleanup result. To keep resources, pass `--retain <decisions.json>` containing
+    `[{"id":"<resource-id>","reason":"<why>","revisit":"<when to reconsider>"}]`.
+    Finish records the result before releasing the claim. `cleanup-pending` needs an explicit retry
+    of `finish` or `cleanup --wp <WP> --apply --by <you>`; findings are not rewritten.
+    Active/uncertain processes block closure. Dirty, ignored, unmerged and incident work is preserved.
+    Audit prompt packages are retained for the configured evidence-retention policy. Legacy resources
+    without confirmed ownership require inspection. `release` remains an explicit operator action;
+    it does not replace normal finalization or clean resources.

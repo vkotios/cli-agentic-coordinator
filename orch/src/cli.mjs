@@ -20,13 +20,15 @@ import { cmdReview } from './review.mjs';
 import { cmdGate } from './gate.mjs';
 import { cmdRecord, cmdPick } from './ledger.mjs';
 import { cmdAdopt } from './adopt.mjs';
+import { cmdCleanup, cmdFinish } from './cleanup.mjs';
+import { withWpOperation } from './resources.mjs';
 
 export const BOOLEANS = new Set([
   'json', 'all', 'no-window', 'no-monitor', 'allow-non-ascii', 'keeper', 'verbose', 'help', 'version',
   // slice 2
   'force', 'no-wait', 'delete-branch', 'owner-approved-model', 'controller-intervened',
   // slice 3
-  'dry-run', 'update',
+  'dry-run', 'update', 'apply',
 ]);
 export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 
@@ -59,7 +61,7 @@ export function parseArgs(argv) {
 /** Commands `runCommand` knows. `mcp` is not one of them: it is a server, started by bin/orch.mjs. */
 export const COMMANDS = [
   'run', 'status', 'result', 'log', 'cancel', 'list', 'wait-lane', 'monitor', 'gc',
-  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt',
+  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt', 'cleanup', 'finish',
 ];
 
 /**
@@ -90,9 +92,9 @@ export async function runCommand(cmd, args, io) {
     case 'gc':
       return cmdGc(args, io);
     case 'claim':
-      return cmdClaim(loadConfig(args['state-root']), args, io);
+      return withWpOperation(loadConfig(args['state-root']), args._[0], () => cmdClaim(loadConfig(args['state-root']), args, io));
     case 'release':
-      return cmdRelease(loadConfig(args['state-root']), args, io);
+      return withWpOperation(loadConfig(args['state-root']), args._[0], () => cmdRelease(loadConfig(args['state-root']), args, io));
     case 'claims':
       return cmdClaims(loadConfig(args['state-root']), args, io);
     case 'worktree':
@@ -109,6 +111,10 @@ export async function runCommand(cmd, args, io) {
       return cmdPick(loadConfig(args['state-root']), args, io);
     case 'adopt':
       return cmdAdopt(args, io);
+    case 'cleanup':
+      return cmdCleanup(loadConfig(args['state-root']), args, io);
+    case 'finish':
+      return cmdFinish(loadConfig(args['state-root']), args, io);
     default:
       throw new OrchError(`unknown command: ${cmd}`, 'unknown-command');
   }

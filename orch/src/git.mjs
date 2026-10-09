@@ -86,7 +86,7 @@ export async function resolveCommit(cwd, ref) {
 
 /**
  * `git worktree list --porcelain`, parsed. The first entry is the main worktree.
- * @returns {Promise<Array<{path:string, head:string|null, branch:string|null, detached:boolean}>|null>}
+ * @returns {Promise<Array<{path:string, head:string|null, branch:string|null, detached:boolean, locked:boolean, prunable:boolean}>|null>}
  */
 export async function worktreeList(cwd) {
   const r = await git(['worktree', 'list', '--porcelain', '-z'], { cwd });
@@ -95,11 +95,13 @@ export async function worktreeList(cwd) {
   let cur = null;
   for (const line of String(r.stdout).split('\0')) {
     if (line.startsWith('worktree ')) {
-      cur = { path: line.slice(9), head: null, branch: null, detached: false };
+      cur = { path: line.slice(9), head: null, branch: null, detached: false, locked: false, prunable: false };
       out.push(cur);
     } else if (cur && line.startsWith('HEAD ')) cur.head = line.slice(5);
     else if (cur && line.startsWith('branch ')) cur.branch = line.slice(7);
     else if (cur && line === 'detached') cur.detached = true;
+    else if (cur && line.startsWith('locked')) cur.locked = true;
+    else if (cur && line.startsWith('prunable')) cur.prunable = true;
   }
   return out;
 }

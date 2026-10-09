@@ -20,7 +20,11 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 7. **Verify** — run the project's checks yourself; read the full diff; confirm only allowed files changed. Never trust a self-report.
 8. **Review loop** — §6, different model than the implementer.
 9. **Accept or reject** — merge, or discard the worktree with the reason recorded.
-10. **Record** — `orch record`: one ledger row per run; follow-ups filed (§7); docs updated; review worktrees removed.
+10. **Record and finish** — `orch record`: one ledger row per run; follow-ups filed (§7); docs updated.
+    Preview `orch cleanup --wp <WP> --dry-run`, then `orch finish <WP> --by <you>`.
+    Every resource needs a removed, cleanup-pending, or intentionally retained outcome. Retention needs
+    a reason and revisit condition in `--retain <decisions.json>`. Finish writes the receipt before
+    releasing the claim. Retry failed cleanup explicitly; never discard uncertain or unmerged work.
 
 ## 3. Monitoring (mandatory for every run, local and cloud)
 - Within **90 s** of launch: `orch status <id>` must show a live process and first log activity. If not: failed launch — read the log, fix the cause, record it. Do not blind-retry.

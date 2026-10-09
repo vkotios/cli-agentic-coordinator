@@ -161,7 +161,7 @@ test('worktree create/list/remove: claim required, branch + baseline recorded, d
   assert.ok(rec.removed_at && rec.removed_forced === true && rec.discarded_entries.length === 2, 'the forced removal is recorded with what it discarded');
 });
 
-test('worktree remove without --force keeps an unmerged branch (git branch -d refuses) and says so', { timeout: 120000 }, async (t) => {
+test('worktree remove without --force preserves the worktree and its unmerged branch', { timeout: 120000 }, async (t) => {
   const c = makeCase('wt-branch');
   t.after(() => c.cleanup());
   const repo = path.join(c.base, 'repo');
@@ -171,8 +171,9 @@ test('worktree remove without --force keeps an unmerged branch (git branch -d re
   fs.writeFileSync(path.join(w.path, 'a.txt'), 'work\n');
   commitAll(w.path, 'implementer work');
   const r = json(await orch(['worktree', 'remove', w.id, '--delete-branch', '--json'], c.env));
-  assert.equal(r.remove, 'removed');
-  assert.match(r.branch_result, /^not deleted/);
+  assert.equal(r.remove, 'refused');
+  assert.match(r.reason, /unmerged commits/);
+  assert.ok(fs.existsSync(w.path), 'unmerged worktree remains inspectable');
   assert.ok(g(repo, 'rev-parse', '--verify', 'refs/heads/orch/wp-8/s1').trim(), 'the unmerged branch survives');
 });
 
