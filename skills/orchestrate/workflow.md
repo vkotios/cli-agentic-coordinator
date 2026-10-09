@@ -1,10 +1,16 @@
-# orchestrate - the shared body (Claude Code and Codex)
+# orchestrate - the shared controller workflow
+
+Activate only when the user asks you to coordinate work with orch. An orch-launched implementer
+or reviewer follows its role packet, not this controller workflow. Keep owner/project rules in force.
 
 The why of every step: `{{KIT}}/ORCHESTRATOR.md`. Worker launch details: `{{KIT}}/docs/CLI_GUIDE.md`.
 Below, `orch` means `node "{{KIT}}/orch/bin/orch.mjs"` (in the kit repo itself, `{{KIT}}` is the repo root).
 The same commands exist as MCP tools of the `orch` server (`orch mcp`): run, status, result, log_tail,
 cancel, wait_lane, claim, release, claims, worktree_create, worktree_list, scope, review, review_finish,
-gate_record, gate_status, record, pick. `--by` is `claude-code` or `codex` (whoever you are).
+gate_record, gate_status, record, pick. Supported claim identities are `claude-code`, `codex`,
+and `owner`; the same identity must hold and release the claim. OpenCode/Vibe controller
+qualification and dedicated claim identities remain pending; preparing their instructions does
+not establish end-to-end controller support.
 
 Never start opencode / vibe / agy / codex exec / copilot -p yourself: the guard hook denies it. Never write
 implementation code yourself. A guard or hook that blocks you is a stop condition.

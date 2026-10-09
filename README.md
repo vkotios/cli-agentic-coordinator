@@ -22,8 +22,9 @@ What `orch` enforces:
   `converged` / `another-round` / `stop-round-cap` / `escalate-design`.
 - **Ledger and rotation.** `orch record` appends one row per run; `orch pick` proposes the next model from
   your roster and that ledger, preferring under-tested models.
-- **Guard hook.** A PreToolUse hook for Claude Code and Codex denies direct worker-CLI launches (use
-  `orch run`) and a set of destructive commands.
+- **Guard hook.** The hook handler denies direct worker-CLI launches (use `orch run`) and a set of
+  destructive commands when the host invokes it. Adoption prepares Claude/Codex hook configurations;
+  enforcement depends on the installed host's hook API and trust settings.
 
 The protocol the orchestrator follows is `ORCHESTRATOR.md`; the step-by-step skill is
 `skills/orchestrate/workflow.md`.
@@ -93,17 +94,43 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
    `orch.config.example.json` to `orch.config.json` and edit it, or set the environment variables.
 2. **Create your roster.** Copy `orch/roster.example.json` to `orch/roster.json` and list the models you
    can actually launch (`docs/MODELS.md`). `orch pick` needs it.
-3. **Adopt a repository.** This installs the guard hook, the orchestrate skill (Claude Code and Codex), the
-   read-only subagents and a project `.mcp.json` into the repository you want to work on:
+3. **Adopt a repository.** This appends an orch bootstrap to the selected harness instruction files
+   and installs shared role instructions. By default it also installs the Claude/Codex skills and
+   hook configurations, Claude read-only subagents and a project `.mcp.json`:
 
    ```powershell
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --dry-run   # show the plan, write nothing
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo
+   # Select only the harnesses you want; repeat --harness to combine them:
+   node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --harness opencode --harness vibe
    ```
 
-   adopt never deletes, refuses to overwrite files it did not write, and records what it wrote in
-   `.orch-adopt.json` (`--update` later replaces only its own unchanged files). Commit the result in
-   that repository yourself.
+   Existing UTF-8 instructions (including BOM and line endings) are preserved byte for byte outside
+   the managed block. `--update` replaces only an unchanged orch-owned block or copied file;
+   owner edits inside the block conflict. All conflicts are previewed before writing. A late disk
+   failure reports completed writes and records their ownership when the manifest can still be written;
+   rerun adoption to resume. A block identical to the current kit can recover its missing or stale
+   ownership record without rewriting the instruction file; other unowned blocks remain conflicts.
+   Creates publish a complete temporary file exclusively. Adoption is not a transaction across all files.
+
+   Codex uses an existing `AGENTS.override.md` before `AGENTS.md`, then configured fallback names.
+   OpenCode preserves an existing `CLAUDE.md` fallback; OpenCode/Vibe select the nearest native
+   entrypoint when adopting from a subdirectory. Custom discovery can be declared with
+   `--instruction-file codex=TEAM.md`; supply `--codex-config <file>` for effective Codex discovery
+   settings. Instruction targets cannot be adoption's own payload or JSON configuration files.
+   Unresolved configuration, instruction truncation and Vibe folder trust are reported as
+   partial readiness. Instructions prepared, hooks configured and live qualification are separate
+   states: the existing Codex hook configuration is not a claim of enforcement on your installed version.
+
+   Ask your chosen harness to coordinate with orch to activate the controller role. Workers and
+   reviewers receive their own role packets in private run prompts, even when their worktrees lack
+   ignored adoption files. The original handoff is preserved; run records hash it separately from the
+   full delivered prompt. Review role delivery remains guidance, not a security sandbox.
+
+   Review the generated files before committing anything in the adopted repository. Root bootstrap
+   pointers are portable; `.orch-adopt.json`, merged hook/MCP settings and rendered workflow copies
+   contain installation paths. Keep those machine-specific files private or adapt them to your team's
+   setup. Adoption never changes global configuration.
 4. **Register the MCP server** (adopt prints these with your real path; it never runs them):
 
    ```powershell
@@ -111,7 +138,8 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
    codex mcp add orch -- node "C:/path/to/cli-agentic-coordinator/orch/bin/orch.mjs" mcp
    ```
 
-   In Claude Code, approve the project `.mcp.json` when asked; in Codex, trust the hook once.
+   In Claude Code, approve the project `.mcp.json` when asked. Verify hook support and trust separately
+   for your installed harness; adoption does not establish enforcement.
 5. **First run.** Write a handoff from `templates/handoff.md`, then:
 
    ```powershell

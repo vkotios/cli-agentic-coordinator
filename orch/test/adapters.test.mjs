@@ -138,8 +138,11 @@ test('S7 codex end to end: prompt delivered on stdin BYTE-EXACT via "-", model r
   const rec = await waitForStatus(c.stateRoot, id, ['completed', 'failed', 'blocked'], { timeoutMs: 60000 });
   assert.equal(rec.status, 'completed', JSON.stringify(rec));
   const res = JSON.parse((await orch(['result', id, '--json'], env)).stdout);
-  const sha = crypto.createHash('sha256').update(Buffer.from(handoff, 'utf8')).digest('hex');
-  assert.match(res.final_message, new RegExp(`SHA ${sha} BYTES ${Buffer.byteLength(handoff, 'utf8')}`), 'the prompt reached codex byte-exact on stdin');
+  const delivered = fs.readFileSync(path.join(c.stateRoot, 'runs', id, 'prompt.txt'));
+  const sha = crypto.createHash('sha256').update(delivered).digest('hex');
+  assert.deepEqual(delivered.subarray(delivered.length - Buffer.byteLength(handoff)), Buffer.from(handoff));
+  assert.equal(fs.readFileSync(c.handoffPath, 'utf8'), handoff);
+  assert.match(res.final_message, new RegExp(`SHA ${sha} BYTES ${delivered.length}`), 'the materialized prompt reached codex byte-exact on stdin');
   const argv = JSON.parse(/ARGV (\[.*?\]) SHA/.exec(res.final_message)[1]);
   assert.deepEqual(argv.slice(-1), ['-']);
   assert.ok(argv.includes('-m') && argv[argv.indexOf('-m') + 1] === 'gpt-5.6-terra');

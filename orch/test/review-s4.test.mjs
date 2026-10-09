@@ -84,7 +84,10 @@ test('S4: a clean reviewer with blinding -> clean; blinded files invisible to it
   assert.match(out, /^LS README\.md$/m);
   assert.doesNotMatch(out, /LS secret\//, 'the reviewer never saw a blinded file');
   const rec = readRunRecord(c.stateRoot, rv.run_id);
-  assert.equal(readRunFile(c.stateRoot, rv.run_id, 'prompt.txt'), `Review ONLY ${rv.worktree} (absolute path). Twice: ${rv.worktree}\n`, '{{WORKTREE}} is filled with the review worktree path');
+  const delivered = readRunFile(c.stateRoot, rv.run_id, 'prompt.txt');
+  assert.ok(delivered.endsWith(`Review ONLY ${rv.worktree} (absolute path). Twice: ${rv.worktree}\n`), '{{WORKTREE}} is filled in the handoff after the role packet');
+  assert.equal(rec.role_packet.role, 'reviewer');
+  assert.ok(!delivered.includes('{{WORKTREE}}'));
   assert.equal(fs.readFileSync(prompt, 'utf8').includes('{{WORKTREE}}'), true, 'the caller\'s prompt file is untouched');
   assert.equal(rec.review_of, s.runId, 'the review run is linked to the implementer run');
   assert.equal(rec.role, 'review');

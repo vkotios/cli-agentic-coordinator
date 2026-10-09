@@ -25,6 +25,7 @@ import { requireClaim, wpKey } from './claims.mjs';
 import { parseAllowBlock, sha256File } from './scope.mjs';
 import { topLevel as gitTopLevel, resolveCommit } from './git.mjs';
 import { worktreeRecordForDir, sliceKey } from './worktrees.mjs';
+import { rolePrompt } from './role-packet.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -68,8 +69,11 @@ export async function cmdRun(args, io = console, opts = {}) {
 
   // Slice 2: a run for a work package requires the caller to hold its claim, and carries
   // the allowlist + baseline the scope guard will check. Checked BEFORE anything exists.
-  const role = opts.role || (args.role === 'review' ? 'review' : 'implement');
+  if (args.role && args.role !== 'implement') throw new OrchError('run fixes the implementer role; use orch review for a reviewer', 'bad-role');
+  const role = opts.role || 'implement';
   const workflow = await runWorkflowFields(cfg, args, dir, handoff);
+  const handoffBuf = fs.readFileSync(handoff);
+  const delivery = rolePrompt(handoffBuf, role);
 
   const laneName = args.lane || adapter.lane;
   if (!cfg.lanes[laneName]) {
@@ -91,14 +95,14 @@ export async function cmdRun(args, io = console, opts = {}) {
   // Adapter pre-flight runs in THIS process, BEFORE any record exists, so a bad handoff
   // or a bad model config fails the caller's command loudly and leaves nothing half-born.
   const pre = adapter.preLaunch
-    ? adapter.preLaunch({ model, dir, promptPath: handoff, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'] })
+    ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'] })
     : { notes: [], extra: {} };
 
   const id = newRunId();
   const P = paths(cfg, id);
   fs.mkdirSync(P.dir, { recursive: true });
 
-  const promptBuf = fs.readFileSync(handoff);
+  const promptBuf = delivery.prompt;
   fs.writeFileSync(P.prompt, promptBuf);
   fs.writeFileSync(P.stdout, '');
   fs.writeFileSync(P.stderr, '');
@@ -142,6 +146,9 @@ export async function cmdRun(args, io = console, opts = {}) {
     allow_non_ascii: !!args['allow-non-ascii'],
     no_window: !!args['no-window'],
     handoff_source: handoff,
+    handoff_bytes: handoffBuf.length,
+    handoff_sha256: crypto.createHash('sha256').update(handoffBuf).digest('hex'),
+    role_packet: delivery.provenance,
     prompt_bytes: promptBuf.length,
     prompt_sha256: crypto.createHash('sha256').update(promptBuf).digest('hex'),
     // slice 2: workflow fields (null when the run is not tied to a work package)

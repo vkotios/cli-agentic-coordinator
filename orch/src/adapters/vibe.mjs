@@ -325,7 +325,7 @@ export default {
   /** Refuse non-ASCII handoffs (cp1252 stdin decode) and write the model config. */
   preLaunch(ctx) {
     const notes = [];
-    const prompt = fs.readFileSync(ctx.promptPath);
+    const prompt = ctx.promptBuffer || fs.readFileSync(ctx.promptPath);
     if (!isAscii(prompt) && !ctx.allowNonAscii) {
       const samples = nonAsciiSamples(prompt.toString('utf8'))
         .map((s) => `line ${s.line}: ${s.chars}`)
