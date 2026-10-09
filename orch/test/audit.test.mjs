@@ -227,13 +227,15 @@ test('T1: the prompt reaches the worker BYTE-EXACT from a file descriptor', { ti
   const id = idFrom(r.stdout);
   await waitForStatus(c.stateRoot, id, ['completed', 'failed'], { timeoutMs: 60000 });
   const out = readRunFile(c.stateRoot, id, 'stdout.log');
-  const expected = crypto.createHash('sha256').update(Buffer.from(handoff, 'utf8')).digest('hex');
+  const delivered = readRunFile(c.stateRoot, id, 'prompt.txt');
+  const expected = crypto.createHash('sha256').update(Buffer.from(delivered, 'utf8')).digest('hex');
   assert.match(out, new RegExp(`STDIN-SHA256 ${expected}`), 'the prompt was altered on the way to the worker');
-  assert.match(out, new RegExp(`STDIN-BYTES ${Buffer.byteLength(handoff, 'utf8')}`));
-  // The prompt file itself is a byte copy of the handoff.
-  assert.equal(readRunFile(c.stateRoot, id, 'prompt.txt'), handoff);
+  assert.match(out, new RegExp(`STDIN-BYTES ${Buffer.byteLength(delivered, 'utf8')}`));
+  assert.ok(delivered.endsWith(handoff), 'supplied handoff bytes retained after the role packet');
+  assert.equal(fs.readFileSync(c.handoffPath, 'utf8'), handoff);
   const rec = readRunRecord(c.stateRoot, id);
   assert.equal(rec.prompt_sha256, expected);
+  assert.equal(rec.handoff_sha256, crypto.createHash('sha256').update(Buffer.from(handoff, 'utf8')).digest('hex'));
   assert.ok(handoff.includes(CANARY_TOKEN));
 });
 

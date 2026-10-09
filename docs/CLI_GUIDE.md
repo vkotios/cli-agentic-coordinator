@@ -128,16 +128,28 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 ## codex (implementer, reviewer, or alternative orchestrator)
 
-- Observed on **0.154.0**.
+- Observed on **0.154.0**; native Windows controller, implementer and reviewer roles also verified on
+  **0.156.1**.
 - Launch: `codex.exe exec --cd <worktree> --sandbox workspace-write --json -m <model>
   -c model_reasoning_effort=<e> -` with the prompt on stdin; reviews use `--sandbox read-only`.
-  Windows sandbox behaviour itself is unverified.
+  On 0.156.1, native session records confirmed `workspace-write` for implementation and `read-only`
+  for review; the review worktree remained clean. Broader sandbox enforcement is not qualified here.
+- **Native Windows needs a configured sandbox implementation** (verified on 0.156.1). Preserve the
+  existing `[windows] sandbox` selection. With no selection, `--ignore-user-config` can leave a
+  requested `workspace-write` session read-only. Check the effective native permissions before
+  dispatch; a requested launch flag alone does not prove write access.
+- **Controllers may need reviewed host access for orch supervision** (verified on 0.156.1). Inside
+  the Windows sandbox, the real account lookup can fail with `uv_os_get_passwd returned ENOMEM`;
+  orch then refuses to derive a lane identifier. Request per-command approved host execution for
+  orch supervisor commands and protected Git operations when needed. Keep implementation and
+  review sandboxes separate, preserve approval review, and stop on rejection. Do not replace the
+  real account lookup with environment values or disable rules to get past this guard.
 - **Always pin the model** (verified): an unpinned launch silently uses the model in
   `~/.codex/config.toml`. orch requires `--model` and passes the effort explicitly on every launch, because
   a user config can carry conflicting values. Models marked `requires_permission` in the roster are never
   proposed by `orch pick`, and `orch run` needs `--owner-approved-model` for them.
-- `--json` puts incremental JSONL events on stdout: a good heartbeat (verified). With `--json`, codex
-  writes **nothing** on stderr, so the `model:` header is missing (verified); orch then reads this run's own
+- `--json` puts incremental JSONL events on stdout: a good heartbeat (verified). With `--json`, the
+  `model:` header is missing; stderr can still carry warnings (verified on 0.156.1). orch reads this run's own
   session rollout under `$CODEX_HOME/sessions` (or `~/.codex/sessions`), bound by thread id and working
   directory, and records `unknown` when the binding is ambiguous.
 - **Quota signature** (verified): exit 1, `{"type":"error"}` / `{"type":"turn.failed"}` with a message

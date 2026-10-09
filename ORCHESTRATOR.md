@@ -63,7 +63,10 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 Every finding/discovery ends in exactly one place before the WP closes: fixed in scope · `TASKS.md` (new WP) · `docs/OPEN_QUESTIONS.md` (owner decision) · the ledger via `orch record --notes` (workflow/model observation). The final review confirms nothing was dropped.
 
 ## 8. Documentation duty
-Workers succeed or fail on the docs. After every WP: `AGENTS.md` still ≤ 60 lines and true; `/docs` matches the code as merged; `docs/CLI_GUIDE.md` updated with every new CLI quirk the same day it is found.
+Workers succeed or fail on the docs. After every WP: keep orch-owned instructions concise and true;
+preserve existing owner instructions rather than shortening them to meet a line-count convention.
+Update only orch-owned regions; report edits inside them as conflicts. `/docs` matches the code as
+merged; `docs/CLI_GUIDE.md` is updated with every new CLI quirk the same day it is found.
 
 ## 9. Stop and ask the owner
 Destructive or structural operations (plan → approval → execute once → read back); a guard blocks something you believe is needed; design-level review failure; anything spending money beyond a set cap.

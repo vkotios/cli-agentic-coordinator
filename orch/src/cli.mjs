@@ -28,7 +28,7 @@ export const BOOLEANS = new Set([
   // slice 3
   'dry-run', 'update',
 ]);
-export const REPEATABLE = new Set(['flag', 'allow', 'blind']);
+export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 
 export function parseArgs(argv) {
   const out = { _: [] };

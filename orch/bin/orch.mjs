@@ -49,8 +49,10 @@ Workflow (slice 2)
 
 Integration (slice 3)
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands
-  orch adopt --repo <path> [--dry-run] [--update] [--json]  install the kit's hook/skill/agents/MCP entry;
-           --update replaces only files adopt wrote and nobody changed since (.orch-adopt.json)
+  orch adopt --repo <path> [--harness claude|codex|opencode|vibe]... [--dry-run] [--update] [--json]
+           append owned instruction blocks and install only selected integrations (default Claude + Codex)
+           [--codex-config <effective-config.toml>] [--instruction-file <harness>=<relative.md>]...
+           --update replaces only unchanged orch-owned blocks/copies (.orch-adopt.json)
 
 Common: --state-root <dir>   (default: orch/.state; or $ORCH_STATE_ROOT / "stateRoot" in orch.config.json)
 Configuration: orch.config.json at the repository root (see orch.config.example.json and README.md).

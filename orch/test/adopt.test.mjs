@@ -35,7 +35,15 @@ const json = (r) => {
 };
 
 const EXPECTED = [
+  'CLAUDE.md',
+  'AGENTS.md',
   '.claude/settings.json',
+  '.orch/instructions/common.md',
+  '.orch/instructions/orchestrator.md',
+  '.orch/instructions/implementer.md',
+  '.orch/instructions/reviewer.md',
+  '.orch/instructions/protocol.md',
+  '.orch/instructions/workflow.md',
   '.claude/skills/orchestrate/SKILL.md',
   '.claude/skills/orchestrate/workflow.md',
   '.claude/agents/researcher.md',

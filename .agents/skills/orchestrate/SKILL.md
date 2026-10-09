@@ -1,9 +1,12 @@
 ---
 name: orchestrate
-description: Run a work package in an adopted repository through the orch tool - claim, pick a worker model, create the slice worktree, launch the worker with orch run, monitor it, check scope, verify, review with a different model, record the gate decision, record the run, release. Use for ANY implementation work package in a repository that has adopted cli-agentic-coordinator (orch), instead of writing the code yourself or starting a worker CLI directly.
+description: Use when the user asks you to coordinate a work package with orch in an adopted repository and you are its controller. Do not activate for an orch-launched implementer or reviewer, or for development of the kit itself.
 ---
 
 # orchestrate (Codex)
+
+Activate only for the controller role. Keep owner/project rules in force and report conflicts.
+An orch launch packet assigns workers and reviewers their roles; this skill does not reassign them.
 
 Follow `workflow.md` in this directory step by step; it is the body shared with Claude Code
 (in the kit repo itself it lives at `skills/orchestrate/workflow.md`).

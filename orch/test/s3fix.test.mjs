@@ -183,7 +183,7 @@ test('ORCH addition: manifest + --update replaces ONLY files adopt wrote and nob
   assert.equal(first.code, 0);
   const manFile = path.join(repo, '.orch-adopt.json');
   const man = JSON.parse(fs.readFileSync(manFile, 'utf8'));
-  assert.equal(Object.keys(man.files).length, 7, 'the manifest lists the 7 copied files');
+  assert.equal(Object.keys(man.files).length, 13, 'the manifest lists payload and wrapper copies separately from shared blocks');
   const hash = (s) => crypto.createHash('sha256').update(String(s).replace(/\r\n/g, '\n')).digest('hex');
   const kitCopy = fs.readFileSync(path.join(repo, '.claude/agents/researcher.md'), 'utf8');
 
