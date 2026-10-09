@@ -27,6 +27,7 @@ import { topLevel as gitTopLevel, resolveCommit } from './git.mjs';
 import { worktreeRecordForDir, sliceKey } from './worktrees.mjs';
 import { rolePrompt } from './role-packet.mjs';
 import { withWpOperation, guardRunResource, assertPackageOpen } from './resources.mjs';
+import { beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync, maintainOnUse, withRunOperation } from './retention.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -44,11 +45,15 @@ const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
  */
 export async function cmdRun(args, io = console, opts = {}) {
   const cfg = loadConfig(args['state-root']);
+  const maintenance = await maintainOnUse(cfg);
+  if (maintenance && maintenance.state === 'pending' && !args.json) io.log(`maintenance pending: ${maintenance.reason || 'retry with orch maintain'}`);
+  const launchIo = args.json && maintenance ? { log: (s) => io.log(JSON.stringify({ ...JSON.parse(s), maintenance }, null, 2)) } : io;
   const wp = args.wp || opts.recordExtra && opts.recordExtra.wp;
-  return withWpOperation(cfg, wp, () => {
+  const result = await withWpOperation(cfg, wp, () => {
     assertPackageOpen(cfg, wp, args.by || opts.recordExtra && opts.recordExtra.by);
-    return args.dir ? guardRunResource(cfg, path.resolve(args.dir), () => runLocked(args, io, opts)) : runLocked(args, io, opts);
+    return args.dir ? guardRunResource(cfg, path.resolve(args.dir), () => runLocked(args, launchIo, opts)) : runLocked(args, launchIo, opts);
   });
+  return maintenance ? { ...result, maintenance } : result;
 }
 
 async function runLocked(args, io, opts) {
@@ -110,12 +115,14 @@ async function runLocked(args, io, opts) {
 
   const id = newRunId();
   const P = paths(cfg, id);
-  fs.mkdirSync(P.dir, { recursive: true });
+  beginRunArtifacts(cfg, id);
+  fs.mkdirSync(P.dir);
 
   const promptBuf = delivery.prompt;
   fs.writeFileSync(P.prompt, promptBuf);
   fs.writeFileSync(P.stdout, '');
   fs.writeFileSync(P.stderr, '');
+  confirmRunArtifacts(cfg, id);
 
   const built = adapter.build({
     model,
@@ -554,15 +561,18 @@ export async function inspect(cfg, id, dl) {
     directoryRelevant: !!(adapter && adapter.directoryEvidence),
   });
 
+  const unknownEvidence = { files: { stdout: { state: 'unknown' }, stderr: { state: 'unknown' }, prompt: { state: 'unknown' } }, snapshot: null };
+  const evidence = await withDeadline(() => transcriptEvidenceAsync(cfg, id).catch((e) => ({ ...unknownEvidence, error: e.message })), dl.at('read retention evidence').remaining(), unknownEvidence, dl);
+  const archived = TERMINAL.has(rec.status) && (Object.values(evidence.files).some((f) => f.state === 'purged') || evidence.error && evidence.files.stdout.state !== 'available');
   return {
     id,
     status: TERMINAL.has(rec.status) ? rec.status : derived.terminal ? `${derived.status} (derived, not written)` : rec.status,
     record_status: rec.status,
-    derived_status: derived.status,
-    derived_reason: derived.reason,
-    derived_rule: derived.rule,
-    reason: rec.reason || (derived.terminal ? derived.reason : null),
-    note: derived.note || null,
+    derived_status: archived ? rec.status : derived.status,
+    derived_reason: archived ? rec.reason : derived.reason,
+    derived_rule: archived ? 'retained-terminal-record' : derived.rule,
+    reason: archived ? rec.reason || null : rec.reason || (derived.terminal ? derived.reason : null),
+    note: archived ? rec.status_note || null : derived.note || null,
     cli: rec.cli,
     lane: rec.lane,
     model_canonical: rec.model_canonical,
@@ -592,6 +602,8 @@ export async function inspect(cfg, id, dl) {
     quiet_seconds: rec.last_activity_at ? Math.round((Date.now() - Date.parse(rec.last_activity_at)) / 1000) : null,
     stdout_bytes: outStat ? outStat.size : 0,
     stderr_bytes: errStat ? errStat.size : 0,
+    transcripts: evidence.files,
+    retention_evidence_error: evidence.error || null,
     process_table_read: tableRead ? table !== null : false,
     created_at: rec.created_at,
     ended_at: rec.ended_at || null,
@@ -676,6 +688,8 @@ export async function cmdStatus(args, io = console) {
       io.log(`  ESCAPED HELPER pid ${h.pid} (${h.name}) is alive. orch did not kill it and never will.`);
     }
     io.log(`  stdout=${r.stdout_bytes}B stderr=${r.stderr_bytes}B  last activity ${r.last_activity_at ?? '-'} (${r.quiet_seconds ?? '-'}s ago)`);
+    for (const [stream, payload] of Object.entries(r.transcripts || {})) if (payload.state !== 'available') io.log(`  ${stream}: ${payload.state}`);
+    if (r.retention_evidence_error) io.log(`  retention evidence error: ${r.retention_evidence_error}`);
     if (r.undetermined) io.log(`  ${r.undetermined}`);
   }
   return { runs: rows };
@@ -714,8 +728,10 @@ export function cmdResult(args, io = console) {
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const P = paths(cfg, id);
+  const evidence = transcriptEvidence(cfg, id);
+  if (evidence.files.stdout.state === 'unknown') throw new OrchError(evidence.error || 'stdout evidence is unknown', 'retention-unreadable');
   const stdout = safeRead(P.stdout);
-  const finalMessage = extractFinalMessage(rec.cli, stdout);
+  const finalMessage = evidence.files.stdout.state === 'purged' ? evidence.snapshot.final_message : extractFinalMessage(rec.cli, stdout);
   const out = {
     id,
     status: rec.status,
@@ -729,6 +745,9 @@ export function cmdResult(args, io = console) {
     model_mismatch: rec.model_mismatch === undefined ? null : rec.model_mismatch,
     dir_evidence: rec.dir_evidence || 'none',
     final_message: finalMessage,
+    final_message_truncated: evidence.files.stdout.state === 'purged' ? evidence.snapshot.final_message_truncated : false,
+    transcripts: evidence.files,
+    retention_evidence_error: evidence.error || null,
     warnings: rec.post_exit_warnings || [],
     escaped_helpers: rec.escaped_helpers || [],
     paths: { ...P },
@@ -741,6 +760,9 @@ export function cmdResult(args, io = console) {
   if (out.model_actual) io.log(`model actual: ${out.model_actual}`);
   if (out.model_mismatch === true) io.log(`** MODEL MISMATCH ** requested ${out.model_canonical}`);
   for (const w of out.warnings) io.log(`warning: ${w}`);
+  for (const [stream, payload] of Object.entries(out.transcripts)) if (payload.state !== 'available') io.log(`${stream}: ${payload.state}`);
+  if (out.retention_evidence_error) io.log(`retention evidence error: ${out.retention_evidence_error}`);
+  if (out.final_message_truncated) io.log('compact final message truncated at 65536 bytes');
   io.log('--- final message ---');
   io.log(finalMessage || '(no output)');
   return out;
@@ -754,8 +776,16 @@ export function cmdLog(args, io = console) {
   const P = paths(cfg, id);
   if (!fs.existsSync(P.dir)) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const which = args.stream || 'stderr';
+  if (!['stdout', 'stderr', 'keeper', 'events'].includes(which)) throw new OrchError('invalid log stream', 'bad-stream');
   const file =
     which === 'stdout' ? P.stdout : which === 'keeper' ? P.keeper : which === 'events' ? P.events : P.stderr;
+  const evidence = ['stdout', 'stderr'].includes(which) ? transcriptEvidence(cfg, id) : null;
+  const payload = evidence ? evidence.files[which] : null;
+  if (payload && payload.state === 'unknown') throw new OrchError(evidence.error || 'transcript evidence is unknown', 'retention-unreadable');
+  if (payload && payload.state !== 'available') {
+    io.log(`${which}: ${payload.state === 'purged' ? 'purged by retention policy; compact result remains available via orch result' : 'unexpectedly missing'}`);
+    return { file, lines: 0, state: payload.state };
+  }
   const text = safeRead(file);
   const n = args.tail != null ? Number(args.tail) : 0;
   const lines = text.split(/\r?\n/);
@@ -1102,6 +1132,16 @@ async function cancelKeeper(cfg, rec, args, io) {
 export async function cmdMonitor(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   const id = reqPositional(args, 'monitor <id>');
+  try {
+    return await withRunOperation(cfg, id, () => monitorLocked(cfg, id, args, io));
+  } catch (e) {
+    if (e.code !== 'resource-locked') throw e;
+    const out = { id, monitor: 'not-started', reason: e.message };
+    emit(args, io, out, `${id}: no monitor started (${e.message})`);
+    return { ...out, exitCode: 3 };
+  }
+}
+async function monitorLocked(cfg, id, args, io) {
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const P = paths(cfg, id);

@@ -19,6 +19,8 @@ import { canonicalId, familyOf, loadRoster } from './models.mjs';
 import { git, splitZ, topLevel, worktreeList } from './git.mjs';
 import { readRounds, computeGate } from './gate.mjs';
 import { publishExclusive } from './exclusive.mjs';
+import { withRunOperation } from './retention.mjs';
+import { withWpOperation } from './resources.mjs';
 
 export const DISPOSITIONS = ['accepted', 'accepted-with-fixes', 'rejected', 'blocked', 'inconclusive-timeout', 'failed-launch'];
 /** What counts as a FAILURE of a workload for the rotation rule. `blocked` (quota,
@@ -93,6 +95,12 @@ function reviewsOf(cfg, runId) {
 }
 
 export async function cmdRecord(cfg, args, io) {
+  const id = (args._ || [])[0];
+  if (!id) throw new OrchError('usage: orch record <run-id> --disposition <d>', 'missing-arg');
+  const rec = readRun(cfg, id);
+  return withWpOperation(cfg, rec && rec.wp, () => withRunOperation(cfg, id, () => recordLocked(cfg, args, io)));
+}
+async function recordLocked(cfg, args, io) {
   const id = (args._ || [])[0];
   if (!id) throw new OrchError('usage: orch record <run-id> --disposition <d> [--notes <text>] ...', 'missing-arg');
   const disposition = String(args.disposition || '');

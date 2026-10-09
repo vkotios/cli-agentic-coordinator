@@ -98,6 +98,7 @@ function removePartialFiles(r) {
 export async function withOperationLock(cfg, key, fn, waitMs = 0) {
   const name = crypto.createHash('sha256').update(key).digest('hex');
   const file = path.join(directory(cfg), 'locks', `${name}.lock`);
+  if (!samePath(path.resolve(file), resolvedPath(file))) throw new OrchError('operation lock path traverses a link', 'resource-path-unsafe');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const token = crypto.randomBytes(16).toString('hex');
   const data = JSON.stringify({ token, pid: process.pid, at: nowIso(), key });
@@ -106,10 +107,19 @@ export async function withOperationLock(cfg, key, fn, waitMs = 0) {
     if (Date.now() >= until) throw new OrchError(`operation locked: ${key}; inspect an interrupted lock, never take it over automatically`, 'resource-locked');
     await sleep(25);
   }
+  const identity = stamp(file);
+  const release = () => {
+    // A graceful process.exit does not execute finally. Release only our exact
+    // physical lock on that path; abrupt termination leaves it for inspection.
+    try {
+      if (samePath(path.resolve(file), resolvedPath(file)) && stamp(file) === identity && JSON.parse(fs.readFileSync(file, 'utf8')).token === token) fs.unlinkSync(file);
+    } catch { /* preserve an uncertain lock */ }
+  };
+  process.once('exit', release);
   try { return await fn(); }
   finally {
-    // Only remove the lock we acquired; never a replaced lock.
-    try { if (JSON.parse(fs.readFileSync(file, 'utf8')).token === token) fs.unlinkSync(file); } catch { /* preserve an uncertain lock */ }
+    process.removeListener('exit', release);
+    release();
   }
 }
 export const withWpOperation = (cfg, wp, fn) => wp ? withOperationLock(cfg, `wp:${wpKey(wp)}`, fn, 5000) : fn();

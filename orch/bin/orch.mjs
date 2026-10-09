@@ -49,6 +49,11 @@ Workflow (slice 2)
   orch cleanup --wp <WP> --dry-run [--json]
   orch cleanup --wp <WP> --apply --by <holder> [--retain <decisions.json>] [--json]
   orch finish <WP> --by <holder> [--retain <decisions.json>] [--json]
+  orch maintain --dry-run [--after <id>] [--json]          read-only storage retention inventory
+  orch maintain --apply [--run <id> --by <operator> --reason <text>] [--after <id>] [--json]
+  orch maintain --enroll <id> --by <operator> --reason <text> [--json]
+  orch maintain --pin <id> | --unpin <id> --by <operator> --reason <text> [--json]
+           retention is disabled until configured in <state-root>/config.json
 
 Integration (slice 3)
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands

@@ -13,7 +13,7 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
-  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish',
+  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain',
 ];
 
 /** A minimal JSON-RPC client over the server's stdio. */
@@ -279,6 +279,7 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
 
   // cleanup preview is read-only; finish refuses the unrecorded reviewer run.
   await equalCli('cleanup', await srv.call('cleanup', { wp: 'WP-M', 'dry-run': true }), ['cleanup', '--wp', 'WP-M', '--dry-run']);
+  await equalCli('maintain', await srv.call('maintain', { 'dry-run': true }), ['maintain', '--dry-run']);
   const incomplete = await srv.call('finish', { wp: 'WP-M', by: 'claude-code' });
   assert.equal(incomplete.structuredContent.exit_code, 3, text(incomplete));
   assert.equal(incomplete.structuredContent.output.state, 'incomplete');

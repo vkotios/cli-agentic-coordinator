@@ -38,6 +38,7 @@ import { canonicalId, familyOf, loadRoster } from './models.mjs';
 import { normalizeRepoPath, sha256File } from './scope.mjs';
 import { cmdRun } from './commands.mjs';
 import { beginResource, confirmResource, readResource, saveResource, withWpOperation, withResourceLock, removeResource, cleanupAuthority, assertPackageOpen } from './resources.mjs';
+import { withRunOperation } from './retention.mjs';
 
 /**
  * The default review root: a neutral per-user directory, never the temp directory and
@@ -234,6 +235,9 @@ export function compareSourceStatus(before, after) {
 export async function cmdReview(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   if (args.finish) return finishReview(cfg, String(args.finish), args, io);
+  return withRunOperation(cfg, req(args, 'run'), () => reviewLocked(args, io, cfg));
+}
+async function reviewLocked(args, io, cfg) {
 
   const implId = req(args, 'run');
   const impl = readRun(cfg, implId);
@@ -501,7 +505,7 @@ async function finishReview(cfg, reviewId, args, io) {
   const file = reviewFile(cfg, reviewId);
   const rv = readJson(file, null);
   if (!rv) throw new OrchError(`no such review: ${reviewId}`, 'no-such-review');
-  return withWpOperation(cfg, rv.wp, () => finishReviewLocked(cfg, reviewId, args, io, file, rv));
+  return withWpOperation(cfg, rv.wp, () => rv.run_id ? withRunOperation(cfg, rv.run_id, () => finishReviewLocked(cfg, reviewId, args, io, file, rv)) : finishReviewLocked(cfg, reviewId, args, io, file, rv));
 }
 
 async function finishReviewLocked(cfg, reviewId, args, io, file, rv) {
