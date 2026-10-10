@@ -1,6 +1,6 @@
 # cli-agentic-coordinator
 
-One orchestrator agent (Claude Code or Codex) coordinating **worker coding CLIs** (opencode, vibe,
+One orchestrator agent in your chosen harness coordinating **worker coding CLIs** (opencode, vibe,
 codex, agy) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
 write the code. The `orch` tool is the only way work gets launched, and it keeps the record.
 
@@ -31,7 +31,7 @@ The protocol the orchestrator follows is `ORCHESTRATOR.md`; the step-by-step ski
 
 ## How you use it
 
-You talk to your orchestrator (Claude Code or Codex) in a repository you have adopted, as you normally
+You talk to your orchestrator in a repository you have adopted, as you normally
 would: "add CSV export to the report command", "fix issue 42". The orchestrator does not write the code.
 It follows the `orchestrate` skill and drives `orch` (as a CLI or through its MCP tools):
 
@@ -58,7 +58,9 @@ escalates.
 - **git** on `PATH`.
 - Windows PowerShell 5.1 (ships with Windows). **Windows Terminal** (`wt.exe`) is optional: when present,
   each run gets a read-only log window.
-- An orchestrator host: **Claude Code** and/or **Codex**.
+- An orchestrator host: **Claude Code**, **Codex**, **OpenCode** or **Vibe**, with the native
+  instructions and tools configured. Qualify the controller lifecycle on your installed harness,
+  model and profile; instruction adoption and claim support alone do not establish readiness.
 - At least one supported worker CLI, **installed and logged in by you** (orch never installs or
   authenticates anything):
 

@@ -47,6 +47,13 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   own stderr, which is the heartbeat (verified). stdout carries only the final message, in one chunk at
   exit (verified), so it is useless as a heartbeat.
 - Permissions in the opencode config must be `allow` / `deny` only: `ask` hangs a headless run (verified).
+- On 1.18.31, `write`/`edit` grants match worktree-relative paths, although the tools accept absolute
+  file paths (verified). A sibling inputs directory needs an edit grant such as `../inputs/*` as well
+  as a scoped `external_directory` grant in the permission config; an absolute edit pattern does not
+  authorize those writes.
+- Declare custom provider model `limit.context` and `limit.output` to match the gateway. A controller
+  on 1.18.31 with undeclared limits hit `ContextOverflowError` before delegation (verified).
+  Declaring limits or enabling compaction alone does not prove recovery; confirm with a completed live run.
 - An `agent=compaction` step on a 27B model cost about 16 minutes and lost context (verified). Treat it
   as "task too big for this model", not as progress.
 - A local gateway usually serves **one model at a time**: never run two local workers at once (orch's
@@ -95,6 +102,31 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   review in a throwaway detached worktree, and check `git status` / `git reflog` of the worktree **and** of
   the source repository afterwards. `orch review` does these checks.
 - `system_prompt_id` is unreliable on Windows (unverified): paste role rules into the prompt.
+- For an orchestrator, use the `vibe` claim identity consistently through claim, delegation,
+  review and finish. Native instruction discovery and a complete controller lifecycle require
+  separate qualification; claim support alone does not establish either.
+- A headless controller needs a tool profile that can write its handoffs and reports. Enabling
+  only `bash` and `read_file` is insufficient: file writes are denied, and shell redirection may
+  request approval even when bash permission is `always` (observed on 2.26.0). Enable `write_file`
+  with a path allowlist for the controller's input directory; keep implementation edits delegated
+  to orch workers. A shell permission does not provide filesystem containment.
+- On 2.26.0, `read_file` permission `always` still requests approval for files outside the
+  workdir (verified). Grant the exact handoff/state paths explicitly. For nested paths, use Vibe's
+  directory grants; an absolute `*` or `**` pattern does not recursively cover them.
+  Shell variable expansion and file redirection can also request approval. Literal orch
+  commands and scoped file tools avoid those unnecessary prompts.
+- Verify the active account before a live launch. On 2.26.0, an inherited `MISTRAL_API_KEY` takes
+  precedence over saved sign-in and can select an API account instead of a subscription (verified).
+  When using saved subscription sign-in, discard an unintended inherited key in the child
+  environment and confirm the account plan; changing the model config does not change billing.
+- Review containment accepts an ignored adapter-written config only while its recorded hash
+  still matches. A changed config or additional ignored output remains a containment breach;
+  do not use blinding or a broad ignore exemption to hide it.
+- On 2.26.0, `--max-price` uses token usage and configured model prices as a session stopping threshold
+  (documented; live stopping behavior unverified).
+  It does not establish the provider's billing mode or the remaining subscription allowance, and
+  a turn can exceed the threshold before the next check. Select turn/token limits and quota
+  handling appropriate to the configured account; do not classify every Vibe route as metered.
 
 ## agy (Gemini)
 

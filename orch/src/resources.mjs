@@ -99,7 +99,18 @@ function removePartialFiles(r) {
 export async function withOperationLock(cfg, key, fn, waitMs = 0) {
   const name = crypto.createHash('sha256').update(key).digest('hex');
   const file = path.join(directory(cfg), 'locks', `${name}.lock`);
-  if (!samePath(path.resolve(file), resolvedPath(file))) throw new OrchError('operation lock path traverses a link', 'resource-path-unsafe');
+  // Another holder may remove the leaf between existsSync and realpath. Check the
+  // stable parent and inspect the leaf without following it; disappearance is
+  // normal, while a link or non-file is still refused. Exclusive publication
+  // below arbitrates acquisition even if another holder appears after this check.
+  const parent = path.dirname(file);
+  if (!samePath(path.resolve(parent), resolvedPath(parent))) throw new OrchError('operation lock path traverses a link', 'resource-path-unsafe');
+  try {
+    const leaf = fs.lstatSync(file);
+    if (leaf.isSymbolicLink() || !leaf.isFile()) throw new OrchError('operation lock path traverses a link or is not a regular file', 'resource-path-unsafe');
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const token = crypto.randomBytes(16).toString('hex');
   const data = JSON.stringify({ token, pid: process.pid, at: nowIso(), key });

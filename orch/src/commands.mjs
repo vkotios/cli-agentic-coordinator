@@ -377,7 +377,7 @@ async function runWorkflowFields(cfg, args, dir, handoff) {
   const by = args.by || null;
   if (wp) {
     wpKey(wp);
-    if (!by) throw new OrchError('--wp needs --by <claude-code|codex|owner>: a run for a work package requires its claim', 'missing-arg');
+    if (!by) throw new OrchError('--wp needs --by <claude-code|codex|opencode|vibe|owner>: a run for a work package requires its claim', 'missing-arg');
     requireClaim(cfg, wp, by);
   }
   if (slice) sliceKey(slice);

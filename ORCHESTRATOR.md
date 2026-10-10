@@ -1,4 +1,4 @@
-# ORCHESTRATOR.md — protocol for whoever orchestrates (Claude Code or Codex)
+# ORCHESTRATOR.md — protocol for an orch controller
 
 Host-neutral. Everything that must not be forgotten is a script or a file, not memory.
 Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch pick` and model evidence: `docs/MODELS.md` and the ledger.
@@ -7,7 +7,7 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.
 - You **do not write implementation code**, and you do not solve the task in the handoff. A handoff gives scope, anchors, contracts and machine-checkable acceptance criteria. It contains solution text only when the contract *is* the text (exact strings, names, schemas).
 - You alone accept or reject a branch/worktree and merge it. Workers never commit to the integration branch, push, or merge.
-- **One orchestrator per work package.** `orch claim <WP>` takes an exclusive lock before any worktree or run is created; if Claude Code holds it, Codex must not act on that WP, and vice versa.
+- **One orchestrator per work package.** `orch claim <WP>` takes an exclusive lock before any worktree or run is created; when one controller holds it, another controller must not act on that WP.
 - Exception: after 3 failed attempts **and** an adjudicator ruling (§5), you may intervene. Record `controller-intervened`.
 
 ## 2. Lifecycle of a work package (WP)
@@ -28,7 +28,7 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 
 ## 3. Monitoring (mandatory for every run, local and cloud)
 - Within **90 s** of launch: `orch status <id>` must show a live process and first log activity. If not: failed launch — read the log, fix the cause, record it. Do not blind-retry.
-- Then check on a schedule (Claude Code: Monitor on the run log plus a ScheduleWakeup fallback; Codex: periodic `orch status`). Interval 3–5 min cloud, 5–10 min local.
+- Then check on a schedule (Claude Code: Monitor on the run log plus a ScheduleWakeup fallback; Codex, OpenCode and Vibe: periodic `orch status`). Interval 3–5 min cloud, 5–10 min local. Qualify the controller's ability to perform these checks in its configured tool profile.
 - **Judge activity, not speed.** A slow local run that is producing steps is healthy. Do not set short timeouts on local models.
 - Activity = the latest of: worker output, its log file, a structured event, a file change in the worktree. No real activity for 6 min (local: 10 min during model load) → the run is reported `suspected_stall`. Known dead-but-looks-alive signatures are in `docs/CLI_GUIDE.md`.
 - **A stall is advisory. Nothing kills a run automatically.** You inspect, then decide. Before stopping a run, say why. A run stopped without a verdict is `inconclusive-timeout`, not a model failure. "Exit 0 with empty output" is a failure, not a success.
@@ -39,7 +39,7 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 | Workload | First choice | Notes |
 |---|---|---|
 | XS/S mechanical, tests, scoped edits | local models via opencode | rotate across models; slow is fine |
-| S/M multi-file mechanical, docs | vibe (Mistral) | metered cloud account |
+| S/M multi-file mechanical, docs | vibe | verify provider and subscription/API account before launch |
 | S/M needing a strong model, or after local+vibe failed | Codex | expensive models only with the owner's permission (`requires_permission` in the roster) |
 | Whole-branch review | agy (Gemini) or vibe | never the implementer's model |
 | Task-level review | any other model, local allowed if file list is small | |

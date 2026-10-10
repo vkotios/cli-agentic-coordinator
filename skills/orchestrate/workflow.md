@@ -8,11 +8,12 @@ Below, `orch` means `node "{{KIT}}/orch/bin/orch.mjs"` (in the kit repo itself, 
 The same commands exist as MCP tools of the `orch` server (`orch mcp`): run, status, result, log_tail,
 cancel, wait_lane, claim, release, claims, worktree_create, worktree_list, scope, review, review_finish,
 gate_record, gate_status, record, pick, cleanup, finish. Supported claim identities are `claude-code`, `codex`,
-and `owner`; the same identity must hold and release the claim. OpenCode/Vibe controller
-qualification and dedicated claim identities remain pending; preparing their instructions does
-not establish end-to-end controller support.
+`opencode`, `vibe`, and `owner`; the same identity must hold and release the claim. Controller readiness
+requires live qualification with the adopted repository's configured models and tool permissions;
+preparing instructions alone does not establish end-to-end controller support.
 
-Never start opencode / vibe / agy / codex exec / copilot -p yourself: the guard hook denies it. Never write
+Never start opencode / vibe / agy / codex exec / copilot -p yourself: use `orch run` or `orch review`.
+The guard hook denies direct launches only when the installed host invokes it. Never write
 implementation code yourself. A guard or hook that blocks you is a stop condition.
 The guard reads command TEXT: it stops the direct forms and the common wrappers, but it cannot see a launch
 from a script file, an alias or function, or a variable set in an earlier command. It prevents accidents; it
@@ -32,7 +33,8 @@ is not a sandbox - the rule above is yours to keep, not the guard's.
 6. **Monitor** - within 90 s `orch status <id>` must show a live worker and first activity; if not, it is a
    failed launch: read `orch log <id> --tail 80`, fix the cause, record it. Then keep checking
    (cloud every 3-5 min, local every 5-10 min) - Claude Code: a Monitor on the run's stderr log plus a
-   ScheduleWakeup fallback; Codex: periodic `orch status <id>`. A `suspected_stall` is advisory: inspect
+   ScheduleWakeup fallback; Codex, OpenCode and Vibe: periodic `orch status <id>`. Qualify this monitoring
+   ability in the controller's configured tool profile. A `suspected_stall` is advisory: inspect
    first; `orch cancel <id>` only with a stated reason.
 7. **Result + scope** - `orch result <id>`; then `orch scope <id>` (fail = a path outside the allowlist:
    the run goes back, it never reaches review).

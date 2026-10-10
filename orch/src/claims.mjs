@@ -18,7 +18,7 @@ import { OrchError } from './errors.mjs';
 import { nowIso, readJson } from './util.mjs';
 import { publishExclusive, readRecord } from './exclusive.mjs';
 
-export const CLAIMANTS = ['claude-code', 'codex', 'owner'];
+export const CLAIMANTS = ['claude-code', 'codex', 'opencode', 'vibe', 'owner'];
 
 /** A WP name is also a file name: restrict it, and fold case (NTFS is case-insensitive). */
 export function wpKey(wp) {
@@ -92,7 +92,7 @@ export function requireClaim(cfg, wp, by) {
 
 export async function cmdClaim(cfg, args, io) {
   const wp = (args._ || [])[0];
-  if (!wp) throw new OrchError('usage: orch claim <WP> --by <claude-code|codex|owner> [--session <label>] [--note <text>]', 'missing-arg');
+  if (!wp) throw new OrchError('usage: orch claim <WP> --by <claude-code|codex|opencode|vibe|owner> [--session <label>] [--note <text>]', 'missing-arg');
   const key = wpKey(wp);
   const by = assertClaimant(args.by);
   const rec = {
@@ -133,7 +133,7 @@ export async function cmdClaim(cfg, args, io) {
 
 export async function cmdRelease(cfg, args, io) {
   const wp = (args._ || [])[0];
-  if (!wp) throw new OrchError('usage: orch release <WP> --by <claude-code|codex|owner> [--force --reason <text>]', 'missing-arg');
+  if (!wp) throw new OrchError('usage: orch release <WP> --by <claude-code|codex|opencode|vibe|owner> [--force --reason <text>]', 'missing-arg');
   const key = wpKey(wp);
   const by = assertClaimant(args.by);
   const force = !!args.force;
