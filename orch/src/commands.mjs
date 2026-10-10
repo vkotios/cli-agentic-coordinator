@@ -28,6 +28,7 @@ import { worktreeRecordForDir, sliceKey } from './worktrees.mjs';
 import { rolePrompt } from './role-packet.mjs';
 import { withWpOperation, guardRunResource, assertPackageOpen } from './resources.mjs';
 import { beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync, maintainOnUse, withRunOperation } from './retention.mjs';
+import { readArchived, readArchivedAsync, evidenceIdsAsync, evidencePath, assertLive, digest, stamp, safe } from './archive.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -473,6 +474,14 @@ function readAdmission(child, admissionFile, timeoutMs) {
  */
 export async function inspect(cfg, id, dl) {
   const P = paths(cfg, id);
+  let compact;
+  try { compact = await withDeadline(() => readArchivedAsync(cfg, 'run', id).catch((e) => ({ archive_error: e.message })), dl.at('read compact record').remaining(), null, dl); }
+  catch (e) { return { id, status: 'record-unreadable', reason: e.message, retention_evidence_error: e.message, paths: P }; }
+  if (compact?.archive_error) return { id, status: 'record-unreadable', reason: compact.archive_error, retention_evidence_error: compact.archive_error, paths: P };
+  if (compact) {
+    const rec = compact.record, facts = compact.facts;
+    return { ...rec, record_status: rec.status, derived_status: rec.status, derived_reason: rec.reason || null, derived_rule: 'retained-terminal-record', reason: rec.reason || null, metadata: compact.metadata, transcripts: compact.transcripts.files, worker_pid: facts.workerPid || null, worker_identity: facts.workerExit || facts.blocked ? 'exited' : 'unknown', keeper_pid: compact.spawned && compact.spawned.keeper_pid || null, keeper_identity: 'exited', monitor: 'not running (retired record)', lane_state: 'historical run; lane not probed', stdout_bytes: 0, stderr_bytes: 0, paths: P, undetermined: dl.expired() ? dl.text() : null };
+  }
   const rec = await withDeadline(() => fsp.readFile(P.record, 'utf8').then(JSON.parse), dl.at('read run.json').remaining(), null, dl);
   if (!rec) {
     return { id, status: 'record-unreadable', reason: 'run.json missing or malformed', paths: P, undetermined: dl.expired() ? dl.text() : null };
@@ -649,7 +658,7 @@ export async function cmdStatus(args, io = console) {
   const dl = new Deadline(all ? 15000 : 6000, 'status');
   const ids = all
     ? await withDeadline(
-        () => fsp.readdir(cfg.runsDir, { withFileTypes: true }).then((es) => es.filter((e) => e.isDirectory()).map((e) => e.name).sort()),
+        () => evidenceIdsAsync(cfg, 'run'),
         dl.at('list runs').remaining(),
         [],
         dl,
@@ -664,7 +673,10 @@ export async function cmdStatus(args, io = console) {
     }
     if (!all) {
       const exists = await withDeadline(() => fsp.stat(paths(cfg, id).dir).then(() => 'yes', () => 'no'), dl.at('stat run dir').remaining(), 'unknown', dl);
-      if (exists === 'no') throw new OrchError(`no such run: ${id}`, 'no-such-run');
+      if (exists === 'no') {
+        const retained = await withDeadline(async () => { for (const area of ['archive', 'retired', 'sealed']) { try { await fsp.stat(evidencePath(cfg, area, 'run', id)); return true; } catch { /* try the remaining registration */ } } return false; }, dl.at('stat compact record').remaining(), false, dl);
+        if (!retained) throw new OrchError(`no such run: ${id}`, 'no-such-run');
+      }
     }
     rows.push(await inspect(cfg, id, dl));
   }
@@ -700,7 +712,7 @@ export async function cmdStatus(args, io = console) {
 export async function cmdList(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   ensureDirs(cfg);
-  const rows = listRuns(cfg).map((r) => ({
+  const rows = listRunIds(cfg).map((id) => { try { const r = readRun(cfg, id); if (!r) throw new OrchError('run inventory record missing', 'archive-unreadable'); return {
     id: r.id,
     status: r.status,
     reason: r.reason || null,
@@ -708,7 +720,8 @@ export async function cmdList(args, io = console) {
     lane: r.lane,
     model_canonical: r.model_canonical,
     dir: r.dir,
-  }));
+    metadata: readArchived(cfg, 'run', r.id)?.metadata || { state: 'available' },
+  }; } catch (e) { return { id, status: 'record-unreadable', reason: e.message, cli: null, lane: null, model_canonical: null, dir: null, metadata: { state: 'unknown' } }; } });
   if (args.json) {
     io.log(JSON.stringify(rows, null, 2));
     return rows;
@@ -716,6 +729,7 @@ export async function cmdList(args, io = console) {
   if (!rows.length) io.log('(no runs)');
   for (const r of rows) {
     io.log(`${r.id}  ${pad(r.status, 16)} ${pad(r.cli, 9)} ${pad(r.lane, 6)} ${pad(r.model_canonical, 24)} ${r.dir}`);
+    if (r.status === 'record-unreadable') io.log(`  evidence error: ${r.reason}`);
   }
   return rows;
 }
@@ -748,6 +762,7 @@ export function cmdResult(args, io = console) {
     final_message_truncated: evidence.files.stdout.state === 'purged' ? evidence.snapshot.final_message_truncated : false,
     transcripts: evidence.files,
     retention_evidence_error: evidence.error || null,
+    metadata: readArchived(cfg, 'run', id)?.metadata || { state: 'available' },
     warnings: rec.post_exit_warnings || [],
     escaped_helpers: rec.escaped_helpers || [],
     paths: { ...P },
@@ -774,11 +789,22 @@ export function cmdLog(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   const id = reqPositional(args, 'log <id>');
   const P = paths(cfg, id);
-  if (!fs.existsSync(P.dir)) throw new OrchError(`no such run: ${id}`, 'no-such-run');
+  const archived = readArchived(cfg, 'run', id);
+  if (!fs.existsSync(P.dir) && !archived) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const which = args.stream || 'stderr';
   if (!['stdout', 'stderr', 'keeper', 'events'].includes(which)) throw new OrchError('invalid log stream', 'bad-stream');
   const file =
     which === 'stdout' ? P.stdout : which === 'keeper' ? P.keeper : which === 'events' ? P.events : P.stderr;
+  if (archived) {
+    if (archived.metadata.state === 'retirement-pending' && ['keeper', 'events'].includes(which) && fs.existsSync(file)) {
+      const expected = archived.source_files[path.basename(file)];
+      const text = fs.readFileSync(safe(file));
+      if (!expected || stamp(file) !== expected.identity || digest(text) !== expected.sha256) throw new OrchError('original log conflicts with compact evidence', 'archive-changed');
+      const lines = text.toString('utf8').split(/\r?\n/), n = Number(args.tail || 0), slice = n > 0 ? lines.slice(-n) : lines;
+      io.log(slice.join('\n')); return { file, lines: slice.length, metadata: archived.metadata };
+    }
+    io.log(`${which}: retired by metadata retention; compact result remains available via orch result`); return { lines: 0, state: 'retired', metadata: archived.metadata };
+  }
   const evidence = ['stdout', 'stderr'].includes(which) ? transcriptEvidence(cfg, id) : null;
   const payload = evidence ? evidence.files[which] : null;
   if (payload && payload.state === 'unknown') throw new OrchError(evidence.error || 'transcript evidence is unknown', 'retention-unreadable');
@@ -850,6 +876,7 @@ export async function cmdWaitLane(args, io = console) {
 export async function cmdCancel(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   const id = reqPositional(args, 'cancel <id>');
+  assertLive(cfg, 'run', id);
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const P = paths(cfg, id);
@@ -1142,6 +1169,7 @@ export async function cmdMonitor(args, io = console) {
   }
 }
 async function monitorLocked(cfg, id, args, io) {
+  assertLive(cfg, 'run', id);
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const P = paths(cfg, id);

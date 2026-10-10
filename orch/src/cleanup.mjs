@@ -9,6 +9,7 @@ import { ledgerPath, readLedger } from './ledger.mjs';
 import { readRounds, computeGate } from './gate.mjs';
 import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, removeResource, dependentRunBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
 import { maintainOnUse } from './retention.mjs';
+import { listRunEvidence, listReviewEvidence } from './archive.mjs';
 
 const emit = (args, io, out) => io.log(args.json ? JSON.stringify(out, null, 2) : [
   `${out.wp}: ${out.state}`,
@@ -20,7 +21,7 @@ const needsRetention = (resources) => resources.some((r) => r.action === 'retain
 function inventory(cfg, wp) {
   const owned = listResources(cfg).filter((r) => sameWp(r.wp, wp));
   const known = new Set(owned.map((r) => r.id));
-  const legacy = [...recordsIn(path.join(cfg.stateRoot, 'worktrees')), ...recordsIn(path.join(cfg.stateRoot, 'reviews'))]
+  const legacy = [...recordsIn(path.join(cfg.stateRoot, 'worktrees')), ...listReviewEvidence(cfg)]
     .filter((r) => sameWp(r.wp, wp) && !known.has(r.id) && !r.removed_at && !r.worktree_removed)
     .map((r) => ({ id: r.id, state: 'retained', action: 'retain', reason: 'legacy or foreign resource: confirmed ownership unavailable', legacy: true }));
   return { owned, legacy };
@@ -43,7 +44,7 @@ async function cleanupLocked(cfg, args) {
   const { owned, legacy } = inventory(cfg, wp);
   const retained = retentionDecisions(args.retain, new Set([...owned, ...legacy].map((r) => r.id)));
   const previous = readClosure(cfg, wp);
-  const reviews = recordsIn(path.join(cfg.stateRoot, 'reviews'));
+  const reviews = listReviewEvidence(cfg);
   const resources = [];
   for (const initial of owned) {
     const inspect = async () => {
@@ -112,14 +113,11 @@ export async function cmdFinish(cfg, args, io) {
     requireClaim(cfg, wp, args.by);
     const issues = [];
     // Strictly read the complete inventory; corrupt/missing run files are blockers.
-    if (fs.existsSync(cfg.runsDir)) for (const id of fs.readdirSync(cfg.runsDir)) {
-      if (!fs.statSync(path.join(cfg.runsDir, id)).isDirectory()) continue;
-      try { JSON.parse(fs.readFileSync(path.join(cfg.runsDir, id, 'run.json'), 'utf8')); } catch { issues.push(`run inventory unreadable: ${id}`); }
-    }
-    const runs = listRuns(cfg).filter((r) => sameWp(r.wp, wp));
+    let runs = [];
+    try { runs = listRunEvidence(cfg).filter((r) => sameWp(r.wp, wp)); } catch (e) { issues.push(`run inventory unreadable: ${e.message}`); }
     const ledger = readLedger(ledgerPath(cfg));
     if (ledger.bad) issues.push('ledger has unreadable rows');
-    const reviews = recordsIn(path.join(cfg.stateRoot, 'reviews')).filter((r) => sameWp(r.wp, wp));
+    const reviews = listReviewEvidence(cfg).filter((r) => sameWp(r.wp, wp));
     for (const run of runs) {
       if (!TERMINAL.has(run.status)) issues.push(`run ${run.id} not terminal`);
       const active = await dependentRunBlock(cfg, { id: run.scope && run.scope.worktree_id, path: run.dir_real || run.dir });

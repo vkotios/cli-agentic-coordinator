@@ -281,9 +281,59 @@ disabled, `--apply --run <id> --by <operator> --reason <text>` explicitly select
 for immediate collection; the receipt records operator, reason, time and overridden policy before
 deletion and preserves this original authority on retries. Enabled policies enforce their configured ages.
 Interrupted collection keeps compact evidence and retries only unchanged, individually recorded
-files. Uncertain locks require inspection; nothing takes them over automatically. Full metadata,
-monitor-event retirement, active-log rotation and an installed scheduler are not included here.
+files. Uncertain locks require inspection; nothing takes them over automatically. Active-log
+rotation and an installed scheduler are not included here.
 The MCP `maintain` tool exposes the same preview, enrollment, pin and apply controls.
+
+## Original metadata retention
+
+Original run folders, keeper/monitor logs and finished review records have a separate opt-in.
+Transcript retention must finish before a run folder can retire. The default maintenance kind
+remains `transcripts`; use `--kind metadata` to inspect or collect original records, or `--kind all`
+to share the existing item, byte and time budgets across both classes.
+`--review` selects only metadata and cannot be combined with `--kind all` or `transcripts`.
+Preview evaluates future-owned records without writing seals and marks them `would_auto_seal`;
+its age, safety and budget checks also apply to the prospective seal. Scope checks should be
+completed before metadata enrollment; changed or newly added evidence protects a sealed record.
+
+Add `"metadata": { "enabled": true, "successDays": 90, "otherDays": 180 }` inside the
+existing `retention` configuration to select separate metadata ages. Omission disables metadata
+collection. Successful metadata means a completed, accepted run or a finished review with outcome
+`reviewed`; other terminal outcomes use `otherDays`. Package age starts at the later terminal or
+closure time; explicit standalone enrollment starts its finalization clock. Future orch-owned
+records can seal after recorded finalization; older runs and reviews require explicit enrollment:
+
+```powershell
+orch maintain --kind metadata --dry-run --json
+orch maintain --kind metadata --enroll <run-or-review-id> --by <operator> --reason "verified record"
+orch maintain --kind metadata --apply --run <run-id> --json
+orch maintain --kind metadata --apply --review <review-id> --json
+orch maintain --kind all --apply --json
+```
+
+Pins and unpins also accept review IDs. A disabled policy permits a scoped run/review override only
+with `--by` and `--reason`; its durable journal preserves the original operator authority on retries.
+Enabled metadata policies enforce their configured ages. On-use maintenance resumes each inventory
+and alternates which class goes first, including when the item budget is one.
+
+Retirement first publishes immutable compact evidence, capped at 256 KiB per entry, and an exact
+file journal. Event-log hashes stream in bounded chunks and stop at the time budget. Oversized
+required evidence, incomplete hashes, active/reopened packages, unresolved reviews/gates, uncertain
+processes, pins, pending resource cleanup, foreign files, subdirectories, links and locks preserve
+originals with a reason. Unlinks require unchanged physical identity and contents; directory removal
+uses nonrecursive `rmdir`. Interrupted removal stays pending, and uncertain locks require inspection.
+
+`list`, `status`, `result`, scope/gate lookup, routing identity checks, review finalization and
+resource cleanup read validated compact records after originals are gone. Matching live logs remain
+readable during partial retirement. Corrupt or missing compact evidence reports an integrity error
+and blocks cleanup. Retired IDs cannot restart or recreate their folder. Unknown actual models stay
+unknown; final answers keep the 64 KiB cap and truncation flag.
+`list` reports damaged records individually so healthy rows remain visible; mutating workflows
+and cleanup continue to require a fully readable dependency inventory.
+
+This reduces original storage, without setting a global storage ceiling. Compact records and their
+ownership/journal evidence, routing ledger, gates, closures and resource receipts still accumulate.
+It removes neither worktrees nor provider session caches and installs no scheduler.
 
 ## Limitations
 

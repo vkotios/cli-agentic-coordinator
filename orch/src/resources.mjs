@@ -10,6 +10,7 @@ import { wpKey, readClaim, requireClaim } from './claims.mjs';
 import { paths, readRun, TERMINAL, keeperFacts } from './store.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { sha256File } from './scope.mjs';
+import { listRunEvidence, readArchived } from './archive.mjs';
 
 const directory = (cfg) => path.join(cfg.stateRoot, 'resources');
 export const resourceFile = (cfg, id) => {
@@ -194,11 +195,7 @@ export async function inspectIdentity(r) {
 export async function dependentRunBlock(cfg, r) {
   let runs;
   try {
-    const root = cfg.runsDir;
-    runs = fs.existsSync(root) ? fs.readdirSync(root).filter((f) => fs.statSync(path.join(root, f)).isDirectory()).map((id) => {
-      const file = paths(cfg, id).record;
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
-    }) : [];
+    runs = listRunEvidence(cfg);
   } catch { return 'run inventory unreadable'; }
   for (const run of runs) {
     let depends = isInside(run.dir_real || run.dir, r.path) || (run.scope && run.scope.worktree_id === r.id);
@@ -208,6 +205,12 @@ export async function dependentRunBlock(cfg, r) {
     }
     if (!depends) continue;
     if (!TERMINAL.has(run.status)) return `dependent run ${run.id} is active or starting`;
+    let archived;
+    try { archived = readArchived(cfg, 'run', run.id); } catch { return `run ${run.id} compact evidence unreadable`; }
+    if (archived) {
+      if (archived.metadata.state !== 'retired' || archived.quiescent !== true) return `run ${run.id} retirement incomplete`;
+      continue;
+    }
     const P = paths(cfg, run.id);
     const f = keeperFacts(readTailLines(P.keeper, 32768));
     let spawned = {};

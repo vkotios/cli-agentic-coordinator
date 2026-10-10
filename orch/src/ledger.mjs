@@ -21,6 +21,7 @@ import { readRounds, computeGate } from './gate.mjs';
 import { publishExclusive } from './exclusive.mjs';
 import { withRunOperation } from './retention.mjs';
 import { withWpOperation } from './resources.mjs';
+import { listReviewEvidence, assertLive } from './archive.mjs';
 
 export const DISPOSITIONS = ['accepted', 'accepted-with-fixes', 'rejected', 'blocked', 'inconclusive-timeout', 'failed-launch'];
 /** What counts as a FAILURE of a workload for the rotation rule. `blocked` (quota,
@@ -82,16 +83,7 @@ async function diffStats(rec) {
 }
 
 function reviewsOf(cfg, runId) {
-  const dir = path.join(cfg.stateRoot, 'reviews');
-  try {
-    return fs
-      .readdirSync(dir)
-      .filter((f) => /^rv-.*\.json$/.test(f))
-      .map((f) => readJson(path.join(dir, f), null))
-      .filter((r) => r && r.implementer_run === runId);
-  } catch {
-    return [];
-  }
+  return listReviewEvidence(cfg).filter((r) => r.implementer_run === runId);
 }
 
 export async function cmdRecord(cfg, args, io) {
@@ -103,6 +95,7 @@ export async function cmdRecord(cfg, args, io) {
 async function recordLocked(cfg, args, io) {
   const id = (args._ || [])[0];
   if (!id) throw new OrchError('usage: orch record <run-id> --disposition <d> [--notes <text>] ...', 'missing-arg');
+  assertLive(cfg, 'run', id);
   const disposition = String(args.disposition || '');
   if (!DISPOSITIONS.includes(disposition)) throw new OrchError(`--disposition must be one of ${DISPOSITIONS.join(', ')}`, 'bad-disposition');
   const rec = readRun(cfg, id);
