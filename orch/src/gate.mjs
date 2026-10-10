@@ -15,6 +15,7 @@
 // Files: <state-root>/gates/<wp-key>/<slice-key>/round-<n>.json, each created once
 // (exclusive publication; a round is never rewritten).
 import fs from 'node:fs';
+import { readScopeEvidence } from './archive.mjs';
 import { withWpOperation } from './resources.mjs';
 import path from 'node:path';
 import { OrchError } from './errors.mjs';
@@ -170,7 +171,7 @@ async function gateRecord(cfg, args, io) {
   let scope;
   let scopeSource;
   if (args['scope-run']) {
-    const s = readJson(path.join(cfg.runsDir, String(args['scope-run']), 'scope.json'), null);
+    const s = readScopeEvidence(cfg, String(args['scope-run']));
     scope = s && ['pass', 'fail'].includes(s.result) ? s.result : 'unknown';
     scopeSource = `orch scope ${args['scope-run']}${s ? ` at ${s.checked_at}` : ' (no scope.json: never checked)'}`;
   } else {

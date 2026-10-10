@@ -49,9 +49,11 @@ Workflow (slice 2)
   orch cleanup --wp <WP> --dry-run [--json]
   orch cleanup --wp <WP> --apply --by <holder> [--retain <decisions.json>] [--json]
   orch finish <WP> --by <holder> [--retain <decisions.json>] [--json]
-  orch maintain --dry-run [--after <id>] [--json]          read-only storage retention inventory
-  orch maintain --apply [--run <id> --by <operator> --reason <text>] [--after <id>] [--json]
-  orch maintain --enroll <id> --by <operator> --reason <text> [--json]
+  orch maintain --dry-run [--kind transcripts|metadata|all] [--after <id>] [--json]
+  orch maintain --apply [--kind transcripts|metadata|all] [--run <id>] [--json]
+  orch maintain --kind metadata --apply --review <id> [--json]
+    Scoped policy overrides require --by <operator> --reason <text>.
+  orch maintain --enroll <id> [--kind metadata] --by <operator> --reason <text> [--json]
   orch maintain --pin <id> | --unpin <id> --by <operator> --reason <text> [--json]
            retention is disabled until configured in <state-root>/config.json
 

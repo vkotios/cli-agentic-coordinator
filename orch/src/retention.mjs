@@ -1,4 +1,4 @@
-// Collector-owned receipts. Never rewrites monitor/keeper records or removes folders.
+// Collector-owned receipts; original metadata retirement lives in metadata.mjs.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -14,6 +14,8 @@ import { samePath } from './git.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { writeJsonAtomic, nowIso, readTailLines } from './util.mjs';
 import { publishExclusive } from './exclusive.mjs';
+import { readArchived, readArchivedAsync, assertLive, listReviewEvidence, readEvidence } from './archive.mjs';
+import { maintainMetadata, enrollMetadata } from './metadata.mjs';
 
 const FILES = { stdout: 'stdout.log', stderr: 'stderr.log', prompt: 'prompt.txt' };
 const DAY = 86400000;
@@ -62,21 +64,24 @@ export function retentionPolicy(cfg) {
   const p = config.retention;
   if (p == null) return { mode: 'disabled', successDays: 30, otherDays: 90, maxRuns: 20, maxBytes: 64 * 1024 * 1024, maxMs: 2000, minIntervalMs: 3600000 };
   if (typeof p !== 'object' || Array.isArray(p) || !['disabled', 'manual', 'on-use'].includes(p.mode)) throw new OrchError('invalid retention mode', 'bad-retention-policy');
-  const out = { mode: p.mode, successDays: p.successDays, otherDays: p.otherDays, maxRuns: p.maxRuns ?? 20, maxBytes: p.maxBytes ?? 64 * 1024 * 1024, maxMs: p.maxMs ?? 2000, minIntervalMs: p.minIntervalMs ?? 3600000 };
+  const out = { mode: p.mode, successDays: p.successDays, otherDays: p.otherDays, maxRuns: p.maxRuns ?? 20, maxBytes: p.maxBytes ?? 64 * 1024 * 1024, maxMs: p.maxMs ?? 2000, minIntervalMs: p.minIntervalMs ?? 3600000, metadata: p.metadata ?? { enabled: false } };
   if (Object.keys(p).some((k) => !(k in out))) throw new OrchError('unknown retention policy setting', 'bad-retention-policy');
   for (const [k, v] of Object.entries(out)) {
-    if (k === 'mode') continue;
+    if (k === 'mode' || k === 'metadata') continue;
     if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < (k.endsWith('Days') ? 0 : 1)) throw new OrchError(`invalid retention ${k}`, 'bad-retention-policy');
   }
   if (out.maxRuns > 1000 || out.maxMs > 60000) throw new OrchError('retention maxRuns <= 1000 and maxMs <= 60000 required', 'bad-retention-policy');
+  if (!out.metadata || typeof out.metadata !== 'object' || Array.isArray(out.metadata) || typeof out.metadata.enabled !== 'boolean' || Object.keys(out.metadata).some((k) => !['enabled', 'successDays', 'otherDays'].includes(k))) throw new OrchError('invalid metadata retention policy', 'bad-retention-policy');
+  if (out.metadata.enabled) for (const k of ['successDays', 'otherDays']) if (!Number.isSafeInteger(out.metadata[k]) || out.metadata[k] < 0) throw new OrchError(`invalid metadata ${k}`, 'bad-retention-policy');
   return out;
 }
 
 export function beginRunArtifacts(cfg, id) {
+  assertLive(cfg, 'run', id);
   const P = paths(cfg, checkedId(id));
   safe(cfg.runsDir); safe(P.dir);
   if (fs.existsSync(P.dir)) throw new OrchError('run directory already exists', 'run-exists');
-  const doc = { version: 1, id, state: 'intent', source: 'orch-run', created_at: nowIso(), state_root: path.resolve(cfg.stateRoot), state_identity: stamp(cfg.stateRoot), runs_identity: stamp(cfg.runsDir), dir: P.dir };
+  const doc = { version: 1, metadata_version: 1, id, state: 'intent', source: 'orch-run', created_at: nowIso(), state_root: path.resolve(cfg.stateRoot), state_identity: stamp(cfg.stateRoot), runs_identity: stamp(cfg.runsDir), dir: P.dir };
   if (!publishExclusive(retentionFile(cfg, 'owned', id), JSON.stringify(doc)).created) throw new OrchError('run artifacts already registered', 'run-exists');
 }
 export function confirmRunArtifacts(cfg, id) {
@@ -104,6 +109,8 @@ function snapshotValid(doc, id) {
 }
 export function transcriptEvidence(cfg, id) {
   checkedId(id);
+  const archived = readArchived(cfg, 'run', id);
+  if (archived) return archived.transcripts;
   const P = paths(cfg, id);
   let doc, error, authority;
   try {
@@ -148,6 +155,8 @@ async function stampAsync(file) {
 }
 export async function transcriptEvidenceAsync(cfg, id) {
   checkedId(id);
+  const archived = await readArchivedAsync(cfg, 'run', id);
+  if (archived) return archived.transcripts;
   const P = paths(cfg, id);
   let doc, error, authority;
   const readAuthority = async () => {
@@ -179,7 +188,7 @@ export async function transcriptEvidenceAsync(cfg, id) {
   }
   return { files, snapshot: doc ? doc.snapshot : null, ...(error ? { error } : {}) };
 }
-function timestamp(v) {
+export function timestamp(v) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(v)) return null;
   const n = Date.parse(v);
   const canonical = v.includes('.') ? v : v.replace('Z', '.000Z');
@@ -193,7 +202,7 @@ function pin(cfg, id) {
   if (doc && (doc.version !== 1 || doc.id !== id || typeof doc.active !== 'boolean' || !doc.reason || !doc.by)) throw new OrchError('invalid investigation pin', 'retention-unreadable');
   return doc && doc.active;
 }
-async function quiescent(cfg, rec, deadline) {
+export async function quiescent(cfg, rec, deadline) {
   const P = paths(cfg, rec.id);
   const f = keeperFacts(readTailLines(safe(P.keeper), 32768));
   if (!f.blocked && (!f.workerExit || f.streamsClosed !== 'streams-closed')) return 'worker exit or closed streams not confirmed';
@@ -218,13 +227,13 @@ async function quiescent(cfg, rec, deadline) {
   }
   return null;
 }
-function dependencies(cfg, rec, authority) {
+export function dependencies(cfg, rec, authority) {
   if (pin(cfg, rec.id)) return { reason: 'investigation pin' };
   const ledger = readLedger(ledgerPath(cfg));
   if (ledger.bad) return { reason: 'ledger unreadable rows' };
   const rows = ledger.rows.filter((r) => r.run_id === rec.id);
   if (rows.length !== 1 || !['accepted', 'accepted-with-fixes', 'rejected', 'blocked', 'inconclusive-timeout', 'failed-launch'].includes(rows[0].disposition)) return { reason: 'durable disposition missing or ambiguous' };
-  const reviews = recordsIn(safe(path.join(cfg.stateRoot, 'reviews'))).filter((r) => r.implementer_run === rec.id || r.run_id === rec.id || samePackage(r.wp, rec.wp));
+  const reviews = listReviewEvidence(cfg).filter((r) => r.implementer_run === rec.id || r.run_id === rec.id || samePackage(r.wp, rec.wp));
   if (reviews.some((r) => !r.finished_at || r.containment !== 'clean' || (r.breaches || []).length || (r.unknown || []).length)) return { reason: 'unresolved review or containment incident' };
   const resources = listResources(cfg).filter((r) => samePackage(r.wp, rec.wp) || reviews.some((v) => v.id === r.id));
   if (resources.some((r) => r.state === 'cleanup-pending' || r.cleanup_error || r.kind === 'review' && r.state !== 'removed')) return { reason: 'resource cleanup pending or incident' };
@@ -347,6 +356,21 @@ async function collectRun(cfg, id, policy, deadline, authorization = null) {
 async function control(cfg, args) {
   requireOperator(args);
   const id = checkedId(args.enroll || args.pin || args.unpin);
+  if (!args.enroll) {
+    const kind = id.startsWith('rv-') ? 'review' : 'run';
+    const initial = readEvidence(cfg, kind, id);
+    if (!initial) throw new OrchError('no such record', 'no-such-run');
+    const container = initial.metadata.state === 'available' ? (kind === 'run' ? paths(cfg, id).dir : path.join(cfg.stateRoot, 'reviews')) : cfg.stateRoot;
+    const containerIdentity = stamp(safe(container));
+    return withWpOperation(cfg, initial.record.wp, () => withOperationLock(cfg, `${kind}:${id}`, () => {
+      const current = readEvidence(cfg, kind, id);
+      if (!current || current.record.id !== id || current.record.wp !== initial.record.wp || current.record.created_at !== initial.record.created_at || stamp(safe(container)) !== containerIdentity) throw new OrchError('record changed while acquiring guard', 'retention-changed');
+      const file = retentionFile(cfg, 'pins', id), prior = readStrict(file);
+      const doc = { version: 1, id, active: !!args.pin, by: args.by, reason: args.reason, at: nowIso(), history: [...(prior?.history || []), ...(prior ? [{ active: prior.active, by: prior.by, reason: prior.reason, at: prior.at }] : [])] };
+      write(file, doc);
+      return { id, state: doc.active ? 'pinned' : 'unpinned' };
+    }));
+  }
   let rec = readStrict(paths(cfg, id).record);
   if (!rec || rec.id !== id) throw new OrchError('no such run or invalid record', 'no-such-run');
   return withWpOperation(cfg, rec.wp, () => withRunOperation(cfg, id, async () => {
@@ -373,11 +397,6 @@ async function control(cfg, args) {
       if (!publishExclusive(retentionFile(cfg, 'owned', id), JSON.stringify(doc)).created) throw new OrchError('already enrolled', 'retention-owned');
       return { id, state: 'enrolled', by: args.by };
     }
-    const file = retentionFile(cfg, 'pins', id);
-    const prior = readStrict(file);
-    const doc = { version: 1, id, active: !!args.pin, by: args.by, reason: args.reason, at: nowIso(), history: [...(prior && prior.history || []), ...(prior ? [{ active: prior.active, by: prior.by, reason: prior.reason, at: prior.at }] : [])] };
-    write(file, doc);
-    return { id, state: doc.active ? 'pinned' : 'unpinned' };
   }));
 }
 async function maintain(cfg, args, policy) {
@@ -408,27 +427,48 @@ async function maintain(cfg, args, policy) {
 }
 /** @param {{log:(s:string)=>void}} [io] */
 export async function cmdMaintain(cfg, args, io = console) {
-  const known = new Set(['_', 'json', 'state-root', 'dry-run', 'apply', 'run', 'after', 'enroll', 'pin', 'unpin', 'by', 'reason']);
+  const known = new Set(['_', 'json', 'state-root', 'dry-run', 'apply', 'run', 'review', 'after', 'enroll', 'pin', 'unpin', 'by', 'reason', 'kind']);
   if (Object.keys(args).some((k) => !known.has(k)) || args._ && args._.length) throw new OrchError('unsupported maintenance option', 'bad-retention-option');
   if (args.force || args['delete-branch']) throw new OrchError('maintenance cannot force deletion', 'bad-retention-option');
   const controls = ['enroll', 'pin', 'unpin'].filter((k) => args[k]);
-  if (controls.length > 1 || controls.length && (args.apply || args['dry-run'] || args.run)) throw new OrchError('choose one maintenance operation', 'bad-retention-option');
+  if (controls.length > 1 || controls.length && (args.apply || args['dry-run'] || args.run || args.review || args.after)) throw new OrchError('choose one maintenance operation', 'bad-retention-option');
   if (args.apply && args['dry-run']) throw new OrchError('choose preview or apply', 'bad-retention-option');
   if (args.run && args.after) throw new OrchError('choose an explicit --run or an inventory --after selector', 'bad-retention-option');
+  const kind = args.kind || 'transcripts';
+  if (!['transcripts', 'metadata', 'all'].includes(kind) || args.review && (kind !== 'metadata' || args.run || args.after) || controls.length && kind === 'all') throw new OrchError('invalid maintenance kind or selectors', 'bad-retention-option');
   let out;
-  if (controls.length) out = await control(cfg, args);
+  if (controls.length) out = kind === 'metadata' && args.enroll ? await enrollMetadata(cfg, args) : await control(cfg, args);
   else {
     let policy = retentionPolicy(cfg);
-    if (policy.mode === 'disabled' && args.apply && args.run) {
+    if (policy.mode === 'disabled' && args.apply && (args.run || args.review)) {
       requireOperator(args);
       args = { ...args, authorization: { by: args.by, reason: args.reason, at: nowIso(), overrode_policy: true, configured_policy: policy } };
       policy = { ...policy, mode: 'manual', successDays: 0, otherDays: 0 };
     }
     if (args.apply && policy.mode === 'disabled') out = { state: 'disabled', runs: [], removed_bytes: 0 };
-    else out = args.apply ? await withOperationLock(cfg, 'retention:collector', () => maintain(cfg, args, policy)) : await maintain(cfg, args, policy);
+    else out = args.apply ? await withOperationLock(cfg, 'retention:collector', () => maintainSelected(cfg, args, policy)) : await maintainSelected(cfg, args, policy);
   }
-  io.log(args.json ? JSON.stringify(out, null, 2) : `${out.state}${out.runs ? `: ${out.scanned || 0} runs inspected, ${out.removed_bytes || 0} bytes removed\n${out.runs.map((r) => `${r.id}: ${r.state}${r.reason ? ` (${r.reason})` : ''}`).join('\n')}` : `: ${out.id}`}`);
+  const report = (result) => `${result.scanned || 0} records inspected, ${result.removed_bytes || 0} bytes removed\n${(result.runs || []).map((r) => `${r.id}: ${r.state}${r.reason ? ` (${r.reason})` : ''}`).join('\n')}`;
+  io.log(args.json ? JSON.stringify(out, null, 2) : out.metadata ? `${out.state}\ntranscripts: ${report({ ...out, removed_bytes: out.removed_bytes - out.metadata.removed_bytes })}\nmetadata: ${report(out.metadata)}` : `${out.state}${out.runs ? `: ${report(out)}` : `: ${out.id}`}`);
   return out;
+}
+
+async function maintainSelected(cfg, args, policy) {
+  const kind = args.kind || 'transcripts';
+  if (kind === 'metadata') return maintainMetadata(cfg, args, policy);
+  const started = Date.now();
+  if (kind !== 'all') return maintain(cfg, args, policy);
+  const firstPolicy = { ...policy, maxRuns: Math.ceil(policy.maxRuns / 2) };
+  let transcripts, metadata;
+  const remaining = (first) => ({ ...policy, maxMs: Math.max(0, policy.maxMs - (Date.now() - started)), maxRuns: Math.max(0, policy.maxRuns - (first.scanned || 0)), maxBytes: Math.max(0, policy.maxBytes - (args.apply ? first.removed_bytes || 0 : first.runs.filter((r) => r.state === 'eligible').reduce((n, r) => n + r.bytes, 0))) });
+  if (args.metadataFirst) {
+    metadata = await maintainMetadata(cfg, { ...args, after: args.metadataAfter }, firstPolicy);
+    transcripts = await maintain(cfg, args, remaining(metadata));
+  } else {
+    transcripts = await maintain(cfg, args, firstPolicy);
+    metadata = await maintainMetadata(cfg, { ...args, after: args.metadataAfter ?? args.after }, remaining(transcripts));
+  }
+  return { ...transcripts, state: transcripts.state === 'pending' || metadata.state === 'pending' ? 'pending' : 'complete', metadata, removed_bytes: transcripts.removed_bytes + metadata.removed_bytes, exitCode: transcripts.exitCode || metadata.exitCode || 0 };
 }
 
 export async function maintainOnUse(cfg) {
@@ -442,9 +482,10 @@ export async function maintainOnUse(cfg) {
       if (last && (at === null || at > Date.now())) return { state: 'pending', reason: 'invalid or future maintenance clock' };
       if (at && Date.now() - at < policy.minIntervalMs) return { state: 'interval', removed_bytes: 0 };
       const started = nowIso();
-      write(file, { at: started, after: last && last.after || null }); // reserve before starting; a crash cannot cause a tight loop
-      const out = await maintain(cfg, { apply: true, after: last && last.after }, policy);
-      write(file, { at: started, after: out.next_after });
+      const nextOrder = !last?.metadata_first;
+      write(file, { at: started, after: last && last.after || null, metadata_after: last?.metadata_after || null, metadata_first: nextOrder }); // reserve next attempt even if this one fails
+      const out = await maintainSelected(cfg, { apply: true, after: last && last.after, metadataAfter: last?.metadata_after || null, metadataFirst: !!last?.metadata_first, kind: policy.metadata?.enabled ? 'all' : 'transcripts' }, policy);
+      write(file, { at: started, after: out.next_after, metadata_after: out.metadata?.next_after || null, metadata_first: nextOrder });
       return out;
     });
   } catch (e) { return { state: 'pending', reason: e.message }; }

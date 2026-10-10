@@ -27,6 +27,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { readEvidence, listReviewEvidence } from './archive.mjs';
+import { beginReviewMetadata, confirmReviewMetadata } from './metadata.mjs';
 import { OrchError } from './errors.mjs';
 import { loadConfig, setting, localAppData } from './config.mjs';
 import { nowIso, readJson, writeJsonAtomic, readTailLines, sleep, newRunId } from './util.mjs';
@@ -138,15 +140,7 @@ function worktreesMinusReviews(raw, reviewPaths) {
 }
 
 function recordedReviewWorktrees(cfg) {
-  try {
-    return fs
-      .readdirSync(reviewsDir(cfg))
-      .filter((f) => /^rv-.*\.json$/.test(f))
-      .map((f) => (readJson(path.join(reviewsDir(cfg), f), null) || {}).worktree)
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+  return listReviewEvidence(cfg).map((r) => r.worktree).filter(Boolean);
 }
 
 /**
@@ -314,6 +308,7 @@ async function reviewLocked(args, io, cfg) {
     created_at: nowIso(),
   };
   fs.mkdirSync(reviewsDir(cfg), { recursive: true });
+  beginReviewMetadata(cfg, reviewId);
   writeJsonAtomic(reviewFile(cfg, reviewId), rv);
 
   // CODE-REVIEW FIX c4: from the moment the worktree exists until the reviewer is launched,
@@ -503,7 +498,7 @@ async function waitRunFinished(cfg, runId, maxMs) {
 async function finishReview(cfg, reviewId, args, io) {
   if (!/^rv-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/.test(reviewId)) throw new OrchError(`invalid review id ${reviewId}`, 'bad-id');
   const file = reviewFile(cfg, reviewId);
-  const rv = readJson(file, null);
+  const rv = readEvidence(cfg, 'review', reviewId)?.record;
   if (!rv) throw new OrchError(`no such review: ${reviewId}`, 'no-such-review');
   return withWpOperation(cfg, rv.wp, () => rv.run_id ? withRunOperation(cfg, rv.run_id, () => finishReviewLocked(cfg, reviewId, args, io, file, rv)) : finishReviewLocked(cfg, reviewId, args, io, file, rv));
 }
@@ -670,6 +665,7 @@ async function doFinish(cfg, rv, file, args, io) {
   });
   delete rv.pre; // bulky; the evidence of any difference is kept above
   writeJsonAtomic(file, rv);
+  confirmReviewMetadata(cfg, rv.id);
   // Logical result is durable and immutable before any cleanup attempt.
   const rm = rv.worktree_created ? await removeReviewWorktree(cfg, rv) : { removed: true, error: null };
   const out = { ...rv, worktree_removed: rm.removed, worktree_remove_error: rm.error };

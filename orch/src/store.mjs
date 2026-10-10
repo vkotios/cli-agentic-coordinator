@@ -22,6 +22,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic, readJson, nowIso } from './util.mjs';
+import { readArchived, evidenceIds, assertLive } from './archive.mjs';
+import { OrchError } from './errors.mjs';
 
 /**
  * Terminal statuses. `blocked` is included (v3 M7): a Phase-A keeper refusal is
@@ -67,11 +69,14 @@ export function paths(cfg, id) {
 }
 
 export function readRun(cfg, id) {
+  const archived = readArchived(cfg, 'run', id);
+  if (archived) return archived.record;
   return readJson(paths(cfg, id).record, null);
 }
 
 /** MONITOR ONLY (and `orch run` at creation). Never called by a read-only command. */
 export function writeRun(cfg, rec) {
+  assertLive(cfg, 'run', rec.id);
   rec.updated_at = nowIso();
   writeJsonAtomic(paths(cfg, rec.id).record, rec);
   return rec;
@@ -81,6 +86,7 @@ export function writeRun(cfg, rec) {
 export function appendMonitorEvent(cfg, id, event) {
   const p = paths(cfg, id);
   try {
+    assertLive(cfg, 'run', id);
     fs.mkdirSync(p.dir, { recursive: true });
     fs.appendFileSync(p.events, JSON.stringify({ ts: nowIso(), ...event }) + '\n');
     return true;
@@ -90,21 +96,12 @@ export function appendMonitorEvent(cfg, id, event) {
 }
 
 export function listRunIds(cfg) {
-  try {
-    return fs
-      .readdirSync(cfg.runsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-  } catch {
-    return [];
-  }
+  return evidenceIds(cfg, 'run');
 }
 
 export function listRuns(cfg) {
   return listRunIds(cfg)
-    .map((id) => readRun(cfg, id))
-    .filter(Boolean);
+    .map((id) => { const rec = readRun(cfg, id); if (!rec) throw new OrchError(`run inventory unreadable: ${id}`, 'record-unreadable'); return rec; });
 }
 
 /**

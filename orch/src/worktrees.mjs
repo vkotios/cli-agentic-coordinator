@@ -8,6 +8,7 @@
 //        and `orch worktree remove` (the removal fields)
 //        <run dir>/scope.json                 sole writer: `orch scope`
 import fs from 'node:fs';
+import { readArchived } from './archive.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { OrchError } from './errors.mjs';
@@ -233,6 +234,13 @@ export async function ensureWorktreesExcluded(top) {
 export async function cmdScope(cfg, args, io) {
   const id = (args._ || [])[0];
   if (!id) throw new OrchError('usage: orch scope <run-id> [--json]', 'missing-arg');
+  const archived = readArchived(cfg, 'run', id);
+  if (archived) {
+    if (!archived.scope) throw new OrchError('retired run has no preserved scope result', 'record-retired');
+    const out = { ...archived.scope, metadata: archived.metadata };
+    io.log(args.json ? JSON.stringify(out, null, 2) : `scope ${out.result}: ${id} (preserved)`);
+    return { ...out, exitCode: out.result === 'pass' ? 0 : out.result === 'fail' ? 3 : 4 };
+  }
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   if (!rec.scope) throw new OrchError(`run ${id} has no allowlist/baseline (start it with --wp/--slice and --allow or an ALLOW: block)`, 'no-scope');
