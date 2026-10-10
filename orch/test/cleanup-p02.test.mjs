@@ -3,11 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { makeCase, orch } from './helpers.mjs';
 import { makeRepo, g, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { loadConfig } from '../src/config.mjs';
-import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock } from '../src/resources.mjs';
+import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock } from '../src/resources.mjs';
 import { cmdFinish } from '../src/cleanup.mjs';
 import { readClaim } from '../src/claims.mjs';
 
@@ -27,6 +28,63 @@ async function lockFile(t, file) {
 }
 
 const json = (r) => JSON.parse(r.stdout);
+
+test('P04: a previous operation lock disappearing during path inspection permits the next holder', async (t) => {
+  const c = makeCase('p04-lock-disappears');
+  t.after(() => c.cleanup());
+  const key = 'wp:wp-next';
+  const file = path.join(c.stateRoot, 'resources', 'locks', `${crypto.createHash('sha256').update(key).digest('hex')}.lock`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'previous holder');
+  let disappeared = false;
+  // Model the previous holder releasing immediately after an existence/stat probe.
+  // Both APIs can observe a lock that is already gone by the next filesystem call.
+  const probeMethods = /** @type {Array<'existsSync' | 'lstatSync'>} */ (['existsSync', 'lstatSync']);
+  for (const method of probeMethods) {
+    const original = fs[method].bind(fs);
+    t.mock.method(fs, method, (p, ...args) => {
+      const result = original(p, ...args);
+      if (!disappeared && String(p) === file) {
+        fs.unlinkSync(file);
+        disappeared = true;
+      }
+      return result;
+    });
+  }
+  let executed = false;
+  await withOperationLock({ stateRoot: c.stateRoot }, key, () => { executed = true; });
+  assert.equal(disappeared, true, 'the transient-lock scenario must be exercised');
+  assert.equal(executed, true);
+  assert.equal(fs.existsSync(file), false, 'the next holder releases its own lock');
+});
+
+test('P04: a linked operation lock is refused without touching its target', async (t) => {
+  const c = makeCase('p04-lock-link');
+  t.after(() => c.cleanup());
+  const key = 'wp:wp-linked';
+  const file = path.join(c.stateRoot, 'resources', 'locks', `${crypto.createHash('sha256').update(key).digest('hex')}.lock`);
+  const target = path.join(c.base, 'owner-lock');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(target);
+  const ownerFile = path.join(target, 'original.txt');
+  fs.writeFileSync(ownerFile, 'owner original');
+  fs.symlinkSync(target, file, 'junction');
+  await assert.rejects(withOperationLock({ stateRoot: c.stateRoot }, key, () => assert.fail('linked lock acquired')), { code: 'resource-path-unsafe' });
+  assert.equal(fs.readFileSync(ownerFile, 'utf8'), 'owner original');
+});
+
+test('P04: a directory operation lock is refused without changing its contents', async (t) => {
+  const c = makeCase('p04-lock-directory');
+  t.after(() => c.cleanup());
+  const key = 'wp:wp-directory';
+  const file = path.join(c.stateRoot, 'resources', 'locks', `${crypto.createHash('sha256').update(key).digest('hex')}.lock`);
+  fs.mkdirSync(file, { recursive: true });
+  const original = path.join(file, 'original.txt');
+  fs.writeFileSync(original, 'preserved');
+  await assert.rejects(withOperationLock({ stateRoot: c.stateRoot }, key, () => assert.fail('directory lock acquired')), { code: 'resource-path-unsafe' });
+  assert.equal(fs.readFileSync(original, 'utf8'), 'preserved');
+});
+
 async function fixture(t, name) {
   const c = makeCase(name);
   t.after(() => c.cleanup());

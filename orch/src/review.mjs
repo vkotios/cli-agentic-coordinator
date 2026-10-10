@@ -579,9 +579,9 @@ async function doFinish(cfg, rv, file, args, io) {
         if (expected.has(e)) continue;
         const p = e.slice(3);
         const bare = p.replace(/\/$/, '');
-        // `?? .vibe/config.toml` (or the untracked directory `?? .vibe/`) - orch wrote it.
+        // Untracked or ignored adapter output is exempt only while byte-identical.
         const exemptHit = [...exempt.entries()].find(([ep, sha]) => (ep === p || ep.startsWith(bare + '/')) && sha && sha256File(path.join(wt, ep)) === sha);
-        if (e.startsWith('?? ') && exemptHit && (p === exemptHit[0] || onlyFileIn(path.join(wt, bare), path.join(wt, exemptHit[0])))) continue;
+        if (['?? ', '!! '].includes(e.slice(0, 3)) && exemptHit && (p === exemptHit[0] || onlyFileIn(path.join(wt, bare), path.join(wt, exemptHit[0])))) continue;
         extra.push(e);
       }
       const missing = [...expected].filter((e) => !statusEntries(post.status).includes(e));

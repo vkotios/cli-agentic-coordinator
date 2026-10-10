@@ -93,7 +93,7 @@ export const TOOLS = {
       lane: S('--lane local|cloud'),
       wp: S('--wp <WP> (requires the claim)'),
       slice: S('--slice <id>'),
-      by: S('--by <claude-code|codex|owner>'),
+      by: S('--by <claude-code|codex|opencode|vibe|owner>'),
       allow: A('--allow <path>, repeatable: the allowlist (the handoff ALLOW: block is read too)'),
       size: S('--size XS|S|M'),
       ...LAUNCH_OPTS,
@@ -138,7 +138,7 @@ export const TOOLS = {
     cmd: 'claim',
     description: 'orch claim <WP>: take the exclusive work-package lock before any worktree or run (exit 3 = held by another).',
     pos: [{ key: 'wp', desc: 'work package id', required: true }],
-    opts: { by: S('--by <claude-code|codex|owner>'), session: S('--session <s>'), note: S('--note <t>') },
+    opts: { by: S('--by <claude-code|codex|opencode|vibe|owner>'), session: S('--session <s>'), note: S('--note <t>') },
     required: ['by'],
   },
   release: {

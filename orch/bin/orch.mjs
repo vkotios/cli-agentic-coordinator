@@ -27,7 +27,7 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch gc [--lane local] [--json]
 
 Workflow (slice 2)
-  orch claim <WP> --by <claude-code|codex|owner> [--session <s>] [--note <t>]
+  orch claim <WP> --by <claude-code|codex|opencode|vibe|owner> [--session <s>] [--note <t>]
   orch release <WP> --by <x> [--force --reason <t>]      only the holder, or --force (recorded)
   orch claims [--json]                                    every claim with its age; never auto-reclaimed
   orch worktree create --repo <path> --wp <WP> --slice <id> --by <x> [--base <ref>]

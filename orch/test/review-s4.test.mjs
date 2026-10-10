@@ -5,9 +5,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { makeCase, orch, idFrom, waitForStatus, readRunRecord, readRunFile } from './helpers.mjs';
+import { makeCase, orch, idFrom, waitForStatus, waitFor, readRunRecord, readRunFile } from './helpers.mjs';
 import { g, makeRepo, commitAll, repoFingerprint } from './wf-helpers.mjs';
 import { globToRegex, compareSourceStatus } from '../src/review.mjs';
+import vibe from '../src/adapters/vibe.mjs';
+import { sha256File } from '../src/scope.mjs';
 
 const json = (r) => {
   try {
@@ -18,22 +20,72 @@ const json = (r) => {
 };
 
 /** Repo + claim + worktree + a finished fake implementer run with a commit to review. */
-async function setupImpl(c, { model = 'localai/qwen3-coder-30b', extraFiles = {} } = {}) {
+async function setupImpl(c, { model = 'localai/qwen3-coder-30b', extraFiles = {}, by = 'codex' } = {}) {
   const repo = path.join(c.base, 'repo');
   makeRepo(repo, { 'src/a.js': '1\n', 'secret/answer.md': 'the answer\n', 'secret/deep/x.md': 'x\n', 'README.md': 'r\n', ...extraFiles });
-  assert.equal((await orch(['claim', 'WP-R', '--by', 'codex'], c.env)).code, 0);
-  const w = json(await orch(['worktree', 'create', '--repo', repo, '--wp', 'WP-R', '--slice', 's1', '--by', 'codex', '--json'], c.env));
-  const r = await orch(['run', '--cli', 'fake', '--model', model, '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-R', '--slice', 's1', '--by', 'codex', '--allow', 'src/a.js', '--no-window'], c.env);
+  assert.equal((await orch(['claim', 'WP-R', '--by', by], c.env)).code, 0);
+  const w = json(await orch(['worktree', 'create', '--repo', repo, '--wp', 'WP-R', '--slice', 's1', '--by', by, '--json'], c.env));
+  const r = await orch(['run', '--cli', 'fake', '--model', model, '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-R', '--slice', 's1', '--by', by, '--allow', 'src/a.js', '--no-window'], c.env);
   assert.equal(r.code, 0, r.stderr);
   const runId = idFrom(r.stdout);
   await waitForStatus(c.stateRoot, runId, ['completed', 'failed'], { timeoutMs: 60000 });
   fs.writeFileSync(path.join(w.path, 'src/a.js'), '2\n');
   const commit = commitAll(w.path, 'implementation');
-  return { repo, wt: w, commit, runId, reviewRoot: path.join(c.base, 'reviews') };
+  return { repo, wt: w, commit, runId, reviewRoot: path.join(c.base, 'reviews'), by };
 }
 
 function reviewArgs(s, c, extra = []) {
-  return ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--prompt', c.handoffPath, '--by', 'codex', '--review-root', s.reviewRoot, '--no-window', '--json', ...extra];
+  return ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--prompt', c.handoffPath, '--by', s.by, '--review-root', s.reviewRoot, '--no-window', '--json', ...extra];
+}
+
+async function cleanupFinishedCase(c) {
+  const runs = path.join(c.stateRoot, 'runs');
+  if (fs.existsSync(runs)) {
+    for (const id of fs.readdirSync(runs)) {
+      const record = readRunRecord(c.stateRoot, id);
+      if (record && record.keeper_pid) {
+        await waitFor(() => readRunFile(c.stateRoot, id, 'keeper.ndjson').includes('keeper-exit'), { timeoutMs: 60000, what: 'P04 review keeper exit' });
+      }
+    }
+  }
+  c.cleanup();
+}
+
+for (const by of ['opencode', 'vibe']) {
+  test(`P04: ${by} reviews independently, records a gate, integrates and finishes`, { timeout: 180000 }, async (t) => {
+    const c = makeCase(`p04-review-${by}`);
+    t.after(() => cleanupFinishedCase(c));
+    const s = await setupImpl(c, { by });
+    const args = reviewArgs(s, c, ['--model', 'gemini-3.8-flash-high']);
+    const wrong = [...args];
+    wrong[wrong.indexOf('--by') + 1] = by === 'vibe' ? 'opencode' : 'vibe';
+    const refused = await orch(wrong, c.env);
+    assert.equal(refused.code, 2, refused.stderr);
+    assert.match(refused.stderr, new RegExp(`held by ${by}`));
+    assert.equal(fs.existsSync(s.reviewRoot), false, 'foreign review creates no worktree');
+    const reviewed = await orch(args, c.env);
+    assert.equal(reviewed.code, 0, reviewed.stdout + reviewed.stderr);
+    const rv = json(reviewed);
+    assert.equal(rv.containment, 'clean');
+    assertWorktreeGone(s, rv);
+    assert.equal(readRunRecord(c.stateRoot, rv.run_id).by, by);
+    const scoped = await orch(['scope', s.runId, '--json'], c.env);
+    assert.equal(scoped.code, 0, scoped.stdout + scoped.stderr);
+    const gate = await orch(['gate', 'record', '--wp', 'WP-R', '--slice', 's1', '--round', '1', '--findings', '[]', '--verification', 'pass', '--scope-run', s.runId, '--json'], c.env);
+    assert.equal(gate.code, 0, gate.stdout + gate.stderr);
+    assert.equal(json(gate).gate.decision, 'converged');
+    for (const id of [s.runId, rv.run_id]) {
+      const recorded = await orch(['record', id, '--disposition', 'accepted', '--json'], c.env);
+      assert.equal(recorded.code, 0, recorded.stdout + recorded.stderr);
+    }
+    g(s.repo, 'merge', '--ff-only', s.commit);
+    const finished = await orch(['finish', 'WP-R', '--by', by, '--json'], c.env);
+    assert.equal(finished.code, 0, finished.stdout + finished.stderr);
+    assert.equal(json(finished).state, 'finished');
+    assert.equal(fs.existsSync(s.wt.path), false);
+    assert.equal(g(s.repo, 'rev-parse', 'HEAD').trim(), s.commit);
+    assert.deepEqual(json(await orch(['claims', '--json'], c.env)).claims, []);
+  });
 }
 
 function assertWorktreeGone(s, rv) {
@@ -45,6 +97,38 @@ function assertIncidentRetained(s, rv) {
   assert.equal(rv.worktree_removed, false, 'incident resources are retained for evidence');
   assert.ok(fs.existsSync(rv.worktree));
   assert.ok(g(s.repo, 'worktree', 'list', '--porcelain').includes(path.basename(rv.worktree)));
+}
+
+for (const alteration of ['unchanged', 'modified', 'extra-file']) {
+  test(`P04: ignored adapter-owned Vibe config ${alteration}`, { timeout: 180000 }, async (t) => {
+    const c = makeCase(`p04-vibe-owned-${alteration}`);
+    t.after(() => cleanupFinishedCase(c));
+    const s = await setupImpl(c, { extraFiles: { '.gitignore': '.vibe/\n' } });
+    const launched = await orch([...reviewArgs(s, c), '--model', 'gemini-3.8-flash-high', '--no-wait'], c.env);
+    assert.equal(launched.code, 0, launched.stdout + launched.stderr);
+    const pending = json(launched);
+    await waitForStatus(c.stateRoot, pending.run_id, ['completed'], { timeoutMs: 60000 });
+    // Exercise the real adapter's config materialization with fake model execution.
+    // Record its exact provenance just as cmdRun does, before simulating reviewer edits.
+    const prepared = vibe.preLaunch({ model: 'zai-glm-5-3', dir: pending.worktree, promptBuffer: Buffer.from('Read-only review\n') });
+    const record = readRunRecord(c.stateRoot, pending.run_id);
+    record.orch_written = [{ path: '.vibe/config.toml', sha256: sha256File(prepared.extra.vibe_config) }];
+    fs.writeFileSync(path.join(c.stateRoot, 'runs', pending.run_id, 'run.json'), JSON.stringify(record));
+    if (alteration === 'modified') fs.appendFileSync(prepared.extra.vibe_config, '# reviewer modification\n');
+    if (alteration === 'extra-file') fs.writeFileSync(path.join(pending.worktree, '.vibe/notes.log'), 'reviewer output\n');
+    assert.ok(g(pending.worktree, 'status', '--porcelain=v1', '--ignored', '--untracked-files=all').includes('!! .vibe/config.toml'));
+    const finished = await orch(['review', '--finish', pending.review_id, '--by', s.by, '--json'], c.env);
+    const rv = json(finished);
+    if (alteration === 'unchanged') {
+      assert.equal(finished.code, 0, finished.stdout + finished.stderr);
+      assert.equal(rv.containment, 'clean');
+      assertWorktreeGone(s, rv);
+    } else {
+      assert.equal(finished.code, 5, finished.stdout + finished.stderr);
+      assert.equal(rv.containment, 'containment-breach');
+      assertIncidentRetained(s, rv);
+    }
+  });
 }
 
 test('S4: the same canonical model is refused (localai/qwen3-coder-30b vs qwen3-coder-30b); same family only warns', { timeout: 180000 }, async (t) => {

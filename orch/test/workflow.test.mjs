@@ -8,7 +8,7 @@ import path from 'node:path';
 import { makeCase, orch, idFrom, waitFor, waitForStatus, readRunRecord, testReps } from './helpers.mjs';
 import { g, makeRepo, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { normalizeRepoPath, parseAllowBlock } from '../src/scope.mjs';
-import { wpKey, ageText } from '../src/claims.mjs';
+import { wpKey, ageText, assertClaimant } from '../src/claims.mjs';
 
 const json = (r) => {
   try {
@@ -25,20 +25,20 @@ const CLAIM_REPS = testReps(20);
 test(`S2: 10 separate processes claim one WP at once, ${CLAIM_REPS} repetition(s) -> exactly one holder each time`, { timeout: 600000 }, async (t) => {
   const c = makeCase('s2-race');
   t.after(() => c.cleanup());
-  const BY = ['claude-code', 'codex', 'owner'];
+  const BY = ['claude-code', 'codex', 'opencode', 'vibe', 'owner'];
   const winnersPerRep = [];
   const latencies = [];
   for (let rep = 0; rep < CLAIM_REPS; rep++) {
     const wp = `WP-race-${rep}`;
     const res = await contendEach(
-      Array.from({ length: 10 }, (_, i) => ['claim', wp, '--by', BY[i % 3], '--session', `p${i}`, '--json']),
+      Array.from({ length: 10 }, (_, i) => ['claim', wp, '--by', BY[i % BY.length], '--session', `p${i}`, '--json']),
       c.env,
     );
     const parsed = res.map((r) => ({ code: r.code, ms: r.ms, out: JSON.parse(r.stdout || '{}'), stderr: r.stderr }));
     const winners = parsed.filter((p) => p.code === 0);
     const losers = parsed.filter((p) => p.code === 3);
     assert.equal(winners.length, 1, `rep ${rep}: ${winners.length} holders: ${JSON.stringify(parsed.map((p) => [p.code, p.out.claim, p.stderr]))}`);
-    assert.equal(losers.length, 9, `rep ${rep}: every other contender must be refused with exit 3`);
+    assert.equal(losers.length, 9, `rep ${rep}: every other contender must be refused with exit 3: ${JSON.stringify(parsed)}`);
     const win = winners[0].out;
     for (const l of losers) {
       assert.equal(l.out.claim, 'refused');
@@ -113,6 +113,68 @@ test('S2: a stale claim is SHOWN with its age and never reclaimed automatically'
 });
 
 /* ---------------------------------------------------------- worktrees ----- */
+
+for (const by of ['opencode', 'vibe']) {
+  test(`P04: ${by} claims, delegates, records and finishes without cross-harness takeover`, { timeout: 180000 }, async (t) => {
+    const c = makeCase(`p04-${by}`);
+    let runId;
+    t.after(async () => {
+      if (runId) await waitFor(() => fs.existsSync(path.join(c.stateRoot, 'runs', runId, 'keeper.ndjson')) && fs.readFileSync(path.join(c.stateRoot, 'runs', runId, 'keeper.ndjson'), 'utf8').includes('keeper-exit'), { timeoutMs: 120000, what: 'P04 keeper exit' });
+      c.cleanup();
+    });
+    const wp = 'WP-P04';
+    const other = by === 'vibe' ? 'opencode' : 'vibe';
+    const repo = path.join(c.base, 'repo');
+    makeRepo(repo, { 'a.txt': 'owner original\n' });
+    const claim = await orch(['claim', wp, '--by', by, '--json'], c.env);
+    assert.equal(claim.code, 0, claim.stderr);
+    const token = json(claim).token;
+    assert.equal(json(claim).by, by);
+    const takeover = await orch(['claim', wp, '--by', other, '--json'], c.env);
+    assert.equal(takeover.code, 3, takeover.stderr);
+    assert.equal(json(takeover).holder.by, by);
+    assert.equal(json(takeover).holder.token, token);
+    assert.equal((await orch(['release', wp, '--by', other, '--json'], c.env)).code, 3);
+    const wrongWorktree = await orch(['worktree', 'create', '--repo', repo, '--wp', wp, '--slice', 's1', '--by', other], c.env);
+    assert.equal(wrongWorktree.code, 2);
+    assert.match(wrongWorktree.stderr, new RegExp(`held by ${by}`));
+    const created = await orch(['worktree', 'create', '--repo', repo, '--wp', wp, '--slice', 's1', '--by', by, '--json'], c.env);
+    assert.equal(created.code, 0, created.stderr);
+    const w = json(created);
+    const args = ['run', '--cli', 'fake', '--dir', w.path, '--handoff', c.handoffPath, '--wp', wp, '--slice', 's1', '--allow', 'a.txt', '--no-window'];
+    const wrongRun = await orch([...args, '--by', other], c.env);
+    assert.equal(wrongRun.code, 2);
+    assert.match(wrongRun.stderr, new RegExp(`held by ${by}`));
+    const launched = await orch([...args, '--by', by], c.env);
+    assert.equal(launched.code, 0, launched.stderr);
+    runId = idFrom(launched.stdout);
+    await waitForStatus(c.stateRoot, runId, ['completed'], { timeoutMs: 60000 });
+    const run = readRunRecord(c.stateRoot, runId);
+    assert.equal(run.by, by);
+    assert.equal(run.scope.worktree_id, w.id);
+    assert.equal((await orch(['record', runId, '--disposition', 'blocked', '--notes', 'claim lifecycle fixture; no implementation accepted', '--json'], c.env)).code, 0);
+    assert.equal((await orch(['cleanup', '--wp', wp, '--apply', '--by', other, '--json'], c.env)).code, 2);
+    assert.equal((await orch(['finish', wp, '--by', other, '--json'], c.env)).code, 2);
+    assert.ok(fs.existsSync(w.path), 'foreign cleanup/finish preserves resources');
+    const finish = await orch(['finish', wp, '--by', by, '--json'], c.env);
+    assert.equal(finish.code, 0, finish.stdout + finish.stderr);
+    assert.equal(json(finish).state, 'finished');
+    assert.equal(fs.existsSync(w.path), false);
+    assert.deepEqual(json(await orch(['claims', '--json'], c.env)).claims, []);
+    assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'owner original\n');
+    assert.ok(g(repo, 'rev-parse', '--verify', `refs/heads/${w.branch}`).trim(), 'recoverable branch retained');
+    const history = fs.readFileSync(path.join(c.stateRoot, 'claims', 'claims-log.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(history.at(-1).event, 'release');
+    assert.equal(history.at(-1).by, by);
+    assert.equal(history.at(-1).previous.token, token);
+  });
+}
+
+test('P04: arbitrary claim identities remain refused', () => {
+  for (const by of ['unknown-harness', '', undefined, 'Vibe', '../owner']) {
+    assert.throws(() => assertClaimant(by), { code: 'bad-by' });
+  }
+});
 
 test('worktree create/list/remove: claim required, branch + baseline recorded, dirty refused, --force recorded', { timeout: 120000 }, async (t) => {
   const c = makeCase('wt-cycle');
