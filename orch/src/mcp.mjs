@@ -82,6 +82,10 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  setup_start:{cmd:'setup',sub:['start'],description:'Start or resume a private onboarding question session for any supported controlling harness. Checks installed executables without login or inference. No configuration/adoption/policy activation.',opts:{repo:S('--repo <existing Git root>'),harness:S('--harness claude|codex|opencode|vibe'),session:S('--session <private directory outside target repo>'),catalog:S('--catalog <optional generic metadata>'),roster:S('--roster <optional explicit owner choices>')},required:['repo','harness','session']},
+  setup_status:{cmd:'setup',sub:['status'],description:'Read the next unanswered setup question and accepted choices without writing, prompting on stdin or contacting providers.',opts:{session:S('--session <private directory>')},required:['session']},
+  setup_answer:{cmd:'setup',sub:['answer'],description:'Record one explicit revision-bound structured answer from a private JSON file. Never overwrites an answer, activates settings or reads credentials.',opts:{session:S('--session <private directory>'),answers:S('--answers <expectedRevision/questionId/answer JSON>')},required:['session','answers']},
+  setup_proposal:{cmd:'setup',sub:['proposal'],description:'Read completed onboarding intent and honest installed/unqualified readiness. No apply/activation, installations, auth, model calls, purge or scheduler.',opts:{session:S('--session <private directory>')},required:['session']},
   modelrouter_catalog: {
     cmd: 'modelrouter', sub: ['catalog'],
     description: 'Read source-backed generic model metadata. No network, model calls, owner roster changes or launch authority.',

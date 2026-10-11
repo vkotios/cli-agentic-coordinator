@@ -92,6 +92,12 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
 
 ## Quick start
 
+For a harness-guided onboarding conversation, use `orch setup start --repo <Git root>
+--harness claude|codex|opencode|vibe --session <private directory> --json`.
+It collects resumable choices and returns one question at a time through the CLI or MCP.
+This stage records intent; configuration, adoption and policies remain unchanged.
+See [SETUP.md](docs/SETUP.md) for answer files, privacy and current scope.
+
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
    `orch.config.example.json` to `orch.config.json` and edit it, or set the environment variables.
 2. **Create your roster.** Copy `orch/roster.example.json` to `orch/roster.json` and list the models you

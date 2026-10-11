@@ -3,6 +3,12 @@
 Host-neutral. Everything that must not be forgotten is a script or a file, not memory.
 Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch pick` and model evidence: `docs/MODELS.md` and the ledger.
 
+For first-use onboarding, `orch setup start` (MCP: `setup_start`) opens a private
+resumable question session. Ask the owner the returned question, submit the explicit
+revision-bound answer and read the next question. After all answers, inspect the
+intent proposal. This stage does not change config, adoption, access or qualification;
+never treat recorded preferences as enabled settings. See `docs/SETUP.md`.
+
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.
 - You **do not write implementation code**, and you do not solve the task in the handoff. A handoff gives scope, anchors, contracts and machine-checkable acceptance criteria. It contains solution text only when the contract *is* the text (exact strings, names, schemas).

@@ -16,7 +16,19 @@ const TOOL_NAMES = [
   'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage', 'quota',
   'modelrouter_catalog', 'modelrouter_update',
   'modelrouter_history','modelrouter_rollback','modelrouter_recover',
+  'setup_start','setup_status','setup_answer','setup_proposal',
 ];
+
+async function setupConversation(dir,repo,call){
+  const session=path.join(dir,'onboarding-session'),answersFile=path.join(dir,'onboarding-answer.json');
+  let response=await call('setup_start',{repo,harness:'codex',session});
+  assert.equal(response.isError,false);let s=response.structuredContent.output;
+  assert.equal((await call('setup_status',{session})).structuredContent.output.revision,0);
+  const route={harness:'codex',model:'example-model',billing:'subscription',permission:'ask'};
+  const choices=[{controller:route,workers:[route],reviewers:[route]},{mode:'deterministic'},{enabled:false},{stateRoot:path.join(dir,'setup-state'),reviewRoot:path.join(dir,'setup-reviews'),cleanup:'retain-unmerged'},{enabled:false}];
+  for(const answer of choices){fs.writeFileSync(answersFile,JSON.stringify({expectedRevision:s.revision,questionId:s.nextQuestion.id,answer}));response=await call('setup_answer',{session,answers:answersFile});assert.equal(response.isError,false);s=response.structuredContent.output;}
+  const proposal=await call('setup_proposal',{session});assert.equal(proposal.isError,false);assert.equal(proposal.structuredContent.output.intentOnly,true);return {session,proposal};
+}
 
 function catalogFixtures(dir){
   const catalog=path.join(dir,'catalog.json'),proposal=path.join(dir,'catalog-update.json');
@@ -196,6 +208,10 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
     assert.equal(mcpRes.structuredContent.exit_code, cli.code, `${name}: same exit code`);
   };
 
+  const onboarding=await setupConversation(c.base,repo,(name,args)=>srv.call(name,args));
+  await equalCli('setup_status',await srv.call('setup_status',{session:onboarding.session}),['setup','status','--session',onboarding.session]);
+  await equalCli('setup_proposal',onboarding.proposal,['setup','proposal','--session',onboarding.session]);
+
   const catalogueFiles=catalogFixtures(c.base),catalogueBytes=fs.readFileSync(catalogueFiles.catalog);
   const catalogue=await srv.call('modelrouter_catalog',{catalog:catalogueFiles.catalog});
   assert.equal(catalogue.isError,false,text(catalogue));
@@ -366,6 +382,8 @@ test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency 
   assert.equal(client.getServerVersion().name, 'orch');
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((x) => x.name).sort(), [...TOOL_NAMES].sort());
+  const onboardingRepo=path.join(c.base,'onboarding-repo');makeRepo(onboardingRepo,{'README.md':'fixture\n'});
+  await setupConversation(c.base,onboardingRepo,(name,args)=>client.callTool({name,arguments:args}));
   const catalogueFiles=catalogFixtures(c.base);
   const catalogue=/** @type {any} */ (await client.callTool({name:'modelrouter_catalog',arguments:{catalog:catalogueFiles.catalog}}));
   assert.equal(catalogue.isError,false);assert.equal(catalogue.structuredContent.output.catalog.catalogVersion,'fixture-1');
