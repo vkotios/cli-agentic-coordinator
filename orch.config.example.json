@@ -5,6 +5,7 @@
   "reviewRoot": "D:/orch-reviews",
   "roster": "orch/roster.json",
   "ledger": "orch/.state/ledger.jsonl",
+  "usageConfig": "private/usage.json",
   "gatewayUrl": "http://10.0.0.2:8080/v1",
   "bench": { "models": ["example-coder-30b", "example-reasoner-120b"] },
   "exe": {

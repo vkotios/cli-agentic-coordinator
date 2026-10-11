@@ -168,6 +168,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | review root (throwaway review worktrees) | `reviewRoot` | `ORCH_REVIEW_ROOT` (flag `--review-root`) | `%LOCALAPPDATA%\cli-agentic-coordinator\reviews` |
 | roster | `roster` | `ORCH_ROSTER` (flag `--roster`) | `orch/roster.json` |
 | ledger | `ledger` | `ORCH_LEDGER` (flag `--ledger`) | `<state root>/ledger.jsonl` |
+| subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE` | found on `PATH` / the npm global prefix at run time |
@@ -186,6 +187,33 @@ Notes:
   anyway, so `orch wait-lane` and `orch gc` see the holder file.
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
+
+## Subscription usage
+
+`orch usage` gives every controlling harness the same view of its own subscription and the pools
+used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass
+`--config <file>` for one call. Keep the usage configuration, helper credential profiles and account
+fingerprints outside version control. See [the usage contract](docs/USAGE.md) and
+[the configuration example](usage.config.example.json).
+
+```powershell
+orch usage --json
+orch usage --refresh --json
+orch usage --role controller --json
+orch usage --pool coding-subscription --json
+```
+
+The MCP `usage` tool has the same `refresh`, `pool`, `role` and `config` options. The default reads
+cached observations without launching or writing anything. Explicit refresh runs configured telemetry
+helpers with a durable cooldown per billing pool; independent failures do not discard other results.
+Observation times stay unchanged when cached, and expired reset windows are marked `reset-stale`.
+Unknown measurements remain unknown. No scheduler is installed, running jobs continue, and this
+telemetry command does not change model selection, admission, billing mode or overage settings.
+
+The bundled Node JSON helper supports explicit Cursor, GitHub Copilot and Muse subscription profiles
+without WSL or Docker. It verifies the selected account and preserves provider-specific quota, spend
+and unknown values. See [collector setup and coverage](docs/USAGE.md#cursor-copilot-and-muse-subscription-helper)
+for credentials, account fingerprints and qualification prerequisites.
 
 ## Cleanup and finalization
 

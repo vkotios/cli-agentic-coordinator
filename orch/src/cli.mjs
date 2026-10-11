@@ -23,13 +23,14 @@ import { cmdAdopt } from './adopt.mjs';
 import { cmdCleanup, cmdFinish } from './cleanup.mjs';
 import { withWpOperation } from './resources.mjs';
 import { cmdMaintain } from './retention.mjs';
+import { cmdUsage } from './usage.mjs';
 
 export const BOOLEANS = new Set([
   'json', 'all', 'no-window', 'no-monitor', 'allow-non-ascii', 'keeper', 'verbose', 'help', 'version',
   // slice 2
   'force', 'no-wait', 'delete-branch', 'owner-approved-model', 'controller-intervened',
   // slice 3
-  'dry-run', 'update', 'apply',
+  'dry-run', 'update', 'apply', 'refresh',
 ]);
 export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 
@@ -62,7 +63,7 @@ export function parseArgs(argv) {
 /** Commands `runCommand` knows. `mcp` is not one of them: it is a server, started by bin/orch.mjs. */
 export const COMMANDS = [
   'run', 'status', 'result', 'log', 'cancel', 'list', 'wait-lane', 'monitor', 'gc',
-  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt', 'cleanup', 'finish', 'maintain',
+  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt', 'cleanup', 'finish', 'maintain', 'usage',
 ];
 
 /**
@@ -118,6 +119,8 @@ export async function runCommand(cmd, args, io) {
       return cmdFinish(loadConfig(args['state-root']), args, io);
     case 'maintain':
       return cmdMaintain(loadConfig(args['state-root']), args, io);
+    case 'usage':
+      return cmdUsage(args, io);
     default:
       throw new OrchError(`unknown command: ${cmd}`, 'unknown-command');
   }

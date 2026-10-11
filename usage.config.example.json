@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "minRefreshSeconds": 60,
+  "staleAfterSeconds": 300,
+  "pools": [{
+    "id": "coding-subscription",
+    "provider": "codex",
+    "account": "personal",
+    "workspace": "default",
+    "billing": "subscription",
+    "collector": {
+      "kind": "codexbar",
+      "command": "tools/installed-codexbar-runner.exe",
+      "args": [],
+      "version": "0.74.0",
+      "source": "oauth",
+      "accountFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "timeoutMs": 15000
+    }
+  }],
+  "bindings": [
+    { "id": "controller", "role": "controller", "harness": "codex", "pool": "coding-subscription" },
+    { "id": "worker", "role": "worker", "harness": "opencode", "model": "example-model", "pool": "coding-subscription" }
+  ]
+}
