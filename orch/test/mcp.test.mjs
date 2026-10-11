@@ -13,7 +13,7 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
-  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage',
+  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage', 'quota',
 ];
 
 /** A minimal JSON-RPC client over the server's stdio. */
@@ -194,6 +194,10 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
   assert.equal(usage.isError,false,text(usage));
   assert.equal(usage.structuredContent.output.enabled,true);
   await equalCli('usage',usage,['usage','--config',usageConfig]);
+  const quota=await srv.call('quota',{});
+  assert.equal(quota.isError,false,text(quota));
+  assert.equal(quota.structuredContent.output.enabled,false);
+  await equalCli('quota',quota,['quota']);
 
   // claim / claims / pick
   const claim = await srv.call('claim', { wp: 'WP-M', by: 'claude-code', note: 't3' });

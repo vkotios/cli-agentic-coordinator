@@ -7,7 +7,7 @@ The why of every step: `{{KIT}}/ORCHESTRATOR.md`. Worker launch details: `{{KIT}
 Below, `orch` means `node "{{KIT}}/orch/bin/orch.mjs"` (in the kit repo itself, `{{KIT}}` is the repo root).
 The same commands exist as MCP tools of the `orch` server (`orch mcp`): run, status, result, log_tail,
 cancel, wait_lane, claim, release, claims, worktree_create, worktree_list, scope, review, review_finish,
-gate_record, gate_status, record, pick, cleanup, finish, usage. Supported claim identities are `claude-code`, `codex`,
+gate_record, gate_status, record, pick, cleanup, finish, usage, quota. Supported claim identities are `claude-code`, `codex`,
 `opencode`, `vibe`, and `owner`; the same identity must hold and release the claim. Controller readiness
 requires live qualification with the adopted repository's configured models and tool permissions;
 preparing instructions alone does not establish end-to-end controller support.
@@ -26,6 +26,13 @@ When subscription usage is configured, refresh with `orch usage --refresh --json
 results. Include your controller pool and worker/reviewer pools; aliases of one subscription share
 the same observation. Respect the collector cooldown and keep unknown, stale and reset-stale values
 as uncertainty. Usage telemetry does not change admission, billing or any running job.
+
+When quota policy is enabled, use `orch quota --refresh --json` at those checkpoints and
+pass the owner's explicit `--capability` group and forecast `--size` to picks and launches
+(including reviews). Choose equally capable available subscription routes; defer new work
+when none is usable. Save a controller checkpoint when headroom is low. Launch reserves
+shared forecast capacity before starting; direct refusal requires a new pick, never a
+silent model/harness substitution. Running jobs and claims continue. Read `docs/QUOTA.md`.
 
 1. **Claim** - `orch claim <WP> --by <you> --note "<what>"`. Exit 3 = someone else holds it: stop.
 2. **Pick** - `orch pick --workload implement --size XS|S|M`. Use the proposal unless you record a reason.

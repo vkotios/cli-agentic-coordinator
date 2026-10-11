@@ -56,6 +56,8 @@ test('P03c: explicit metadata enrollment preserves the original record bytes', a
 
 test('P03c: original folder retirement keeps answers, model uncertainty, inventory and cleanup usable', async (t) => {
   const f = fixture(t, 'p03c-readers');
+  f.rec.quota={reservation:f.id,pool:'fixture-pool',capability:'fixture-coding',size:'S',estimates:true,windows:[{id:'session',unit:'percent',forecast:5}],warnings:[]};
+  fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(f.rec));
   await transcripts(f);
   const ledger = fs.readFileSync(path.join(f.c.stateRoot, 'ledger.jsonl'));
   const pickBefore = await orch(['pick', '--workload', 'review', '--size', 'S', '--for-run', f.id, '--json'], f.c.env);
@@ -70,6 +72,7 @@ test('P03c: original folder retirement keeps answers, model uncertainty, invento
   assert.equal(json(result).final_message, 'original final answer');
   assert.equal(json(result).model_actual, null);
   assert.equal(json(result).metadata.state, 'retired');
+  const {readRun}=await import('../src/store.mjs');assert.deepEqual(readRun(loadConfig(f.c.stateRoot),f.id).quota,f.rec.quota);
   const status = await orch(['status', f.id, '--json'], f.c.env);
   assert.equal(status.code, 0, status.stderr);
   assert.equal(json(status).runs[0].status, 'completed');

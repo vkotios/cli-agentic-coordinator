@@ -246,3 +246,7 @@ Controllers should refresh enabled pools at WP start, before assigning new work,
 checkpoints, and after results. Check both the controller and child-route bindings. This command
 collects evidence; it does not enforce reserves, choose alternatives, defer launches or replace a
 controller. Running work continues even when quota is low or telemetry fails.
+
+An independently enabled [quota policy](QUOTA.md) can use this telemetry to distribute
+equal-capability useful work and guard new launches with shared forecast reservations.
+Installing collectors alone does not enable that policy.

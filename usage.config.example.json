@@ -20,6 +20,6 @@
   }],
   "bindings": [
     { "id": "controller", "role": "controller", "harness": "codex", "pool": "coding-subscription" },
-    { "id": "worker", "role": "worker", "harness": "opencode", "model": "example-model", "pool": "coding-subscription" }
+    { "id": "worker", "role": "worker", "harness": "codex", "model": "example-model", "pool": "coding-subscription" }
   ]
 }

@@ -169,6 +169,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | roster | `roster` | `ORCH_ROSTER` (flag `--roster`) | `orch/roster.json` |
 | ledger | `ledger` | `ORCH_LEDGER` (flag `--ledger`) | `<state root>/ledger.jsonl` |
 | subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
+| subscription allocation policy | `quotaPolicy` | `ORCH_QUOTA_POLICY` (`--quota-policy`) | disabled |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE` | found on `PATH` / the npm global prefix at run time |
@@ -189,6 +190,11 @@ Notes:
   ...) and polling; the defaults are in `orch/src/config.mjs`.
 
 ## Subscription usage
+
+Optional [quota policy](docs/QUOTA.md) adds equal-capability reset-aware allocation and
+atomic forecast holds for new launches. `orch quota --refresh --json` shows shared headroom
+and controller warnings. Unknown capacity defers assignments; running jobs continue.
+See [the policy example](quota.config.example.json). Collector installation alone does not enable it.
 
 `orch usage` gives every controlling harness the same view of its own subscription and the pools
 used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass

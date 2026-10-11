@@ -29,6 +29,7 @@ import { rolePrompt } from './role-packet.mjs';
 import { withWpOperation, guardRunResource, assertPackageOpen } from './resources.mjs';
 import { beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync, maintainOnUse, withRunOperation } from './retention.mjs';
 import { readArchived, readArchivedAsync, evidenceIdsAsync, evidencePath, assertLive, digest, stamp, safe } from './archive.mjs';
+import { withQuotaAdmission } from './quota.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -108,13 +109,14 @@ async function runLocked(args, io, opts) {
   const scope = laneScope(laneName);
   fs.mkdirSync(scope.laneDir, { recursive: true });
 
+  const id = newRunId();
+  return withQuotaAdmission({args,cfg,cli:cliName,model,role,id}, async (quota, markAttempted) => {
   // Adapter pre-flight runs in THIS process, BEFORE any record exists, so a bad handoff
   // or a bad model config fails the caller's command loudly and leaves nothing half-born.
   const pre = adapter.preLaunch
     ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'] })
     : { notes: [], extra: {} };
 
-  const id = newRunId();
   const P = paths(cfg, id);
   beginRunArtifacts(cfg, id);
   fs.mkdirSync(P.dir);
@@ -221,10 +223,12 @@ async function runLocked(args, io, opts) {
   };
   Object.assign(rec, pre.extra || {});
   Object.assign(rec, opts.recordExtra || {});
+  if (quota) rec.quota = quota;
   writeJsonAtomic(P.record, rec);
 
   /* ---- amendment A1: the keeper's bind result BEFORE `orch run` returns ---- */
 
+  markAttempted(); // Beyond this point an uncertain launch retains its forecast hold.
   const keeper = spawn(process.execPath, [KEEPER, '--state-root', cfg.stateRoot, '--id', id, '--run-dir', P.dir], {
     detached: true,
     shell: false,
@@ -333,6 +337,7 @@ async function runLocked(args, io, opts) {
     writeJsonAtomic(P.spawned, spawned); // atomic rewrite by the same sole writer
   }
 
+  /** @type {any} */
   const out = {
     id,
     admission: 'acquired',
@@ -352,6 +357,7 @@ async function runLocked(args, io, opts) {
     wp: rec.wp,
     slice: rec.slice,
     baseline: rec.scope ? rec.scope.baseline : null,
+    ...(quota ? {quota} : {}),
   };
   if (monitorError) out.monitor_error = `the monitor did not start (${(monitorError && monitorError.code) || monitorError.message || monitorError}); the run continues unmonitored - start one with \`orch monitor ${id}\``;
   if (args.json) io.log(JSON.stringify(out, null, 2));
@@ -363,6 +369,7 @@ async function runLocked(args, io, opts) {
     if (out.monitor_error) io.log(`  WARNING: ${out.monitor_error}`);
   }
   return { ...out, exitCode: 0 };
+  });
 }
 
 /**
