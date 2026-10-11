@@ -1,4 +1,4 @@
-// Generic source-backed metadata. Preview only: no fetching, execution or writes.
+// Generic source-backed metadata. Transactions are explicit; no fetching or execution.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -184,10 +184,19 @@ function read(file){
   finally{if(fd!==undefined)fs.closeSync(fd);}
 }
 export async function cmdModelrouter(args,io){
-  const allowed=['_','json','catalog','proposal','dry-run','roster','routing-policy','state-root'];
-  if(Object.keys(args).some(k=>!allowed.includes(k))||args['dry-run']===false)fail('P06a supports read-only catalogue/preview options only; apply is unavailable');
+  const allowed=['_','json','catalog','proposal','dry-run','roster','routing-policy','state-root','apply','approval','snapshot'];
+  if(Object.keys(args).some(k=>!allowed.includes(k))||args['dry-run']===false||args.apply===true&&args['dry-run']===true)fail('Invalid catalogue options; apply and dry-run are mutually exclusive');
   const [action,...extra]=args._??[];
-  if(extra.length||!['catalog','update'].includes(action))fail('Use modelrouter catalog or modelrouter update --proposal <JSON>');
+  if(extra.length||!['catalog','update','history','rollback','recover'].includes(action))fail('Use modelrouter catalog, update, history, rollback or recover');
+  if(args.apply===true&&(typeof args.catalog!=='string'||!args.catalog||typeof args.approval!=='string'||!args.approval))fail('Apply needs an explicit private --catalog and preview --approval');
+  if(args.approval!==undefined&&args.apply!==true)fail('Approval requires explicit --apply');
+  if(['history','rollback','recover'].includes(action)){
+    if(typeof args.catalog!=='string'||!args.catalog||args.proposal||args.roster||args['routing-policy']||action==='history'&&(args.apply!==undefined||args.approval!==undefined||args.snapshot!==undefined||args['dry-run']!==undefined)||action!=='history'&&(typeof args.snapshot!=='string'||!args.snapshot))fail('Invalid catalogue history/rollback/recovery options');
+    const store=await import('./catalog-store.mjs');
+    const out=action==='history'?store.catalogHistory(args.catalog):action==='rollback'?await store.rollbackCatalog(args.catalog,args.snapshot,args.apply===true?args.approval:undefined):await store.recoverCatalog(args.catalog,args.snapshot,args.apply===true?args.approval:undefined);
+    io.log(args.json?JSON.stringify(out,null,2):`catalogue ${out.mode}; execution settings unchanged`);return {...out,exitCode:0};
+  }
+  if(args.snapshot!==undefined||action==='catalog'&&args.apply!==undefined)fail('Invalid catalogue inspection/update options');
   const file=args.catalog??setting('ORCH_MODEL_CATALOG','modelCatalog',path.join(REPO_ROOT,'model-catalog.json'),{isPath:true});
   const catalog=validateCatalog(read(file));
   let out;
@@ -196,8 +205,9 @@ export async function cmdModelrouter(args,io){
     out={catalog,warnings:sourceWarnings(catalog.sources,Date.now()),authority:{rosterChanges:false,policyChanges:false,launchChanges:false}};
   }else{
     if(typeof args.proposal!=='string'||!args.proposal)fail('Update preview requires --proposal <JSON>');
-    out=previewCatalogUpdate(catalog,read(args.proposal),{roster:args.roster?read(args.roster):undefined,routingPolicy:args['routing-policy']?read(args['routing-policy']):undefined});
+    const owner={roster:args.roster?read(args.roster):undefined,routingPolicy:args['routing-policy']?read(args['routing-policy']):undefined},store=await import('./catalog-store.mjs');
+    out=args.apply===true?await store.applyCatalogUpdate(file,args.proposal,args.approval,owner):store.previewCatalogFiles(file,args.proposal,owner);
   }
-  io.log(args.json?JSON.stringify(out,null,2):action==='catalog'?`catalogue ${catalog.catalogVersion}: ${catalog.models.length} models; generic metadata only`:`catalogue preview: ${out.changes.length} changes, ${out.conflicts.length} conflicts; no files changed`);
-  return {...out,exitCode:action==='update'&&!out.applyReady?3:0};
+  io.log(args.json?JSON.stringify(out,null,2):action==='catalog'?`catalogue ${catalog.catalogVersion}: ${catalog.models.length} models; generic metadata only`:args.apply===true?`catalogue applied; snapshot ${out.snapshot}; execution settings unchanged`:`catalogue preview: ${out.changes.length} changes, ${out.conflicts.length} conflicts; no files changed`);
+  return {...out,exitCode:action==='update'&&args.apply!==true&&!out.applyReady?3:0};
 }

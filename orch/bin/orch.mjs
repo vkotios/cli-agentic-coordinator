@@ -30,7 +30,11 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch quota [--quota-policy <private file>] [--refresh] [--json]
   orch modelrouter catalog [--catalog <JSON>] [--json]
   orch modelrouter update --proposal <JSON> [--catalog <JSON>] [--dry-run] [--json]
-             source-backed metadata preview only; does not change enabled routes
+             [--apply --approval <preview hash>] (explicit private --catalog required)
+  orch modelrouter history --catalog <private JSON> [--json]
+  orch modelrouter rollback|recover --catalog <private JSON> --snapshot <id> [--json]
+             [--apply --approval <preview hash>] (otherwise read-only preview)
+             generic metadata only; does not change enabled routes
   orch pick ... --routing-policy <private file> --task <task.json>
   orch pick ... [--advice --advice-policy <private file>] (optional bounded Jev advice)
   orch run|review ... --routing-policy <file> --task <task.json> --profile <id>
