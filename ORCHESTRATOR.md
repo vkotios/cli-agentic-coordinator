@@ -55,6 +55,10 @@ Use qualification mode only for an explicitly intended trial. See `docs/ROUTING.
 Optional `pick --advice` requires an enabled private Jev policy and bounded OpenRouter API key.
 Inspect its receipt; shadow keeps deterministic selection, assist only proposes a revalidated
 eligible tie-break. Launch guards remain authoritative. See `docs/ADVICE.md`.
+Use `orch modelrouter catalog --json` to inspect generic model metadata. For a requested
+refresh, read nominated official sources and prepare a private structured proposal; inspect
+`orch modelrouter update --proposal <JSON> --dry-run --json`. It previews changes and conflicts
+without altering enabled routes or qualification. See `docs/MODEL_CATALOG.md`.
 
 | Workload | First choice | Notes |
 |---|---|---|

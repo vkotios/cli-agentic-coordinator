@@ -28,6 +28,9 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch usage [--refresh] [--pool <id>] [--role controller|worker|reviewer]
              [--config <private usage configuration>] [--json]
   orch quota [--quota-policy <private file>] [--refresh] [--json]
+  orch modelrouter catalog [--catalog <JSON>] [--json]
+  orch modelrouter update --proposal <JSON> [--catalog <JSON>] [--dry-run] [--json]
+             source-backed metadata preview only; does not change enabled routes
   orch pick ... --routing-policy <private file> --task <task.json>
   orch pick ... [--advice --advice-policy <private file>] (optional bounded Jev advice)
   orch run|review ... --routing-policy <file> --task <task.json> --profile <id>
@@ -79,6 +82,7 @@ Platform: Windows 10/11 only for now.
 Local gateway benchmark: node orch/tools/bench-gateway.mjs --help
 
 Exit codes
+  modelrouter 0 inspected/previewed | 3 preview conflicts | 2 invalid input/options
   run       0 admitted | 3 lane-busy | 2 usage/preflight/quota/routing-deferred | 4 undetermined
   cancel    0 confirmed gone or already terminal | 3 unconfirmed | 2 usage
   wait-lane 0 lane free | 3 timed out while held
