@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { makeCase, orch, idFrom, waitForStatus, waitFor, readRunRecord, readRunFile } from './helpers.mjs';
+import { makeCase, orch, idFrom, waitForStatus, waitFor, readRunRecord, readRunFile, identityOf, spawnedIdentity } from './helpers.mjs';
 import { g, makeRepo, commitAll, repoFingerprint } from './wf-helpers.mjs';
 import { globToRegex, compareSourceStatus } from '../src/review.mjs';
 import vibe from '../src/adapters/vibe.mjs';
@@ -79,6 +79,16 @@ for (const by of ['opencode', 'vibe']) {
       assert.equal(recorded.code, 0, recorded.stdout + recorded.stderr);
     }
     g(s.repo, 'merge', '--ff-only', s.commit);
+    // Terminal run status precedes supervisor exit. Finalization must retain live
+    // resources; wait for the fixture's recorded processes to exit before removal.
+    for (const id of [s.runId, rv.run_id]) {
+      const record = spawnedIdentity(c.stateRoot, id);
+      assert.ok(record, 'fixture process identities recorded');
+      for (const role of ['keeper', 'monitor']) {
+        const pid = record[`${role}_pid`], createdAt = record[`${role}_created_at`];
+        if (pid) await waitFor(async () => (await identityOf(pid, createdAt)) === 'gone', { timeoutMs: 60000, what: `P04 ${role} exit before finalization` });
+      }
+    }
     const finished = await orch(['finish', 'WP-R', '--by', by, '--json'], c.env);
     assert.equal(finished.code, 0, finished.stdout + finished.stderr);
     assert.equal(json(finished).state, 'finished');
