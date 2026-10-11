@@ -79,4 +79,5 @@ candidate exclusions and quota window decisions. Outcomes distinguish `no-eligib
 Launch refusals report `routing-deferred` (exit 2). Run records retain compact routing provenance
 after metadata retirement. Running jobs and existing controller claims are unchanged.
 
-Jev suggestions, automatic catalog refresh and new harness adapters are separate features.
+Optional [Jev advice](ADVICE.md) can break only a final eligible tie when explicitly requested.
+Automatic catalog refresh and new harness adapters are separate features.

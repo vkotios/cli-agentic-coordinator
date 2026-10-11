@@ -29,6 +29,7 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
              [--config <private usage configuration>] [--json]
   orch quota [--quota-policy <private file>] [--refresh] [--json]
   orch pick ... --routing-policy <private file> --task <task.json>
+  orch pick ... [--advice --advice-policy <private file>] (optional bounded Jev advice)
   orch run|review ... --routing-policy <file> --task <task.json> --profile <id>
   orch pick ... [--quota-policy <file>] --capability <group> [--refresh]
   orch run|review ... --capability <group> --size XS|S|M [--quota-purpose normal|retry]

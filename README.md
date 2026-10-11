@@ -171,6 +171,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
 | subscription allocation policy | `quotaPolicy` | `ORCH_QUOTA_POLICY` (`--quota-policy`) | disabled |
 | task-fit routing policy | `routingPolicy` | `ORCH_ROUTING_POLICY` (`--routing-policy`) | disabled |
+| optional Jev adviser policy | `advicePolicy` | `ORCH_ADVICE_POLICY` (`--advice-policy`) | disabled; explicit `pick --advice` required |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE` | found on `PATH` / the npm global prefix at run time |
@@ -199,6 +200,9 @@ See [the policy example](quota.config.example.json). Collector installation alon
 Optional [task-fit routing](docs/ROUTING.md) filters exact execution profiles by complexity,
 review risk, context/tools and qualification before quota allocation. It requires a typed task
 and explicit profile on launches; research entries remain disabled until qualified and configured.
+Optional [Jev advice](docs/ADVICE.md) can suggest a revalidated final tie-break, or run in shadow
+mode. It requires an enabled private policy, a bounded OpenRouter API key and explicit
+`pick --advice`; it does not change worker/reviewer subscription billing.
 
 `orch usage` gives every controlling harness the same view of its own subscription and the pools
 used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass

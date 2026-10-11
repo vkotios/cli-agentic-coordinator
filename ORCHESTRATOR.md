@@ -52,6 +52,9 @@ When task-fit routing is configured, supply `--task <JSON>` to `pick` and carry 
 context/tools/modalities and risk. Critical reviews require C4 and a different known family.
 Inspect routing exclusions and quota decisions; do not lower requirements to use spare capacity.
 Use qualification mode only for an explicitly intended trial. See `docs/ROUTING.md`.
+Optional `pick --advice` requires an enabled private Jev policy and bounded OpenRouter API key.
+Inspect its receipt; shadow keeps deterministic selection, assist only proposes a revalidated
+eligible tie-break. Launch guards remain authoritative. See `docs/ADVICE.md`.
 
 | Workload | First choice | Notes |
 |---|---|---|

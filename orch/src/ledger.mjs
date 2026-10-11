@@ -24,6 +24,7 @@ import { withWpOperation } from './resources.mjs';
 import { listReviewEvidence, assertLive } from './archive.mjs';
 import { quotaSnapshot, evaluateQuota } from './quota.mjs';
 import { routingInputs, selectRouting } from './routing.mjs';
+import { adviserPolicy, adviseRouting } from './adviser.mjs';
 
 export const DISPOSITIONS = ['accepted', 'accepted-with-fixes', 'rejected', 'blocked', 'inconclusive-timeout', 'failed-launch'];
 /** What counts as a FAILURE of a workload for the rotation rule. `blocked` (quota,
@@ -319,11 +320,16 @@ export async function cmdPick(cfg, args, io) {
   }
   let res = computePick({ roster, rows, workload, size, implementerModels });
   const routingInput = routingInputs(args);
+  if(args.advice!=null&&typeof args.advice!=='boolean')throw new OrchError('Use --advice with a configured task-fit policy','bad-adviser-selection');
+  if(args.advice&&!routingInput)throw new OrchError('Advice requires a configured task-fit policy and task','bad-adviser-selection');
   const snapshot = await quotaSnapshot({ policyFile: args['quota-policy'], refresh: args.refresh === true });
   let quota = null;
   let routing = null;
+  let advice = null;
   if (routingInput) {
-    routing = selectRouting({...routingInput,role:workload==='review'?'reviewer':'worker',candidates:res.candidates,roster,implementerModels,quota:snapshot,purpose:args['quota-purpose']??'normal'});
+    const routingContext={...routingInput,role:workload==='review'?'reviewer':'worker',candidates:res.candidates,roster,implementerModels,quota:snapshot,purpose:args['quota-purpose']??'normal'};
+    routing = selectRouting(routingContext);
+    if(args.advice){const result=await adviseRouting({decision:routing,routingContext,policy:adviserPolicy(args)});routing=result.decision;advice=result.advice;}
     quota = routing.quota;
     const chosen = routing.profile && roster.find(m=>m.cli===routing.profile.cli && m.model===routing.profile.model);
     res = {...res,pick:chosen?{cli:chosen.cli,model:chosen.model,profile:routing.profile.id,canonical:canonicalId(chosen.model),family:familyOf(chosen.model,roster),lane:chosen.lane,cost_class:chosen.cost_class??null}:null,reason:res.candidates.length?routing.reason:res.reason};
@@ -332,7 +338,7 @@ export async function cmdPick(cfg, args, io) {
     const chosen = quota.pick && roster.find(m=>m.cli===quota.pick.cli && m.model===quota.pick.model);
     res = {...res,pick:chosen?{cli:chosen.cli,model:chosen.model,canonical:canonicalId(chosen.model),family:familyOf(chosen.model,roster),lane:chosen.lane,cost_class:chosen.cost_class??null}:null,reason:res.candidates.length?quota.reason:res.reason};
   }
-  const out = { workload, size, ...res, ...(quota?{quota}:{}), ...(routing?{routing}:{}), ledger, ledger_rows: rows.length, ledger_unreadable_lines: bad, roster: rosterFile };
+  const out = { workload, size, ...res, ...(quota?{quota}:{}), ...(routing?{routing}:{}), ...(advice?{advice}:{}), ledger, ledger_rows: rows.length, ledger_unreadable_lines: bad, roster: rosterFile };
   if (args.json) io.log(JSON.stringify(out, null, 2));
   else if (res.pick) io.log(`pick: ${res.pick.cli} ${res.pick.model} - ${res.reason}`);
   else io.log(`pick: none - ${res.reason}`);

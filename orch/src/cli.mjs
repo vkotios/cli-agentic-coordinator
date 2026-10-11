@@ -31,7 +31,7 @@ export const BOOLEANS = new Set([
   // slice 2
   'force', 'no-wait', 'delete-branch', 'owner-approved-model', 'controller-intervened',
   // slice 3
-  'dry-run', 'update', 'apply', 'refresh',
+  'dry-run', 'update', 'apply', 'refresh', 'advice',
 ]);
 export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 
@@ -75,6 +75,7 @@ export const COMMANDS = [
  * @returns {Promise<any>} the command's return value (`exitCode` when not 0)
  */
 export async function runCommand(cmd, args, io) {
+  if(cmd!=='pick'&&(Object.hasOwn(args,'advice')||args['advice-policy']))throw new OrchError('Advice options are supported by pick only','bad-adviser-selection');
   switch (cmd) {
     case 'run':
       return cmdRun(args, io);
