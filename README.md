@@ -171,6 +171,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
 | subscription allocation policy | `quotaPolicy` | `ORCH_QUOTA_POLICY` (`--quota-policy`) | disabled |
 | task-fit routing policy | `routingPolicy` | `ORCH_ROUTING_POLICY` (`--routing-policy`) | disabled |
+| generic model catalogue | `modelCatalog` | `ORCH_MODEL_CATALOG` (`--catalog`) | bundled dated metadata; no enabled routes |
 | optional Jev adviser policy | `advicePolicy` | `ORCH_ADVICE_POLICY` (`--advice-policy`) | disabled; explicit `pick --advice` required |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
@@ -203,6 +204,11 @@ and explicit profile on launches; research entries remain disabled until qualifi
 Optional [Jev advice](docs/ADVICE.md) can suggest a revalidated final tie-break, or run in shadow
 mode. It requires an enabled private policy, a bounded OpenRouter API key and explicit
 `pick --advice`; it does not change worker/reviewer subscription billing.
+
+The [model catalogue](docs/MODEL_CATALOG.md) keeps source-backed generic metadata separate
+from your enabled roster. `orch modelrouter catalog --json` inspects it;
+`orch modelrouter update --proposal <JSON> --dry-run --json` previews changes and conflicts
+without changing models, policies or launch behavior.
 
 `orch usage` gives every controlling harness the same view of its own subscription and the pools
 used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass

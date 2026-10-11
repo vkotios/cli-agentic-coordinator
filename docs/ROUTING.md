@@ -80,4 +80,6 @@ Launch refusals report `routing-deferred` (exit 2). Run records retain compact r
 after metadata retirement. Running jobs and existing controller claims are unchanged.
 
 Optional [Jev advice](ADVICE.md) can break only a final eligible tie when explicitly requested.
-Automatic catalog refresh and new harness adapters are separate features.
+The [model catalogue workflow](MODEL_CATALOG.md) accepts source-backed proposals and previews
+metadata changes without changing this policy or the enabled roster. Catalogue application,
+automatic source collection and new harness adapters are separate features.

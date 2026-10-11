@@ -1,0 +1,473 @@
+{
+  "version": 1,
+  "sourcePolicyVersion": 1,
+  "catalogVersion": "seed-20261011",
+  "asOf": "2026-10-11T16:35:56.906Z",
+  "sources": [
+    {
+      "id": "openrouter-20261011",
+      "kind": "aggregator",
+      "url": "https://openrouter.ai/api/v1/models",
+      "retrievedAt": "2026-10-11T16:35:56.906Z",
+      "status": "ok"
+    }
+  ],
+  "models": [
+    {
+      "id": "openai-gpt-6.1-sol",
+      "provider": "openai",
+      "name": "OpenAI: GPT-6.1 Sol",
+      "model": "openai/gpt-6.1-sol",
+      "status": "active",
+      "aliases": [
+        "openai/gpt-6.1-sol-20260929"
+      ],
+      "contextTokens": 1050000,
+      "inputModalities": [
+        "file",
+        "image",
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 2,
+        "outputUsdPerMillion": 10
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "anthropic-claude-sonnet-5.5",
+      "provider": "anthropic",
+      "name": "Anthropic: Claude Sonnet 5.5",
+      "model": "anthropic/claude-sonnet-5.5",
+      "status": "active",
+      "aliases": [
+        "anthropic/claude-sonnet-5.5-20260928"
+      ],
+      "contextTokens": 1000000,
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 2,
+        "outputUsdPerMillion": 10
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "anthropic-claude-opus-5.5",
+      "provider": "anthropic",
+      "name": "Anthropic: Claude Opus 5.5",
+      "model": "anthropic/claude-opus-5.5",
+      "status": "active",
+      "aliases": [
+        "anthropic/claude-opus-5.5-20260921"
+      ],
+      "contextTokens": 1000000,
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 4,
+        "outputUsdPerMillion": 20
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "google-gemini-3.8-flash",
+      "provider": "google",
+      "name": "Google: Gemini 3.8 Flash",
+      "model": "google/gemini-3.8-flash",
+      "status": "active",
+      "aliases": [
+        "google/gemini-3.8-flash-20260902"
+      ],
+      "contextTokens": 1048576,
+      "inputModalities": [
+        "text",
+        "image",
+        "video",
+        "file",
+        "audio"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 0.75,
+        "outputUsdPerMillion": 3.75
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "meta-muse-spark-1.3",
+      "provider": "meta",
+      "name": "Meta: Muse Spark 1.3",
+      "model": "meta/muse-spark-1.3",
+      "status": "active",
+      "aliases": [
+        "meta/muse-spark-1.3-20260902"
+      ],
+      "contextTokens": 1048576,
+      "inputModalities": [
+        "text",
+        "image",
+        "video",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 1.25,
+        "outputUsdPerMillion": 4.25
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "moonshotai-kimi-k3",
+      "provider": "moonshotai",
+      "name": "MoonshotAI: Kimi K3",
+      "model": "moonshotai/kimi-k3",
+      "status": "active",
+      "aliases": [
+        "moonshotai/kimi-k3-20260715"
+      ],
+      "contextTokens": 1048576,
+      "inputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 0.7999999999999999,
+        "outputUsdPerMillion": 10
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "z-ai-glm-5.3",
+      "provider": "z-ai",
+      "name": "Z.ai: GLM 5.3",
+      "model": "z-ai/glm-5.3",
+      "status": "active",
+      "aliases": [
+        "z-ai/glm-5.3-20260816"
+      ],
+      "contextTokens": 1048576,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 0.07,
+        "outputUsdPerMillion": 4.8
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    },
+    {
+      "id": "deepseek-deepseek-v4.1-flash",
+      "provider": "deepseek",
+      "name": "DeepSeek: DeepSeek V4.1 Flash",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "status": "active",
+      "aliases": [
+        "deepseek/deepseek-v4.1-flash-20260910"
+      ],
+      "contextTokens": 1048576,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "toolCalling": true,
+      "pricing": {
+        "inputUsdPerMillion": 0.3,
+        "outputUsdPerMillion": 1.2
+      },
+      "routes": [],
+      "evidence": {
+        "name": [
+          "openrouter-20261011"
+        ],
+        "model": [
+          "openrouter-20261011"
+        ],
+        "status": [
+          "openrouter-20261011"
+        ],
+        "aliases": [
+          "openrouter-20261011"
+        ],
+        "contextTokens": [
+          "openrouter-20261011"
+        ],
+        "inputModalities": [
+          "openrouter-20261011"
+        ],
+        "outputModalities": [
+          "openrouter-20261011"
+        ],
+        "toolCalling": [
+          "openrouter-20261011"
+        ],
+        "pricing": [
+          "openrouter-20261011"
+        ],
+        "routes": [
+          "openrouter-20261011"
+        ]
+      }
+    }
+  ]
+}

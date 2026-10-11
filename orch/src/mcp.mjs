@@ -82,6 +82,17 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  modelrouter_catalog: {
+    cmd: 'modelrouter', sub: ['catalog'],
+    description: 'Read source-backed generic model metadata. No network, model calls, owner roster changes or launch authority.',
+    opts: {catalog: S('--catalog <versioned catalogue JSON>')},
+  },
+  modelrouter_update: {
+    cmd: 'modelrouter', sub: ['update'],
+    description: 'Preview a structured harness-researched catalogue proposal with field evidence, conflicts and digests. Read-only; missing entries never delete models. Generic metadata does not enable models or change subscription access, owner preferences or qualification.',
+    opts: {catalog: S('--catalog <base JSON>'),proposal: S('--proposal <structured update JSON>'),'dry-run': B('--dry-run (preview only)'),roster: S('--roster <optional owner links JSON>'),'routing-policy': S('--routing-policy <optional owner profile links JSON>')},
+    required: ['proposal'],
+  },
   quota: {
     cmd: 'quota',
     description: 'Shared subscription quota headroom, controller warnings and estimated launch holds. Cached reads do not mutate. Explicit refresh runs bounded telemetry helpers and reconciles proven finished holds. Never changes inference billing, running jobs or controller claims.',

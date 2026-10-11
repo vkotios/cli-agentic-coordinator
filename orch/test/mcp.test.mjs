@@ -14,7 +14,15 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
   'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage', 'quota',
+  'modelrouter_catalog', 'modelrouter_update',
 ];
+
+function catalogFixtures(dir){
+  const catalog=path.join(dir,'catalog.json'),proposal=path.join(dir,'catalog-update.json');
+  const baseline={version:1,sourcePolicyVersion:1,catalogVersion:'fixture-1',asOf:'2026-10-10T00:00:00.000Z',sources:[],models:[]};
+  fs.writeFileSync(catalog,JSON.stringify(baseline));fs.writeFileSync(proposal,JSON.stringify({...baseline,baseCatalogVersion:'fixture-1',catalogVersion:'fixture-2'}));
+  return {catalog,proposal};
+}
 
 /** A minimal JSON-RPC client over the server's stdio. */
 function startServer(env) {
@@ -187,6 +195,15 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
     assert.equal(mcpRes.structuredContent.exit_code, cli.code, `${name}: same exit code`);
   };
 
+  const catalogueFiles=catalogFixtures(c.base),catalogueBytes=fs.readFileSync(catalogueFiles.catalog);
+  const catalogue=await srv.call('modelrouter_catalog',{catalog:catalogueFiles.catalog});
+  assert.equal(catalogue.isError,false,text(catalogue));
+  await equalCli('modelrouter_catalog',catalogue,['modelrouter','catalog','--catalog',catalogueFiles.catalog]);
+  const update=await srv.call('modelrouter_update',{...catalogueFiles,'dry-run':true});
+  assert.equal(update.isError,false,text(update));
+  await equalCli('modelrouter_update',update,['modelrouter','update','--catalog',catalogueFiles.catalog,'--proposal',catalogueFiles.proposal,'--dry-run']);
+  assert.deepEqual(fs.readFileSync(catalogueFiles.catalog),catalogueBytes);
+
   // The same opted-in cached telemetry view is reachable through the real MCP server.
   const usageConfig=path.join(c.base,'usage.json');
   fs.writeFileSync(usageConfig,JSON.stringify({version:1,pools:[],bindings:[]}));
@@ -343,6 +360,11 @@ test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency 
   assert.equal(client.getServerVersion().name, 'orch');
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((x) => x.name).sort(), [...TOOL_NAMES].sort());
+  const catalogueFiles=catalogFixtures(c.base);
+  const catalogue=/** @type {any} */ (await client.callTool({name:'modelrouter_catalog',arguments:{catalog:catalogueFiles.catalog}}));
+  assert.equal(catalogue.isError,false);assert.equal(catalogue.structuredContent.output.catalog.catalogVersion,'fixture-1');
+  const update=/** @type {any} */ (await client.callTool({name:'modelrouter_update',arguments:{...catalogueFiles,'dry-run':true}}));
+  assert.equal(update.isError,false);assert.equal(update.structuredContent.output.mode,'preview');assert.equal(update.structuredContent.output.changes.length,0);
   const claim = await client.callTool({ name: 'claim', arguments: { wp: 'WP-SDK', by: 'owner' } });
   assert.equal(claim.isError, false);
   const claims = /** @type {any} */ (await client.callTool({ name: 'claims', arguments: {} }));

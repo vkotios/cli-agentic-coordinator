@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "sourcePolicyVersion": 1,
+  "baseCatalogVersion": "seed-20261011",
+  "catalogVersion": "example-update-1",
+  "asOf": "2026-10-11T16:35:56.906Z",
+  "sources": [
+    {
+      "id": "example-research",
+      "kind": "research",
+      "url": "research:example-candidate",
+      "retrievedAt": "2026-10-11T00:00:00.000Z",
+      "status": "cached"
+    }
+  ],
+  "models": [
+    {
+      "id": "example-unresolved",
+      "provider": "example",
+      "name": "Unresolved candidate",
+      "model": null,
+      "status": "unresolved",
+      "aliases": [],
+      "contextTokens": null,
+      "inputModalities": [],
+      "outputModalities": [],
+      "toolCalling": null,
+      "pricing": null,
+      "routes": [
+        {
+          "harness": "example-harness",
+          "selector": null,
+          "billing": "unknown",
+          "resolution": "unresolved"
+        }
+      ],
+      "evidence": {
+        "name": [
+          "example-research"
+        ],
+        "status": [
+          "example-research"
+        ],
+        "routes": [
+          "example-research"
+        ]
+      }
+    }
+  ]
+}
