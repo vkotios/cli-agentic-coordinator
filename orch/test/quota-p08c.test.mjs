@@ -118,8 +118,8 @@ test('disabled quota policy is read-only and does not launch collectors or creat
   const result=await quota.quotaSnapshot({policyFile:null});assert.equal(result.enabled,false);assert.equal(fs.readdirSync(root).length,0);
 });
 
-function setup(t,remaining=40) {
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'orch-quota-state-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+function setup(t,remaining=40,parent=os.tmpdir()) {
+  const root=fs.realpathSync.native(fs.mkdtempSync(path.join(parent,'orch-quota-state-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const values=path.join(root,'value.json'),usageFile=path.join(root,'usage.json'),policyFile=path.join(root,'quota.json'),runRoot=path.join(root,'runs-state');
   fs.writeFileSync(values,JSON.stringify({remaining}));
   const u=structuredClone(rawUsage);u.pools.forEach(p=>p.collector.args=[path.resolve('test/fixtures/quota-helper.mjs'),values]);
@@ -127,6 +127,12 @@ function setup(t,remaining=40) {
   return {root,policyFile,runRoot,values,policy:quota.loadQuotaPolicy(policyFile),args:{'quota-policy':policyFile,capability:'coding',size:'S'},cfg:loadConfig(runRoot)};
 }
 const reserve=(s,id,launch=async()=>{})=>quota.withQuotaAdmission({args:s.args,cfg:s.cfg,cli:'codex',model:'a-model',role:'implement',id},launch);
+
+test('owned quota fixture resolves a temporary-directory alias before protected storage',async t=>{
+  const c=makeCase('quota-temp-alias');t.after(()=>c.cleanup());
+  const target=path.join(c.base,'actual-temp'),alias=path.join(c.base,'temp-alias');fs.mkdirSync(target);fs.symlinkSync(target,alias,'junction');
+  const s=setup(t,80,alias);assert.equal(s.root,fs.realpathSync.native(s.root));await reserve(s,'canonical-fixture');assert.equal(quota.readQuotaState(s.policy).leases.length,1);
+});
 test('durable holds serialize same-pool launches across controllers and allow a different subscription',async t=>{
   const s=setup(t,35);
   await reserve(s,'first');
