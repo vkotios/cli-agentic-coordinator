@@ -7,7 +7,7 @@ The why of every step: `{{KIT}}/ORCHESTRATOR.md`. Worker launch details: `{{KIT}
 Below, `orch` means `node "{{KIT}}/orch/bin/orch.mjs"` (in the kit repo itself, `{{KIT}}` is the repo root).
 The same commands exist as MCP tools of the `orch` server (`orch mcp`): run, status, result, log_tail,
 cancel, wait_lane, claim, release, claims, worktree_create, worktree_list, scope, review, review_finish,
-gate_record, gate_status, record, pick, cleanup, finish. Supported claim identities are `claude-code`, `codex`,
+gate_record, gate_status, record, pick, cleanup, finish, usage. Supported claim identities are `claude-code`, `codex`,
 `opencode`, `vibe`, and `owner`; the same identity must hold and release the claim. Controller readiness
 requires live qualification with the adopted repository's configured models and tool permissions;
 preparing instructions alone does not establish end-to-end controller support.
@@ -20,6 +20,12 @@ from a script file, an alias or function, or a variable set in an earlier comman
 is not a sandbox - the rule above is yours to keep, not the guard's.
 
 ## Sequence for one work package (WP) and one slice
+
+When subscription usage is configured, refresh with `orch usage --refresh --json` (MCP `usage`,
+`refresh: true`) at WP start, before new assignments, during normal status checkpoints and after
+results. Include your controller pool and worker/reviewer pools; aliases of one subscription share
+the same observation. Respect the collector cooldown and keep unknown, stale and reset-stale values
+as uncertainty. Usage telemetry does not change admission, billing or any running job.
 
 1. **Claim** - `orch claim <WP> --by <you> --note "<what>"`. Exit 3 = someone else holds it: stop.
 2. **Pick** - `orch pick --workload implement --size XS|S|M`. Use the proposal unless you record a reason.

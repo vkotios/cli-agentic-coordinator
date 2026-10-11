@@ -25,6 +25,9 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch wait-lane [--lane local] [--timeout <s>] [--json]
   orch monitor <id> [--json]
   orch gc [--lane local] [--json]
+  orch usage [--refresh] [--pool <id>] [--role controller|worker|reviewer]
+             [--config <private usage configuration>] [--json]
+             cached subscription telemetry; --refresh invokes configured helpers with a cooldown
 
 Workflow (slice 2)
   orch claim <WP> --by <claude-code|codex|opencode|vibe|owner> [--session <s>] [--note <t>]

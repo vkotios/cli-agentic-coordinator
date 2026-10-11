@@ -27,6 +27,11 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
     releasing the claim. Retry failed cleanup explicitly; never discard uncertain or unmerged work.
 
 ## 3. Monitoring (mandatory for every run, local and cloud)
+- If subscription telemetry is configured, run `orch usage --refresh --json` at WP start, before
+  assignments, at normal status checkpoints and after results (MCP: `usage`, `refresh: true`). Inspect
+  both controller and child-route pool bindings. Model/harness aliases sharing a subscription share
+  headroom. Preserve unknown/stale/reset-stale values and collector errors; this telemetry step does
+  not change admission, billing mode or an existing run. `orch usage --json` reads the cache only.
 - Within **90 s** of launch: `orch status <id>` must show a live process and first log activity. If not: failed launch — read the log, fix the cause, record it. Do not blind-retry.
 - Then check on a schedule (Claude Code: Monitor on the run log plus a ScheduleWakeup fallback; Codex, OpenCode and Vibe: periodic `orch status`). Interval 3–5 min cloud, 5–10 min local. Qualify the controller's ability to perform these checks in its configured tool profile.
 - **Judge activity, not speed.** A slow local run that is producing steps is healthy. Do not set short timeouts on local models.

@@ -13,7 +13,7 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
-  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain',
+  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage',
 ];
 
 /** A minimal JSON-RPC client over the server's stdio. */
@@ -92,7 +92,7 @@ function stable(v) {
   if (v && typeof v === 'object') {
     const o = {};
     for (const [k, x] of Object.entries(v)) {
-      if (/^(age|age_s|quiet_seconds|last_activity_at|waited_ms|monitor|lane_state|keeper_identity|worker_identity|undetermined|checked_at|finished_at|recorded_at)$/.test(k)) continue;
+      if (/^(age|age_s|quiet_seconds|last_activity_at|waited_ms|monitor|lane_state|keeper_identity|worker_identity|undetermined|checked_at|checkedAt|finished_at|recorded_at)$/.test(k)) continue;
       o[k] = stable(x);
     }
     return o;
@@ -186,6 +186,14 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
     assert.deepEqual(stable(mcpRes.structuredContent.output), stable(cli.out), `${name}: MCP == CLI`);
     assert.equal(mcpRes.structuredContent.exit_code, cli.code, `${name}: same exit code`);
   };
+
+  // The same opted-in cached telemetry view is reachable through the real MCP server.
+  const usageConfig=path.join(c.base,'usage.json');
+  fs.writeFileSync(usageConfig,JSON.stringify({version:1,pools:[],bindings:[]}));
+  const usage=await srv.call('usage',{config:usageConfig});
+  assert.equal(usage.isError,false,text(usage));
+  assert.equal(usage.structuredContent.output.enabled,true);
+  await equalCli('usage',usage,['usage','--config',usageConfig]);
 
   // claim / claims / pick
   const claim = await srv.call('claim', { wp: 'WP-M', by: 'claude-code', note: 't3' });

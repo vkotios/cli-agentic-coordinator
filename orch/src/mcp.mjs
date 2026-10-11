@@ -74,6 +74,12 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  usage: {
+    cmd: 'usage',
+    description: 'Shared subscription usage for configured controller, worker and reviewer billing pools. Cached status launches and writes nothing. Explicit refresh runs bounded telemetry helpers, respects per-pool cooldown and retains stale evidence and isolated errors; it never changes inference billing or admission.',
+    opts: { config: S('--config <private usage configuration>'), refresh: B('--refresh: collect subscribed pool observations'), pool: S('--pool <configured pool alias>'), role: S('--role controller|worker|reviewer') },
+    boundMs: 90000,
+  },
   maintain: {
     cmd: 'maintain',
     description: 'orch maintain: read-only retention preview, opt-in exact transcript collection, explicit legacy enrollment and investigation pins. Preserves compact results and process/model evidence.',
