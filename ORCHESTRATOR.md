@@ -59,6 +59,9 @@ Use `orch modelrouter catalog --json` to inspect generic model metadata. For a r
 refresh, read nominated official sources and prepare a private structured proposal; inspect
 `orch modelrouter update --proposal <JSON> --dry-run --json`. It previews changes and conflicts
 without altering enabled routes or qualification. See `docs/MODEL_CATALOG.md`.
+Apply only an accepted preview to an explicit private `--catalog` using its `--approval` hash.
+Inspect retained history; rollback and recovery need their own previews and explicit approval.
+Never treat a catalogue update as roster enablement or qualification.
 
 | Workload | First choice | Notes |
 |---|---|---|

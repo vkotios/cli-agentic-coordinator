@@ -223,7 +223,9 @@ test('a monitor STOPS when its run directory is removed - it must never resurrec
 
   // Now start a monitor again on the terminal run and delete the directory under it.
   const runDir = path.join(c.stateRoot, 'runs', id);
-  fs.rmSync(runDir, { recursive: true, force: true });
+  // Windows can report ENOTEMPTY while the terminal monitor finishes a record write.
+  // Retry only this owned fixture removal; the exit/no-resurrection assertions remain.
+  fs.rmSync(runDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   assert.ok(!fs.existsSync(runDir));
 
   // The previous monitor (if still alive) must notice and exit; and the record must

@@ -1,4 +1,4 @@
-# Model catalogue and update preview
+# Model catalogue, update and rollback
 
 The generic catalogue records dated model metadata and declared harness selectors.
 It is separate from the owner's enabled roster, subscription access, task-fit execution
@@ -12,11 +12,11 @@ orch modelrouter update --proposal private/update.json --dry-run --json
 
 The default is the bundled [model-catalog.json](../model-catalog.json). Select another
 file with `--catalog`, `ORCH_MODEL_CATALOG`, or private config `modelCatalog`. Relative
-config paths resolve against that config file. Both commands are read-only: they do
-not fetch sources, run CLIs, contact a model, write files or apply updates. `--apply`,
-`--out`, `--refresh` and unknown options are refused. Application, snapshots and
-rollback are a subsequent feature. MCP `modelrouter_catalog` and `modelrouter_update`
-use the same dispatcher and JSON results.
+config paths resolve against that config file. Inspection and the default update preview
+are read-only: they do not fetch sources, run CLIs, contact a model or write files.
+Applying requires an explicit private `--catalog` file and the preview's `approvalHash`.
+The bundled catalogue cannot be modified. `--out`, `--refresh` and unknown options are
+refused. MCP tools use the same dispatcher and JSON results.
 
 ## Harness-led refresh
 
@@ -34,7 +34,7 @@ use the same dispatcher and JSON results.
    enablement or qualification. Their fields are not imported into generic metadata.
 5. Inspect changes, conflicts and source warnings. `applyReady` means the preview has no
    detected conflicts; it is not approval, availability or qualification. Resolve conflicts
-   in the proposal. There is no application operation in this slice.
+   in the proposal. Applying is a separate explicit operation described below.
 
 Input source content is data, never executable instructions. A proposal attests that its
 author inspected the sources. URL checks do not authenticate a fetch or prove a claimed
@@ -85,6 +85,11 @@ It makes no roster, policy or launch changes. A conflict returns CLI exit code 3
 input returns 2. Digests bind the represented snapshot, not the truth of its sources.
 Object key order does not affect fact comparisons; digests retain the supplied key order.
 
+`approvalHash` additionally binds the selected file, exact base/proposal bytes, file identities
+and modification stamps. Editing or replacing either input after preview invalidates approval,
+even when the replacement has identical bytes. The token records the accepted inputs; it is
+not an authentication credential or a source signature.
+
 Missing entries never remove existing models. Failed, partial or offline observations cannot
 overwrite facts. Cached usable evidence remains labelled cached; evidence older than the
 existing field cannot overwrite it. Sources older than 30 days are labelled stale.
@@ -95,3 +100,60 @@ alias; historical aliases remain. Provider changes under a stable ID, reused sou
 different observations, competing identities/aliases and duplicated proposed IDs conflict.
 No conflicting proposal wins silently. Existing owner routes and historical ledger evidence
 remain untouched, including when a model is proposed as deprecated.
+
+## Explicit application and snapshots
+
+Keep the target copy, proposal and adjacent history outside public version control. Create an
+existing private catalogue copy first, then preview and use its returned `approvalHash`:
+
+```sh
+orch modelrouter update --catalog private/catalog.json --proposal private/update.json --json
+orch modelrouter update --catalog private/catalog.json --proposal private/update.json --apply --approval <approvalHash> --json
+orch modelrouter history --catalog private/catalog.json --json
+```
+
+`--apply` requires both an explicit `--catalog` and `--approval`. Config or environment defaults
+cannot authorize writes. Conflicts, stale approval, links/junctions, hardlinked files, an occupied
+operation lock or unresolved transaction evidence refuse application. `--apply --dry-run` is
+invalid. No operation edits the owner roster, policy, qualifications or launches.
+
+History lives at `<catalog>.orch-history/transactions/<snapshot>/`. Each transaction retains a
+record, exact `before.json` and `after.json` bytes, and its publication outcome. A flushed staging
+file is published using one same-volume rename. Cooperating orch writers use the same adjacent
+lock regardless of `--state-root`. Failures are retained for inspection; there is no automatic
+retry, lock takeover or pruning. History is bounded to 64 transactions; updates stop at 63,
+reserving the last slot for one rollback. Failed and rolled-back transactions count toward this
+bound. At capacity, retain the evidence and explicitly prepare a new private copy/history if
+more updates are needed. File inputs and snapshots are bounded to 1 MiB.
+
+## Rollback and interrupted transactions
+
+Rollback defaults to preview. It restores exact original bytes only when the current file
+matches the selected committed snapshot's published bytes. It creates another retained
+transaction. It cannot overwrite an unrelated later revision or use changed snapshot evidence.
+
+```sh
+orch modelrouter rollback --catalog private/catalog.json --snapshot <snapshot> --json
+orch modelrouter rollback --catalog private/catalog.json --snapshot <snapshot> --apply --approval <rollbackApprovalHash> --json
+```
+
+An interrupted transaction blocks subsequent mutations. `history` reports `prepared` until
+explicit recovery: if the visible catalogue matches the original bytes, recovery records an
+aborted transaction; if it matches the published bytes and complete snapshots exist, recovery
+records a committed transaction. Recovery never replaces the catalogue. Unrelated current
+bytes or corrupt evidence require inspection and are refused.
+
+```sh
+orch modelrouter recover --catalog private/catalog.json --snapshot <snapshot> --json
+orch modelrouter recover --catalog private/catalog.json --snapshot <snapshot> --apply --approval <recoveryApprovalHash> --json
+```
+
+MCP `modelrouter_update`, `modelrouter_history`, `modelrouter_rollback` and `modelrouter_recover`
+expose the same flags and approval flow. History is always read-only. An abruptly terminated
+process can leave its lock; inspect it before manual recovery rather than assuming it is stale.
+
+This mechanism coordinates cooperating processes on one local filesystem. It checks inputs
+again before publication, but cannot exclude a noncooperating editor in the final check-to-rename
+interval, protect against a hostile process with the same account, or coordinate multiple hosts.
+File flushes and atomic rename do not promise power-loss durability for the Windows parent
+directory. An uncertain publication must be inspected and recovered explicitly.

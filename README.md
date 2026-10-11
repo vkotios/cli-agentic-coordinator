@@ -209,6 +209,9 @@ The [model catalogue](docs/MODEL_CATALOG.md) keeps source-backed generic metadat
 from your enabled roster. `orch modelrouter catalog --json` inspects it;
 `orch modelrouter update --proposal <JSON> --dry-run --json` previews changes and conflicts
 without changing models, policies or launch behavior.
+An explicit accepted preview can update a private catalogue copy using `--apply --approval`;
+adjacent snapshots support inspection, exact-byte rollback and explicit interrupted-transaction
+recovery. The bundled catalogue remains immutable, and owner routes remain unchanged.
 
 `orch usage` gives every controlling harness the same view of its own subscription and the pools
 used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass

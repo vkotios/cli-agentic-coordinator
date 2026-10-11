@@ -89,10 +89,13 @@ export const TOOLS = {
   },
   modelrouter_update: {
     cmd: 'modelrouter', sub: ['update'],
-    description: 'Preview a structured harness-researched catalogue proposal with field evidence, conflicts and digests. Read-only; missing entries never delete models. Generic metadata does not enable models or change subscription access, owner preferences or qualification.',
-    opts: {catalog: S('--catalog <base JSON>'),proposal: S('--proposal <structured update JSON>'),'dry-run': B('--dry-run (preview only)'),roster: S('--roster <optional owner links JSON>'),'routing-policy': S('--routing-policy <optional owner profile links JSON>')},
+    description: 'Preview a source-backed catalogue proposal. Explicit apply requires a private catalogue and exact preview approval; saves snapshots. Generic metadata never enables models or changes access, permissions or qualification.',
+    opts: {catalog: S('--catalog <base JSON>'),proposal: S('--proposal <structured update JSON>'),'dry-run': B('--dry-run (preview only)'),apply:B('--apply (requires explicit private catalogue and approval)'),approval:S('--approval <preview approvalHash>'),roster: S('--roster <optional owner links JSON>'),'routing-policy': S('--routing-policy <optional owner profile links JSON>')},
     required: ['proposal'],
   },
+  modelrouter_history:{cmd:'modelrouter',sub:['history'],description:'Read bounded private catalogue snapshots and interrupted publication outcomes without creating files or changing settings.',opts:{catalog:S('--catalog <private JSON>')},required:['catalog']},
+  modelrouter_rollback:{cmd:'modelrouter',sub:['rollback'],description:'Preview restoring exact previous catalogue bytes. Explicit apply and preview approval are required; unrelated current revisions are preserved.',opts:{catalog:S('--catalog <private JSON>'),snapshot:S('--snapshot <transaction ID>'),'dry-run':B('--dry-run'),apply:B('--apply'),approval:S('--approval <preview approvalHash>')},required:['catalog','snapshot']},
+  modelrouter_recover:{cmd:'modelrouter',sub:['recover'],description:'Preview resolving an interrupted catalogue journal from verified before/after bytes. Explicit apply and approval record its outcome; never replace catalogue bytes or take over stale locks.',opts:{catalog:S('--catalog <private JSON>'),snapshot:S('--snapshot <transaction ID>'),'dry-run':B('--dry-run'),apply:B('--apply'),approval:S('--approval <preview approvalHash>')},required:['catalog','snapshot']},
   quota: {
     cmd: 'quota',
     description: 'Shared subscription quota headroom, controller warnings and estimated launch holds. Cached reads do not mutate. Explicit refresh runs bounded telemetry helpers and reconciles proven finished holds. Never changes inference billing, running jobs or controller claims.',

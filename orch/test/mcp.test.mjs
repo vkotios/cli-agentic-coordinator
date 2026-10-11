@@ -15,6 +15,7 @@ const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
   'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage', 'quota',
   'modelrouter_catalog', 'modelrouter_update',
+  'modelrouter_history','modelrouter_rollback','modelrouter_recover',
 ];
 
 function catalogFixtures(dir){
@@ -203,6 +204,11 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
   assert.equal(update.isError,false,text(update));
   await equalCli('modelrouter_update',update,['modelrouter','update','--catalog',catalogueFiles.catalog,'--proposal',catalogueFiles.proposal,'--dry-run']);
   assert.deepEqual(fs.readFileSync(catalogueFiles.catalog),catalogueBytes);
+  const catalogueApplied=await srv.call('modelrouter_update',{...catalogueFiles,apply:true,approval:update.structuredContent.output.approvalHash});
+  assert.equal(catalogueApplied.isError,false,text(catalogueApplied));const catalogueSnapshot=catalogueApplied.structuredContent.output.snapshot;
+  await equalCli('modelrouter_history',await srv.call('modelrouter_history',{catalog:catalogueFiles.catalog}),['modelrouter','history','--catalog',catalogueFiles.catalog]);
+  await equalCli('modelrouter_rollback',await srv.call('modelrouter_rollback',{catalog:catalogueFiles.catalog,snapshot:catalogueSnapshot}),['modelrouter','rollback','--catalog',catalogueFiles.catalog,'--snapshot',catalogueSnapshot]);
+  await equalCli('modelrouter_recover',await srv.call('modelrouter_recover',{catalog:catalogueFiles.catalog,snapshot:catalogueSnapshot}),['modelrouter','recover','--catalog',catalogueFiles.catalog,'--snapshot',catalogueSnapshot]);
 
   // The same opted-in cached telemetry view is reachable through the real MCP server.
   const usageConfig=path.join(c.base,'usage.json');
@@ -365,6 +371,10 @@ test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency 
   assert.equal(catalogue.isError,false);assert.equal(catalogue.structuredContent.output.catalog.catalogVersion,'fixture-1');
   const update=/** @type {any} */ (await client.callTool({name:'modelrouter_update',arguments:{...catalogueFiles,'dry-run':true}}));
   assert.equal(update.isError,false);assert.equal(update.structuredContent.output.mode,'preview');assert.equal(update.structuredContent.output.changes.length,0);
+  const applied=/** @type {any} */ (await client.callTool({name:'modelrouter_update',arguments:{...catalogueFiles,apply:true,approval:update.structuredContent.output.approvalHash}}));assert.equal(applied.isError,false);
+  const history=/** @type {any} */ (await client.callTool({name:'modelrouter_history',arguments:{catalog:catalogueFiles.catalog}}));assert.equal(history.isError,false);assert.equal(history.structuredContent.output.entries[0].status,'committed');
+  const restored=/** @type {any} */ (await client.callTool({name:'modelrouter_rollback',arguments:{catalog:catalogueFiles.catalog,snapshot:applied.structuredContent.output.snapshot}}));assert.equal(restored.isError,false);assert.equal(restored.structuredContent.output.mode,'rollback-preview');
+  const recovered=/** @type {any} */ (await client.callTool({name:'modelrouter_recover',arguments:{catalog:catalogueFiles.catalog,snapshot:applied.structuredContent.output.snapshot}}));assert.equal(recovered.isError,false);assert.equal(recovered.structuredContent.output.alreadyResolved,true);
   const claim = await client.callTool({ name: 'claim', arguments: { wp: 'WP-SDK', by: 'owner' } });
   assert.equal(claim.isError, false);
   const claims = /** @type {any} */ (await client.callTool({ name: 'claims', arguments: {} }));
