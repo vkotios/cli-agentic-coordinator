@@ -104,6 +104,30 @@ export function selectRouting({policy,task,role,candidates,roster=[],implementer
   return {...out,status:'selected',profile:p,pick:{cli:p.cli,model:p.model,profile:p.id},reason:'Qualified task-fit profile; '+(out.quota?.reason??policy.preference+' preference and existing rotation')};
 }
 
+/** Advice may break only the final rotation tie, never a family/pace/preference/exploration tier. */
+export function adviceShortlist(decision, policy){
+  if(decision.status!=='selected'||decision.mode!=='qualified')return [];
+  const best=decision.profiles.find(p=>p.id===decision.profile.id);
+  const quotaBest=decision.quota?.routes.find(r=>r.cli===best.cli&&r.model===best.model);
+  return decision.profiles.filter(p=>{
+    if(!p.eligible||!!p.same_family!==!!best.same_family||(p.candidate.runs??0)!==(best.candidate.runs??0))return false;
+    const profile=policy.profiles.find(x=>x.id===p.id),rank=policy.preference+'Rank';
+    if(policy.preference!=='rotation'&&profile[rank]!==decision.profile[rank])return false;
+    if(decision.quota){const q=decision.quota.routes.find(r=>r.cli===p.cli&&r.model===p.model);if(!q?.eligible||(decision.quota.allocationMode==='reset-cycle'&&q.pacingDeficit!==quotaBest?.pacingDeficit))return false;}
+    return true;
+  }).map(p=>policy.profiles.find(x=>x.id===p.id));
+}
+
+/** Revalidate the full deterministic proposal before applying a permitted advice tie-break. */
+export function applyRoutingAdvice(context, profileId, now=Date.now()){
+  const decision=selectRouting({...context,now});
+  const profile=adviceShortlist(decision,context.policy).find(p=>p.id===profileId);
+  if(!profile)return {decision,accepted:false};
+  const quota=decision.quota;
+  const q=quota?.routes.find(r=>r.cli===profile.cli&&r.model===profile.model);
+  return {accepted:true,decision:{...decision,profile,pick:{cli:profile.cli,model:profile.model,profile:profile.id},quota:quota?{...quota,pick:{cli:profile.cli,model:profile.model,pool:q.pool}}:null,reason:decision.reason+'; validated Jev tie-break'}};
+}
+
 /** Recheck an explicitly bound launch; never switch model/harness/account or grant permission. */
 export async function prepareRoutingLaunch({args,cfg,cli,model,role,implementerModels=[]}){
   const inputs=routingInputs(args);if(!inputs)return null;

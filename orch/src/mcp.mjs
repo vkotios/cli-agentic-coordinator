@@ -280,8 +280,8 @@ export const TOOLS = {
   },
   pick: {
     cmd: 'pick',
-    description: 'orch pick: propose an eligible model from the ledger; reviewer differs from implementer. An enabled quota policy allocates equal-capability useful work across subscription reset cycles. Cached reads are read-only; explicit refresh collects usage and reconciles confirmed holds. Admission rechecks and reserves at launch.',
-    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh'), 'routing-policy': S('--routing-policy <private task-fit policy>'), task: S('--task <typed task JSON>'), 'routing-mode': S('--routing-mode qualified|qualification') },
+    description: 'orch pick: propose an eligible model from the ledger; reviewer differs from implementer. An enabled quota policy allocates equal-capability useful work across subscription reset cycles. Cached reads are read-only; explicit refresh collects usage and reconciles confirmed holds. Explicit advice can contact Jev and write bounded private accounting only with an enabled adviser policy and key; no launch authority. Admission rechecks and reserves at launch.',
+    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh'), 'routing-policy': S('--routing-policy <private task-fit policy>'), task: S('--task <typed task JSON>'), 'routing-mode': S('--routing-mode qualified|qualification'), advice: B('--advice: request explicitly enabled Jev advice'), 'advice-policy': S('--advice-policy <private adviser policy>') },
     required: ['workload', 'size'],
   },
 };
