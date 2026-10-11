@@ -57,6 +57,10 @@ const N = (description) => ({ type: ['integer', 'string'], description });
 const A = (description) => ({ type: 'array', items: { type: 'string' }, description });
 
 const LAUNCH_OPTS = {
+  'routing-policy': S('--routing-policy <private task-fit policy>'),
+  task: S('--task <typed task JSON file>'),
+  profile: S('--profile <selected exact execution profile>'),
+  'routing-mode': S('--routing-mode qualified|qualification'),
   size: S('--size XS|S|M (quota forecast size)'),
   'quota-policy': S('--quota-policy <private subscription policy>'),
   capability: S('--capability <explicit equivalence group>'),
@@ -277,7 +281,7 @@ export const TOOLS = {
   pick: {
     cmd: 'pick',
     description: 'orch pick: propose an eligible model from the ledger; reviewer differs from implementer. An enabled quota policy allocates equal-capability useful work across subscription reset cycles. Cached reads are read-only; explicit refresh collects usage and reconciles confirmed holds. Admission rechecks and reserves at launch.',
-    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh') },
+    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh'), 'routing-policy': S('--routing-policy <private task-fit policy>'), task: S('--task <typed task JSON>'), 'routing-mode': S('--routing-mode qualified|qualification') },
     required: ['workload', 'size'],
   },
 };

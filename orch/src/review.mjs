@@ -37,6 +37,7 @@ import { requireClaim } from './claims.mjs';
 import { paths, readRun, keeperFacts, TERMINAL } from './store.mjs';
 import { getAdapter } from './adapters/index.mjs';
 import { canonicalId, familyOf, loadRoster } from './models.mjs';
+import { prepareRoutingLaunch } from './routing.mjs';
 import { normalizeRepoPath, sha256File } from './scope.mjs';
 import { cmdRun } from './commands.mjs';
 import { beginResource, confirmResource, readResource, saveResource, withWpOperation, withResourceLock, removeResource, cleanupAuthority, assertPackageOpen } from './resources.mjs';
@@ -249,6 +250,7 @@ async function reviewLocked(args, io, cfg) {
 
   // 1. reviewer != implementer, by canonical model id.
   const implModels = [impl.model_requested, impl.model_actual].filter(Boolean);
+  await prepareRoutingLaunch({args,cfg,cli:reviewerCli,model,role:'reviewer',implementerModels:implModels});
   const implCanon = [...new Set(implModels.map(canonicalId))];
   const revCanon = canonicalId(model);
   if (implCanon.includes(revCanon)) {
@@ -367,12 +369,18 @@ async function reviewLocked(args, io, cfg) {
         'owner-approved-model': !!args['owner-approved-model'],
         'quota-policy': args['quota-policy'],
         'quota-purpose': args['quota-purpose'],
+        'routing-policy': args['routing-policy'],
+        'routing-mode': args['routing-mode'],
+        task: args.task,
+        profile: args.profile,
+        roster: args.roster,
+        ledger: args.ledger,
         capability: args.capability,
         size: args.size || impl.size,
         json: true,
       },
       quiet,
-      { role: 'review', recordExtra: { review_of: implId, review_id: reviewId, wp, slice: impl.slice || null, by } },
+      { role: 'review', routingImplementerModels: implModels, recordExtra: { review_of: implId, review_id: reviewId, wp, slice: impl.slice || null, by } },
     );
   } catch (e) {
     rv.launch_error = String((e && e.message) || e);

@@ -28,6 +28,8 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch usage [--refresh] [--pool <id>] [--role controller|worker|reviewer]
              [--config <private usage configuration>] [--json]
   orch quota [--quota-policy <private file>] [--refresh] [--json]
+  orch pick ... --routing-policy <private file> --task <task.json>
+  orch run|review ... --routing-policy <file> --task <task.json> --profile <id>
   orch pick ... [--quota-policy <file>] --capability <group> [--refresh]
   orch run|review ... --capability <group> --size XS|S|M [--quota-purpose normal|retry]
              cached subscription telemetry; --refresh invokes configured helpers with a cooldown
@@ -76,7 +78,7 @@ Platform: Windows 10/11 only for now.
 Local gateway benchmark: node orch/tools/bench-gateway.mjs --help
 
 Exit codes
-  run       0 admitted | 3 lane-busy | 2 usage/preflight/quota-deferred | 4 undetermined
+  run       0 admitted | 3 lane-busy | 2 usage/preflight/quota/routing-deferred | 4 undetermined
   cancel    0 confirmed gone or already terminal | 3 unconfirmed | 2 usage
   wait-lane 0 lane free | 3 timed out while held
   monitor   0 started | 3 already-running | 4 run is terminal

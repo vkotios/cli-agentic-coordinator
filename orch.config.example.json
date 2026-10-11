@@ -7,6 +7,7 @@
   "ledger": "orch/.state/ledger.jsonl",
   "usageConfig": "private/usage.json",
   "quotaPolicy": "private/quota.json",
+  "routingPolicy": "private/routing.json",
   "gatewayUrl": "http://10.0.0.2:8080/v1",
   "bench": { "models": ["example-coder-30b", "example-reasoner-120b"] },
   "exe": {
