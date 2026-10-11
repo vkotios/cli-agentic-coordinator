@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "usageConfig": "usage.config.example.json",
+  "stateRoot": "private/shared-quota-state",
+  "pools": [{
+    "id": "coding-subscription",
+    "windows": [{"id":"primary","unit":"percent","controller":5,"review":10,"retry":5,"warn":25}],
+    "ignore": {
+      "secondary": "Example only: replace with a blocking rule if this account has a weekly quota",
+      "tertiary": "Example only: confirm this account has no third blocking allowance"
+    }
+  }],
+  "localRoutes": [],
+  "routes": [{
+    "binding": "worker",
+    "capability": "example-scoped-coding",
+    "costs": {"primary":{"XS":2,"S":5,"M":12}}
+  }]
+}

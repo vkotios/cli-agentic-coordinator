@@ -32,6 +32,12 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
   both controller and child-route pool bindings. Model/harness aliases sharing a subscription share
   headroom. Preserve unknown/stale/reset-stale values and collector errors; this telemetry step does
   not change admission, billing mode or an existing run. `orch usage --json` reads the cache only.
+- If quota policy is enabled, also inspect `orch quota --refresh --json`. Use the explicitly
+  qualified capability group in `pick`, `run` and `review`, with `--size` for forecast costs.
+  Allocate useful work across equivalent subscription pools; warn/checkpoint when low and defer
+  if none is usable. Running jobs continue. Launch atomically rechecks/reserves the chosen route;
+  it never substitutes a controller or changes billing. See `docs/QUOTA.md` for reserves, shared
+  holds and uncertainty. Use `--quota-purpose retry` only for an authorized retry.
 - Within **90 s** of launch: `orch status <id>` must show a live process and first log activity. If not: failed launch — read the log, fix the cause, record it. Do not blind-retry.
 - Then check on a schedule (Claude Code: Monitor on the run log plus a ScheduleWakeup fallback; Codex, OpenCode and Vibe: periodic `orch status`). Interval 3–5 min cloud, 5–10 min local. Qualify the controller's ability to perform these checks in its configured tool profile.
 - **Judge activity, not speed.** A slow local run that is producing steps is healthy. Do not set short timeouts on local models.

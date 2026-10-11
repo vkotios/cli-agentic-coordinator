@@ -57,6 +57,10 @@ const N = (description) => ({ type: ['integer', 'string'], description });
 const A = (description) => ({ type: 'array', items: { type: 'string' }, description });
 
 const LAUNCH_OPTS = {
+  size: S('--size XS|S|M (quota forecast size)'),
+  'quota-policy': S('--quota-policy <private subscription policy>'),
+  capability: S('--capability <explicit equivalence group>'),
+  'quota-purpose': S('--quota-purpose normal|retry (forecast reserve class)'),
   agent: S('--agent <name> (opencode/vibe agent)'),
   flag: A('--flag <x>, repeatable: extra adapter flags'),
   'max-turns': N('--max-turns N'),
@@ -74,6 +78,12 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  quota: {
+    cmd: 'quota',
+    description: 'Shared subscription quota headroom, controller warnings and estimated launch holds. Cached reads do not mutate. Explicit refresh runs bounded telemetry helpers and reconciles proven finished holds. Never changes inference billing, running jobs or controller claims.',
+    opts: {'quota-policy': S('--quota-policy <private policy>'), refresh: B('--refresh')},
+    boundMs: 90000,
+  },
   usage: {
     cmd: 'usage',
     description: 'Shared subscription usage for configured controller, worker and reviewer billing pools. Cached status launches and writes nothing. Explicit refresh runs bounded telemetry helpers, respects per-pool cooldown and retains stale evidence and isolated errors; it never changes inference billing or admission.',
@@ -105,7 +115,7 @@ export const TOOLS = {
       ...LAUNCH_OPTS,
     },
     required: ['cli', 'dir', 'handoff'],
-    boundMs: 60000,
+    boundMs: 120000,
   },
   status: {
     cmd: 'status',
@@ -266,8 +276,8 @@ export const TOOLS = {
   },
   pick: {
     cmd: 'pick',
-    description: 'orch pick: propose a worker model from the ledger (rotation rule; reviewer != implementer). Read-only.',
-    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>') },
+    description: 'orch pick: propose an eligible model from the ledger; reviewer differs from implementer. An enabled quota policy allocates equal-capability useful work across subscription reset cycles. Cached reads are read-only; explicit refresh collects usage and reconciles confirmed holds. Admission rechecks and reserves at launch.',
+    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh') },
     required: ['workload', 'size'],
   },
 };
