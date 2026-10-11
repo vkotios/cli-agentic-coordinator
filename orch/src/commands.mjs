@@ -30,6 +30,7 @@ import { withWpOperation, guardRunResource, assertPackageOpen } from './resource
 import { beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync, maintainOnUse, withRunOperation } from './retention.mjs';
 import { readArchived, readArchivedAsync, evidenceIdsAsync, evidencePath, assertLive, digest, stamp, safe } from './archive.mjs';
 import { withQuotaAdmission } from './quota.mjs';
+import { prepareRoutingLaunch } from './routing.mjs';
 
 export const KEEPER = path.resolve(fileURLToPath(new URL('./keeper.mjs', import.meta.url)));
 export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', import.meta.url)));
@@ -42,7 +43,7 @@ const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
 /**
  * @param {any} args
  * @param {{log:(s:string)=>void}} [io]
- * @param {{role?:string, recordExtra?:object}} [opts] used by `orch review` to launch a
+ * @param {{role?:string, recordExtra?:object, routingImplementerModels?:string[]}} [opts] used by `orch review` to launch a
  *   reviewer through this exact machinery and link the record to the implementer run.
  */
 export async function cmdRun(args, io = console, opts = {}) {
@@ -88,6 +89,7 @@ async function runLocked(args, io, opts) {
   // the allowlist + baseline the scope guard will check. Checked BEFORE anything exists.
   if (args.role && args.role !== 'implement') throw new OrchError('run fixes the implementer role; use orch review for a reviewer', 'bad-role');
   const role = opts.role || 'implement';
+  const routing = await prepareRoutingLaunch({args,cfg,cli:cliName,model,role:role==='review'?'reviewer':'worker',implementerModels:opts.routingImplementerModels??[]});
   const workflow = await runWorkflowFields(cfg, args, dir, handoff);
   const handoffBuf = fs.readFileSync(handoff);
   const delivery = rolePrompt(handoffBuf, role);
@@ -224,6 +226,7 @@ async function runLocked(args, io, opts) {
   Object.assign(rec, pre.extra || {});
   Object.assign(rec, opts.recordExtra || {});
   if (quota) rec.quota = quota;
+  if (routing) rec.routing = routing;
   writeJsonAtomic(P.record, rec);
 
   /* ---- amendment A1: the keeper's bind result BEFORE `orch run` returns ---- */
@@ -358,6 +361,7 @@ async function runLocked(args, io, opts) {
     slice: rec.slice,
     baseline: rec.scope ? rec.scope.baseline : null,
     ...(quota ? {quota} : {}),
+    ...(routing ? {routing} : {}),
   };
   if (monitorError) out.monitor_error = `the monitor did not start (${(monitorError && monitorError.code) || monitorError.message || monitorError}); the run continues unmonitored - start one with \`orch monitor ${id}\``;
   if (args.json) io.log(JSON.stringify(out, null, 2));

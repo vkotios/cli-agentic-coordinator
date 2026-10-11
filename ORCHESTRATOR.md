@@ -47,6 +47,12 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 - Close the worker's window when its run has ended and its record is written.
 
 ## 4. Choosing a worker
+When task-fit routing is configured, supply `--task <JSON>` to `pick` and carry its exact
+`--profile` to `run`/`review`. Describe task complexity separately from slice size, and include
+context/tools/modalities and risk. Critical reviews require C4 and a different known family.
+Inspect routing exclusions and quota decisions; do not lower requirements to use spare capacity.
+Use qualification mode only for an explicitly intended trial. See `docs/ROUTING.md`.
+
 | Workload | First choice | Notes |
 |---|---|---|
 | XS/S mechanical, tests, scoped edits | local models via opencode | rotate across models; slow is fine |

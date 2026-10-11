@@ -27,6 +27,8 @@ results. Include your controller pool and worker/reviewer pools; aliases of one 
 the same observation. Respect the collector cooldown and keep unknown, stale and reset-stale values
 as uncertainty. Usage telemetry does not change admission, billing or any running job.
 
+Carry typed task requirements and the exact selected profile when task-fit routing is enabled
+(see `docs/ROUTING.md`). Qualification trials are explicit; critical-review independence remains mandatory.
 When quota policy is enabled, use `orch quota --refresh --json` at those checkpoints and
 pass the owner's explicit `--capability` group and forecast `--size` to picks and launches
 (including reviews). Choose equally capable available subscription routes; defer new work
