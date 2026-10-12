@@ -34,6 +34,13 @@ evidence before `controller-qualify`. Reuse only fresh matching receipts through
 profile, with task capability and future launch authority remaining separate.
 The supported trial profiles are Claude/Codex/Vibe subscriptions and explicitly
 configured local OpenCode; inspect billing and tool-profile coverage in `docs/SETUP.md`.
+For measured coding/review cases, use `setup task-smoke`, approve its exact offer,
+then `task-start` and the supplied fixed `task-step` sequence. Capture with
+`task-qualify` only after independent checks, review cleanup and claim release.
+`task-qualification` reuses fresh case evidence without model calls or policy
+activation. These cases do not qualify an entire workload class or context capacity.
+For a failed or abandoned trial, inspect active jobs and use exact-approved
+`task-close`; it retains source evidence and never kills or relaunches an agent.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.
