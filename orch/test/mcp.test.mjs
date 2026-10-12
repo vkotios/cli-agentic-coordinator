@@ -19,6 +19,8 @@ const TOOL_NAMES = [
   'setup_start','setup_status','setup_answer','setup_proposal',
   'setup_preview','setup_apply','setup_receipt','setup_health',
   'setup_smoke','setup_probe','setup_qualify','setup_qualification',
+  'setup_controller_smoke','setup_controller_start','setup_controller_step','setup_controller_qualify','setup_controller_qualification',
+  'setup_controller_run',
 ];
 
 async function setupConversation(dir,repo,call){
@@ -36,6 +38,9 @@ async function setupConversation(dir,repo,call){
   response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
   response=await call('setup_health',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.readOnly,true);assert.equal(response.structuredContent.output.providerCalls,0);
   response=await call('setup_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
+  response=await call('setup_controller_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
+  fs.writeFileSync(approval,JSON.stringify({worker:0,reviewer:0,maxAgeSeconds:3600}));response=await call('setup_controller_smoke',{session,config,request:approval});assert.equal(response.isError,true);
+  for(const tool of ['setup_controller_start','setup_controller_run','setup_controller_step','setup_controller_qualify']){fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64),approve:false,step:'claim'}));assert.equal((await call(tool,{session,request:approval})).isError,true);}
   fs.writeFileSync(approval,JSON.stringify({worker:0,reviewer:0,maxAgeSeconds:3600}));response=await call('setup_smoke',{session,config,request:approval});assert.equal(response.isError,true,'identical reviewer/worker model refused before any call');
   fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64),approve:false,role:'worker'}));response=await call('setup_probe',{session,request:approval});assert.equal(response.isError,true);
   fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64)}));response=await call('setup_qualify',{session,request:approval});assert.equal(response.isError,true);

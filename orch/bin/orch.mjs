@@ -85,6 +85,9 @@ Integration (slice 3)
   orch setup smoke --session <completed private directory> --config <private config> --request <route indexes JSON> [--json]
   orch setup probe|qualify --session <private directory> --request <exact offer request JSON> [--json]
   orch setup qualification --session <private directory> --config <private config> [--json]
+  orch setup controller-smoke --session <private directory> --config <private config> --request <route indexes JSON> [--json]
+  orch setup controller-start|controller-run|controller-step|controller-qualify --session <private directory> --request <exact controller request JSON> [--json]
+  orch setup controller-qualification --session <private directory> --config <private config> [--json]
              resumable choices only; no configuration/adoption/policy activation
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands
   orch adopt --repo <path> [--harness claude|codex|opencode|vibe]... [--dry-run] [--update] [--json]
