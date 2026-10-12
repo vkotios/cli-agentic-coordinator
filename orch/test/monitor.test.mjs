@@ -19,8 +19,36 @@ import {
   resumeProcess,
   spawnedIdentity, testReps } from './helpers.mjs';
 import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
+import {appendMonitorEvent,paths,writeRun} from '../src/store.mjs';
+import {loadConfig} from '../src/config.mjs';
+/** @type {any} */ const atomic=await import('../src/util.mjs');
 
 const REPS = testReps(20, 'ORCH_G3_REPS');
+
+test('monitor event trail never recreates a removed run directory',t=>{
+  const c=makeCase('monitor-event-missing');t.after(()=>c.cleanup());const cfg=loadConfig(c.stateRoot),p=paths(cfg,'example-run');
+  for(let n=0;n<100;n++)assert.equal(appendMonitorEvent(cfg,'example-run',{type:'monitor-error',where:'removed-folder'}),false);
+  assert.equal(fs.existsSync(p.dir),false);
+  fs.mkdirSync(p.dir,{recursive:true});assert.equal(appendMonitorEvent(cfg,'example-run',{type:'monitor-start'}),true);
+  assert.equal(fs.readFileSync(p.events,'utf8').trim().split('\n').length,1);
+});
+
+test('monitor record publication refuses a directory removed before the final write',t=>{
+  const c=makeCase('monitor-final-missing');t.after(()=>c.cleanup());const cfg=loadConfig(c.stateRoot),record={id:'example-final',status:'completed'},p=paths(cfg,record.id);
+  /** @type {any} */ const publish=writeRun;
+  publish(cfg,record);assert.equal(fs.existsSync(p.record),true);
+  fs.rmSync(p.dir,{recursive:true,force:true});
+  assert.throws(()=>publish(cfg,record,{createDir:false}));
+  assert.equal(fs.existsSync(p.dir),false);
+  assert.equal(appendMonitorEvent(cfg,record.id,{type:'monitor-error'}),false);
+});
+
+test('monitor auxiliary publication cannot create missing parents; initial creation still can',t=>{
+  const c=makeCase('monitor-aux-missing');t.after(()=>c.cleanup());const file=path.join(c.stateRoot,'removed','viewer.json');
+  assert.throws(()=>atomic.writeJsonAtomic(file,{pid:1},{createDir:false}));
+  assert.equal(fs.existsSync(path.dirname(file)),false);
+  atomic.writeJsonAtomic(file,{pid:1});assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).pid,1);
+});
 
 function runArgs(c, extra = []) {
   return ['run', '--cli', 'fake', '--dir', c.work, '--handoff', c.handoffPath, '--lane', 'local', '--no-window', ...extra];

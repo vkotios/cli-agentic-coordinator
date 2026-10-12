@@ -7,7 +7,11 @@ For first-use onboarding, `orch setup start` (MCP: `setup_start`) opens a privat
 resumable question session. Ask the owner the returned question, submit the explicit
 revision-bound answer and read the next question. After all answers, inspect the
 intent proposal. This stage does not change config, adoption, access or qualification;
-never treat recorded preferences as enabled settings. See `docs/SETUP.md`.
+never treat recorded preferences as enabled settings. For a completed session, use
+`setup preview` / `setup_preview`, inspect conflicts and pending qualification,
+then ask the owner to approve the exact preview before `setup apply` / `setup_apply`.
+Read the receipt; interrupted or partial writes need a fresh preview. Apply never
+grants launch permission or verifies subscriptions. See `docs/SETUP.md`.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.

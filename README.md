@@ -96,7 +96,10 @@ For a harness-guided onboarding conversation, use `orch setup start --repo <Git 
 --harness claude|codex|opencode|vibe --session <private directory> --json`.
 It collects resumable choices and returns one question at a time through the CLI or MCP.
 This stage records intent; configuration, adoption and policies remain unchanged.
-See [SETUP.md](docs/SETUP.md) for answer files, privacy and current scope.
+Use the separate `setup preview` and exact-approved `setup apply` to prepare private
+configuration and optional controller adoption. Conflicting settings are preserved;
+route qualification and complete routing/advice policies remain explicit follow-ups.
+See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval and recovery.
 
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
    `orch.config.example.json` to `orch.config.json` and edit it, or set the environment variables.

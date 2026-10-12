@@ -5,10 +5,10 @@ It returns one structured question at a time. A controlling harness can ask the
 user the question and submit their answer, or a terminal user can edit an answer
 file. MCP tools never prompt on stdin.
 
-This first setup flow produces **intent only**. It does not apply configuration,
-adopt a repository, install a CLI, log in, read credentials, launch a model,
-activate retention or install a scheduler. Existing manual configuration and
-`orch adopt --dry-run` remain available separately.
+The question flow produces **intent only**. A separate exact-preview approval
+can apply private configuration and optionally adopt controller instructions.
+Setup does not install a CLI, log in, read credentials, launch a model, purge
+existing records, enroll historical data or install a scheduler.
 
 ## Start and resume
 
@@ -92,9 +92,75 @@ orch setup proposal --session C:\private\orch-setup --json
 After all five answers, the proposal contains `intentOnly: true`,
 `applyAvailable: false`, `activation: false`, the accepted choices and readiness
 for the selected routes. It is not a configuration file and cannot be passed to
-an apply command. A separate preview/apply onboarding stage is still required to
-make these choices effective. Existing owner files remain unchanged.
+an apply command. Use the separate preview/apply stage below to make supported
+configuration choices effective. Reading the proposal leaves owner files unchanged.
 
 MCP exposes the same conversation as `setup_start`, `setup_status`, `setup_answer`
 and `setup_proposal`, with the same explicit session and answer-file arguments.
 The common MCP state root does not change the setup session's lock or storage.
+
+## Preview and explicitly apply
+
+Choose a private runtime configuration file outside the target repository and
+session evidence, outside managed state and review directories. State,
+review and session directories must not overlap. The preview writes only private
+session evidence and returns the exact `previewHash` to approve.
+
+```powershell
+orch setup preview --session C:\private\orch-setup --config C:\private\repo-orch.json --adopt --json
+```
+
+`--adopt` selects the current controller's repository instructions, skills and
+supported hooks/MCP entries. Existing owner instruction text is preserved and the
+managed block is appended. `--update` requires `--adopt` and refreshes only unchanged
+owned adoption payloads. Existing conflicting or stale adoption items block setup.
+Global registration commands are never executed.
+
+Inspect `configChanges`, `stateChanges`, adoption items, conflicts and per-role
+readiness. Existing configuration keys and unrelated state settings are preserved;
+different existing settings are conflicts, even if a new answer requests them.
+Resolve reconfiguration separately and preview again. There is no force overwrite.
+Disabled owner-roster routes and explicit permission requirements remain blocked;
+`permission: "allowed"` is a preference and grants no model access.
+
+Apply supports the chosen `stateRoot`, `reviewRoot`, optional `usageConfig` reference
+and `setupPreferences`. Usage configuration is not opened or executed. Explicitly
+enabled retention maps transcript days to both successful/other transcript ages
+and run days to both metadata ages, using bounded existing maintenance defaults.
+Disabled retention is written explicitly. Existing different retention settings
+block apply. This activates future maintenance policy only when this configuration
+is selected; setup itself performs no collection, deletion or legacy enrollment.
+
+Routes and router choices remain preferences. Setup does not invent task capability
+profiles, qualify models, change the roster or create a Jev policy. Complete those
+separate policy/access checks before using deterministic task-fit routing or Jev.
+The preview's `deferred` field explains these remaining steps.
+
+Save the approval in a private JSON file:
+
+```json
+{"previewHash":"<exact hash returned by preview>","approve":true}
+```
+
+```powershell
+orch setup apply --session C:\private\orch-setup --approval C:\private\setup-approval.json --json
+orch setup receipt --session C:\private\orch-setup --preview <previewHash> --json
+```
+
+Apply rechecks the session, repository binding, configuration and adoption inputs.
+A changed input requires a fresh preview and approval. Setup records an immutable
+attempt before any target mutation. Multi-file apply can be partial: inspect the
+receipt and completed writes, then preview the current files before continuing.
+It does not roll back owner files. An interrupted attempt cannot reuse its old
+approval. Completed replay verifies installed bytes and performs no writes;
+later owner edits require a fresh preview. Each preview, attempt and receipt directory
+is bounded to 64 entries, including retained temporary or unknown files. Inspect
+uncertain evidence and create a new private session when full; setup never deletes
+those files or takes over stale locks automatically.
+
+Select the resulting private config explicitly through `ORCH_CONFIG` when running
+orch. Setup does not modify environment variables or global configuration. Existing
+environment overrides take precedence. Installed CLI discovery is the earlier
+session observation; authentication, current model access and qualification remain
+unchecked. MCP exposes `setup_preview`, `setup_apply` and `setup_receipt` with the
+same implementation and explicit file arguments.
