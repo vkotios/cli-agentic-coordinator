@@ -92,10 +92,14 @@ export function setting(envName, key, fallback, opts = {}) {
   return typeof fallback === 'function' ? fallback() : fallback;
 }
 
-/** `%LOCALAPPDATA%` of the current user (from the process token when the variable is unset). */
+/** User-local application data directory for the current platform. */
 export function localAppData() {
-  if (process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA;
-  return path.join(os.userInfo().homedir, 'AppData', 'Local');
+  if (process.platform === 'win32') {
+    if (process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA;
+    return path.join(os.userInfo().homedir, 'AppData', 'Local');
+  }
+  if (process.env.XDG_DATA_HOME) return process.env.XDG_DATA_HOME;
+  return path.join(os.homedir(), '.local', 'share');
 }
 
 /**

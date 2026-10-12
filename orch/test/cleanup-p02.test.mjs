@@ -12,7 +12,26 @@ import { beginResource, confirmResource, readResource, resourceFile, closureFile
 import { cmdFinish } from '../src/cleanup.mjs';
 import { readClaim } from '../src/claims.mjs';
 
-async function lockFile(t, file) {
+async function lockFile(t, file, env, base) {
+  if (process.platform !== 'win32') {
+    // POSIX permits unlinking an open file, unlike the NTFS sharing-violation case below.
+    // Inject one transient git worktree-removal failure so retry/recovery semantics remain
+    // exercised without pretending Linux has Windows file-lock behavior.
+    const bin = path.join(base, 'test-bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const realGit = process.env.PATH.split(path.delimiter).map((d) => path.join(d, 'git')).find((p) => {
+      try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
+    });
+    assert.ok(realGit, 'git executable required by test');
+    const once = path.join(base, 'fail-worktree-remove-once');
+    fs.writeFileSync(once, '1');
+    fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nif [ "$1" = "-c" ] && [ "$2" = "core.quotepath=off" ]; then shift 2; fi\nif [ "$1" = "worktree" ] && [ "$2" = "remove" ] && [ -f "$ORCH_TEST_GIT_REMOVE_FAIL_ONCE" ]; then rm -f "$ORCH_TEST_GIT_REMOVE_FAIL_ONCE"; printf "%s\\n" "simulated transient worktree removal failure" >&2; exit 1; fi\nexec "$ORCH_TEST_REAL_GIT" "$@"\n');
+    fs.chmodSync(path.join(bin, 'git'), 0o755);
+    env.PATH = `${bin}${path.delimiter}${env.PATH}`;
+    env.ORCH_TEST_REAL_GIT = realGit;
+    env.ORCH_TEST_GIT_REMOVE_FAIL_ONCE = once;
+    return async () => { assert.equal(fs.existsSync(once), false, 'transient failure fixture was exercised'); };
+  }
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$f=[IO.File]::Open($env:ORCH_FIXTURE_LOCK,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); [Console]::WriteLine('ready'); [Console]::ReadLine() | Out-Null; $f.Dispose()"], { env: { ...process.env, ORCH_FIXTURE_LOCK: file }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => child.stdin.end('\n'));
   await new Promise((resolve, reject) => {
@@ -181,7 +200,7 @@ test('P02: finish rejects unrecorded work and accepts an explicit retained resou
 
 test('P02: a failed Git removal is pending and retry removes the same verified resource', async (t) => {
   const { c, w } = await fixture(t, 'p02-retry');
-  const unlock = await lockFile(t, path.join(w.path, 'a.txt'));
+  const unlock = await lockFile(t, path.join(w.path, 'a.txt'), c.env, c.base);
   const args = ['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'];
   const first = await orch(args, c.env);
   assert.equal(first.code, 3, first.stderr);
@@ -210,7 +229,7 @@ test('P02: review cleanup retry preserves the original review result bytes', asy
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(rv, null, 2));
   const original = fs.readFileSync(file);
-  const unlock = await lockFile(t, path.join(wt, 'a.txt'));
+  const unlock = await lockFile(t, path.join(wt, 'a.txt'), c.env, c.base);
   let result = await orch(['review', '--finish', id, '--by', 'owner', '--json'], c.env);
   assert.equal(result.code, 3, result.stderr);
   await unlock();
@@ -289,7 +308,7 @@ test('P02: foreign legacy resources stay inventory-only', async (t) => {
 
 test('P02: finish can release a logically closed package and retry pending cleanup', async (t) => {
   const { c, w } = await fixture(t, 'p02-finish-pending');
-  const unlock = await lockFile(t, path.join(w.path, 'a.txt'));
+  const unlock = await lockFile(t, path.join(w.path, 'a.txt'), c.env, c.base);
   let result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
   assert.equal(result.code, 3, result.stdout + result.stderr);
   assert.equal(json(result).state, 'cleanup-pending');
@@ -306,7 +325,7 @@ test('P02: finish can release a logically closed package and retry pending clean
 test('P02: intervening owner content prevents partial-removal retry', async (t) => {
   const { c, w } = await fixture(t, 'p02-partial-new');
   const original = fs.readFileSync(path.join(w.path, 'a.txt'));
-  const unlock = await lockFile(t, path.join(w.path, 'a.txt'));
+  const unlock = await lockFile(t, path.join(w.path, 'a.txt'), c.env, c.base);
   const args = ['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'];
   assert.equal((await orch(args, c.env)).code, 3);
   await unlock();
@@ -396,7 +415,7 @@ test('P02: retained legacy decisions survive repeated finalization', async (t) =
 
 test('P02 repair: a cleanup retry reports retention required without reopening the package', async (t) => {
   const { c, w } = await fixture(t, 'p02-retention-status');
-  const unlock = await lockFile(t, path.join(w.path, 'a.txt'));
+  const unlock = await lockFile(t, path.join(w.path, 'a.txt'), c.env, c.base);
   const first = json(await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env));
   assert.equal(first.state, 'cleanup-pending');
   await unlock();

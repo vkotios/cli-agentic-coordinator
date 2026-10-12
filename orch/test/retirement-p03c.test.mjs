@@ -14,6 +14,8 @@ import { cmdMaintain } from '../src/retention.mjs';
 import { beginRunArtifacts, confirmRunArtifacts, maintainOnUse } from '../src/retention.mjs';
 import { beginReviewMetadata, confirmReviewMetadata } from '../src/metadata.mjs';
 import { withOperationLock } from '../src/resources.mjs';
+import { readEvidence } from '../src/archive.mjs';
+import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
 
 const old = '2026-01-01T00:00:00.000Z';
 const json = (r) => JSON.parse(r.stdout);
@@ -462,23 +464,51 @@ test('P03c review: list isolates damaged history while cleanup still blocks on i
 });
 
 test('P03c review: archived PID reuse permits retention while match and unknown still protect', async (t) => {
-  const f = fixture(t, 'p03c-r5'), original = cp.execFile; let verdict = 'gone';
-  cp.execFile = /** @type {any} */ ((exe, args, opts, cb) => {
-    if (exe !== 'powershell.exe' || !String(args.at(-1)).includes('Get-CimInstance Win32_Process')) return original(exe, args, opts, cb);
-    const child = /** @type {any} */ (new EventEmitter()); child.kill = () => true;
-    setImmediate(() => { cb(verdict === 'unknown' ? new Error('fixture unavailable') : null, verdict === 'gone' || verdict === 'unknown' ? '' : JSON.stringify([{ ProcessId: 424242, CreationDate: verdict === 'match' ? old : '2026-06-01T00:00:00Z' }]), ''); child.emit('close', 0); }); return child;
-  }); syncBuiltinESMExports();
+  const f = fixture(t, 'p03c-r5'), original = cp.execFile, originalReadFile = fs.promises.readFile; let verdict = 'gone';
+  if (process.platform === 'linux') {
+    fs.promises.readFile = /** @type {any} */ (async (file, ...args) => {
+      if (file === '/proc/424242/stat') {
+        if (verdict === 'gone') throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+        if (verdict === 'unknown') throw Object.assign(new Error('fixture unavailable'), { code: 'EIO' });
+        const ticks = verdict === 'match' ? '123456' : '654321';
+        const fields = ['S', '1', '1', '1', ...Array(15).fill('0'), ticks];
+        return `424242 (orch-fixture) ${fields.join(' ')}`;
+      }
+      return originalReadFile(file, ...args);
+    });
+  } else {
+    cp.execFile = /** @type {any} */ ((exe, args, opts, cb) => {
+      if (exe !== 'powershell.exe' || !String(args.at(-1)).includes('Get-CimInstance Win32_Process')) return original(exe, args, opts, cb);
+      const child = /** @type {any} */ (new EventEmitter()); child.kill = () => true;
+      setImmediate(() => { cb(verdict === 'unknown' ? new Error('fixture unavailable') : null, verdict === 'gone' || verdict === 'unknown' ? '' : JSON.stringify([{ ProcessId: 424242, CreationDate: verdict === 'match' ? old : '2026-06-01T00:00:00Z' }]), ''); child.emit('close', 0); }); return child;
+    }); syncBuiltinESMExports();
+  }
   try {
-    fs.writeFileSync(path.join(f.dir, 'spawned.json'), JSON.stringify({ monitor_pid: 424242, monitor_created_at: old }));
-    // In-process calls keep the process-query fixture local to this test.
+    const recordedAt = process.platform === 'linux' ? 'ticks:123456' : old;
+    fs.writeFileSync(path.join(f.dir, 'spawned.json'), JSON.stringify({ monitor_pid: 424242, monitor_created_at: recordedAt }));
+    // In-process calls keep the platform-specific process-query fixture local to this test.
     const cfg = loadConfig(f.c.stateRoot);
     await cmdMaintain(cfg, { enroll: f.id, by: 'owner', reason: 'fixture' }, { log() {} }); await cmdMaintain(cfg, { apply: true, run: f.id }, { log() {} });
-    await cmdMaintain(cfg, { kind: 'metadata', enroll: f.id, by: 'owner', reason: 'fixture' }, { log() {} }); await cmdMaintain(cfg, { kind: 'metadata', apply: true, run: f.id }, { log() {} });
+    await cmdMaintain(cfg, { kind: 'metadata', enroll: f.id, by: 'owner', reason: 'fixture' }, { log() {} });
+    const runMetadataResult = await cmdMaintain(cfg, { kind: 'metadata', apply: true, run: f.id }, { log() {} });
+    assert.equal(runMetadataResult.runs[0].state, 'collected', JSON.stringify(runMetadataResult.runs[0]));
+    const sealedRun = JSON.parse(fs.readFileSync(path.join(cfg.stateRoot, 'retention', 'sealed', 'run', `${f.id}.json`), 'utf8'));
+    assert.deepEqual(sealedRun.data.processes, [{ pid: 424242, created_at: recordedAt }]);
+    const archivedRun = JSON.parse(fs.readFileSync(path.join(cfg.stateRoot, 'retention', 'archive', 'run', `${f.id}.json`), 'utf8'));
+    assert.deepEqual(archivedRun.data.processes, [{ pid: 424242, created_at: recordedAt }]);
     const rv = reviewFixture(f); verdict = 'mismatch';
     await cmdMaintain(cfg, { kind: 'metadata', enroll: rv.id, by: 'owner', reason: 'fixture' }, { log() {} });
-    for (const blocked of ['match', 'unknown']) { verdict = blocked; const out = await cmdMaintain(cfg, { kind: 'metadata', apply: true, review: rv.id }, { log() {} }); assert.equal(out.runs[0].state, 'protected'); assert.ok(fs.existsSync(rv.file)); }
+    assert.equal(readEvidence(cfg, 'review', rv.id).record.implementer_run, f.id);
+    assert.equal(readEvidence(cfg, 'run', f.id).metadata.state, 'retired');
+    assert.deepEqual(readEvidence(cfg, 'run', f.id).processes, [{ pid: 424242, created_at: recordedAt }]);
+    verdict = 'match';
+    const matchTable = await readProcessTable({ pids: [424242] });
+    assert.equal(verifyIdentity(424242, recordedAt, matchTable).verdict, 'match', JSON.stringify({ recordedAt, matchTable }));
+    const matchPreview = await cmdMaintain(cfg, { kind: 'metadata', review: rv.id }, { log() {} });
+    assert.equal(matchPreview.runs[0].state, 'protected', JSON.stringify(matchPreview.runs[0]));
+    for (const blocked of ['match', 'unknown']) { verdict = blocked; const out = await cmdMaintain(cfg, { kind: 'metadata', apply: true, review: rv.id }, { log() {} }); assert.equal(out.runs[0].state, 'protected', `identity=${blocked}: ${JSON.stringify(out.runs[0])}`); assert.ok(fs.existsSync(rv.file)); }
     verdict = 'mismatch'; const out = await cmdMaintain(cfg, { kind: 'metadata', apply: true, review: rv.id }, { log() {} }); assert.equal(out.runs[0].state, 'collected');
-  } finally { cp.execFile = original; syncBuiltinESMExports(); }
+  } finally { cp.execFile = original; fs.promises.readFile = originalReadFile; syncBuiltinESMExports(); }
 });
 
 test('P03c review: pinning tolerates monitor status updates but rejects a changed run identity', async (t) => {

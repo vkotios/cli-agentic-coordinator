@@ -10,7 +10,28 @@
 // second server instance can answer on the same name. A hello therefore corroborates,
 // and never authorises.
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { performance } from 'node:perf_hooks';
+
+/** Keep Linux socket endpoints private to this account, matching named-pipe user scope. */
+function prepareLinuxSocketDir(name) {
+  if (process.platform !== 'linux') return;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid)) throw new Error('cannot determine the Linux uid for the lane socket');
+  const expected = path.join(os.tmpdir(), `.orch-${uid}`);
+  if (path.dirname(name) !== expected || !path.isAbsolute(name)) throw new Error('unsafe Linux lane socket path');
+  try {
+    fs.mkdirSync(expected, { mode: 0o700 });
+  } catch (e) {
+    if (e?.code !== 'EEXIST') throw e;
+  }
+  const st = fs.lstatSync(expected);
+  if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== uid || (st.mode & 0o077) !== 0) {
+    throw new Error(`unsafe Linux lane socket directory: ${expected}`);
+  }
+}
 
 /**
  * One atomic bind attempt.
@@ -18,6 +39,12 @@ import { performance } from 'node:perf_hooks';
  */
 export function tryListen(name) {
   return new Promise((resolve) => {
+    try {
+      prepareLinuxSocketDir(name);
+    } catch (e) {
+      resolve({ ok: false, code: e?.code || 'UNSAFE-SOCKET-PATH' });
+      return;
+    }
     let settled = false;
     const server = net.createServer();
     server.on('error', (/** @type {any} */ e) => {

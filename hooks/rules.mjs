@@ -11,7 +11,7 @@
 //
 // Every check returns { block: boolean, reason?: string, rule?: string }.
 import { execFileSync } from 'node:child_process';
-import { basename } from 'node:path';
+import { win32 } from 'node:path';
 
 const ok = { block: false };
 const deny = (reason, rule) => ({ block: true, reason, rule });
@@ -529,7 +529,7 @@ export function checkDestructive(rawCommand, cwd) {
 /** .env paths for the file tools (Read / Edit / Write / MultiEdit / NotebookEdit). */
 export function checkPath(filePath) {
   if (!filePath) return ok;
-  const name = basename(String(filePath));
+  const name = win32.basename(String(filePath));
   if (/^\.env(\..+)?$/i.test(name) && name.toLowerCase() !== '.env.example')
     return deny('Blocked: .env files hold secrets. Do not read or modify them.', 'env-file');
   return ok;

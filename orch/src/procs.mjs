@@ -12,6 +12,7 @@
 // `isAlive` and `identityMatches` from the old build are DELETED (v3 §13): a boolean
 // predicate silently turned "the table could not be read" into "not alive".
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
 
 const PS = 'powershell.exe';
 const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
@@ -20,7 +21,7 @@ const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', 
 export function normalizeCreationTime(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string') {
-    if (/^ms:-?\d+$/.test(v)) return v; // already normalised: MUST be idempotent
+    if (/^ms:-?\d+$/.test(v) || /^ticks:\d+$/.test(v)) return v; // already normalised: MUST be idempotent
     const m = /\/Date\((-?\d+)/.exec(v);
     if (m) return `ms:${m[1]}`;
     const t = Date.parse(v);
@@ -93,14 +94,64 @@ function parseTable(raw) {
   }));
 }
 
+function parseLinuxStat(pid, raw) {
+  const open = raw.indexOf('(');
+  const close = raw.lastIndexOf(')');
+  if (open < 0 || close <= open) return null;
+  const fields = raw.slice(close + 1).trim().split(/\s+/);
+  const actualPid = Number(raw.slice(0, open).trim());
+  const ppid = Number(fields[1]);
+  const pgrp = Number(fields[2]);
+  const session = Number(fields[3]);
+  const startTicks = fields[19]; // procfs stat field 22; stable across PID reuse
+  if (actualPid !== Number(pid) || !Number.isInteger(ppid) || !Number.isInteger(pgrp) || !/^\d+$/.test(startTicks || '')) return null;
+  return { pid: actualPid, ppid, pgrp, session, name: raw.slice(open + 1, close), createdAt: `ticks:${startTicks}` };
+}
+
+async function readLinuxProcessTable(list, deadlineMs) {
+  const started = Date.now();
+  const work = (async () => {
+    let ids;
+    try {
+      ids = list || (await fs.readdir('/proc')).filter((name) => /^\d+$/.test(name)).map(Number);
+    } catch {
+      return null;
+    }
+    const rows = [];
+    for (let i = 0; i < ids.length; i += 32) {
+      if (Date.now() - started >= deadlineMs) return null;
+      const batch = await Promise.all(ids.slice(i, i + 32).map(async (pid) => {
+        try {
+          return { row: parseLinuxStat(pid, await fs.readFile(`/proc/${pid}/stat`, 'utf8')) };
+        } catch (e) {
+          return { error: e?.code || 'PROC-READ-FAILED' };
+        }
+      }));
+      for (const result of batch) {
+        if (result.row) rows.push(result.row);
+        else if (list && result.error && !['ENOENT', 'ESRCH'].includes(result.error)) return null;
+      }
+    }
+    return rows;
+  })();
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), Math.max(1, deadlineMs));
+  });
+  const result = await Promise.race([work, timeout]);
+  clearTimeout(timer);
+  return result;
+}
+
 /**
  * Bounded snapshot of the process table.
- * @returns {Promise<Array<{pid:number,ppid:number,name:string,createdAt:string|null}>|null>}
+ * @returns {Promise<Array<{pid:number,ppid:number,pgrp?:number,session?:number,name:string,createdAt:string|null}>|null>}
  *          `null` means UNKNOWN (not "nothing is alive").
  */
 export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2 } = {}) {
   const list = Array.isArray(pids) ? [...new Set(pids.map(Number).filter((n) => Number.isFinite(n) && n > 0))] : null;
   if (list && list.length === 0) return [];
+  if (process.platform === 'linux') return readLinuxProcessTable(list, deadlineMs);
   const filter = list && list.length <= 60 ? ` -Filter "${list.map((p) => `ProcessId=${p}`).join(' or ')}"` : '';
   const cmd =
     `Get-CimInstance Win32_Process${filter} | ` +
@@ -167,7 +218,7 @@ export function verifyIdentity(pid, recordedCreatedAt, table) {
   if (!hit) return { verdict: 'gone', reason: 'pid-not-in-table' };
   if (!recordedCreatedAt) return { verdict: 'unknown', reason: 'no-creation-time-recorded', found: hit };
   if (!hit.createdAt) return { verdict: 'unknown', reason: 'creation-time-unreadable', found: hit };
-  return normalizeCreationTime(recordedCreatedAt) === hit.createdAt
+  return normalizeCreationTime(recordedCreatedAt) === normalizeCreationTime(hit.createdAt)
     ? { verdict: 'match', found: hit }
     : { verdict: 'mismatch', reason: 'pid-reused', found: hit };
 }
@@ -215,6 +266,20 @@ function taskkill(args, deadlineMs) {
   });
 }
 
+function signalLinux(pid, processGroup = false) {
+  const numericPid = Number(pid);
+  // kill(-1, signal) broadcasts to every process the caller may signal; never derive it from PID 1.
+  if (!Number.isSafeInteger(numericPid) || numericPid <= 1) {
+    return { ok: false, output: `refusing unsafe Linux process id ${pid}` };
+  }
+  try {
+    process.kill(processGroup ? -numericPid : numericPid, 'SIGKILL');
+    return { ok: true, output: `${processGroup ? 'process group' : 'pid'} ${pid} sent SIGKILL` };
+  } catch (e) {
+    return { ok: false, output: `${processGroup ? 'process group' : 'pid'} ${pid} SIGKILL failed: ${e?.code || e?.message || e}` };
+  }
+}
+
 /**
  * Kill EXACTLY one verified pid (`/F`, no `/T`).
  * Reachable only from `orch cancel --keeper` and the viewer-close path (gate G7).
@@ -227,7 +292,9 @@ export async function killChecked(pid, recordedCreatedAt, opts = {}) {
   if (id.verdict !== 'match') {
     return { killed: false, verdict: id.verdict, output: refusal(pid, id, recordedCreatedAt) };
   }
-  const r = await taskkill(['/PID', String(pid), '/F'], deadlineMs);
+  const r = process.platform === 'linux'
+    ? signalLinux(pid)
+    : await taskkill(['/PID', String(pid), '/F'], deadlineMs);
   return { killed: r.ok, verdict: 'match', output: r.output };
 }
 
@@ -247,6 +314,14 @@ export async function treeKillChecked(pid, recordedCreatedAt, opts = {}) {
   const id = verifyIdentity(pid, recordedCreatedAt, t);
   if (id.verdict !== 'match') {
     return { killed: false, verdict: id.verdict, output: refusal(pid, id, recordedCreatedAt) };
+  }
+  const hit = t?.find((p) => p.pid === Number(pid));
+  if (process.platform === 'linux') {
+    if (!hit || hit.pgrp !== Number(pid) || hit.session !== Number(pid)) {
+      return { killed: false, verdict: 'unknown', output: `pid ${pid} is not a verified Linux session leader; refusing process-group kill` };
+    }
+    const r = signalLinux(pid, true);
+    return { killed: r.ok, verdict: 'match', output: r.output };
   }
   const r = await taskkill(['/PID', String(pid), '/T', '/F'], deadlineMs);
   return { killed: r.ok, verdict: 'match', output: r.output };

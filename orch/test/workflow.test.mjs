@@ -432,7 +432,10 @@ test('S3: scope guard against real repos - allowed, outside, untracked, rename o
   assert.equal(json(u).result, 'unknown');
 });
 
-test('S3: paths with spaces, non-ASCII, and case-only differences on NTFS', { timeout: 120000 }, async (t) => {
+test('S3: paths with spaces, non-ASCII, and case-only differences on NTFS', {
+  timeout: 120000,
+  skip: process.platform !== 'win32' ? 'requires NTFS case-insensitive behavior' : false,
+}, async (t) => {
   const c = makeCase('s3-paths');
   t.after(() => c.cleanup());
   const GREEK = 'Ελληνικά';
