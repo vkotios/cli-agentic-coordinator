@@ -32,6 +32,8 @@ fixed lifecycle steps; do not perform them on its behalf. Inspect process/log
 evidence before `controller-qualify`. Reuse only fresh matching receipts through
 `controller-qualification` and health. This proves the observed lifecycle in that
 profile, with task capability and future launch authority remaining separate.
+The supported trial profiles are Claude/Codex/Vibe subscriptions and explicitly
+configured local OpenCode; inspect billing and tool-profile coverage in `docs/SETUP.md`.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.

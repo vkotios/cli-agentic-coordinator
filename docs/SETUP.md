@@ -347,18 +347,42 @@ changed instructions/executables, incomplete cleanup and expired evidence refuse
 qualification. No process is automatically killed; inspect retained launch evidence
 if the runner or controller stops unexpectedly.
 
-The initial native profiles are Claude with its Bash tool and Codex with command
-execution, both at medium effort. Codex retains its workspace-write sandbox and
+The native subscription profiles are Claude with its Bash tool, Codex with command
+execution, and Vibe with its scoped native MCP tool. Claude/Codex use medium effort;
+Vibe records the provider default. Codex retains its workspace-write sandbox and
 grants model-driven writes only to the owned trial directory. Coordination locks
 and the child-access proof for this lifecycle remain inside that trial. Claude's
 session-local PreToolUse hook permits only the eight exact prepared commands;
 general Node-prefix approval is absent, and missing guard evidence refuses proof.
-The guard is a command boundary, not an OS sandbox. Neither profile installs or
+Vibe and OpenCode use an owned MCP server exposing only `controller_step` with
+one fixed `step` enum. The server binds the approved offer; the model cannot
+supply commands, paths, approval or another session. Shell/file tools are disabled.
+Native tool results, server audit and stopped server process must match the eight
+lifecycle steps. Vibe also binds native session/runtime model evidence. An
+inherited user hooks file refuses this scoped Vibe profile; normal hooks are never
+changed or removed. The tool boundary is not an OS sandbox. No profile installs or
 changes global hooks. Codex retains
 normal approval rules; environments needing interactive host approval can remain
 unqualified. Other harness/model/tool profiles remain unqualified until their
 native evidence path is supported and observed. This is a coverage boundary,
 not a judgment about a harness or models with different context/tool profiles.
+
+OpenCode's initial profile supports explicitly configured local inference. Set
+the controller route to `billing: "local"` and supply `controllerLocalProvider`
+in the separate private runtime config, for example:
+
+```json
+{"id":"local","baseURL":"http://127.0.0.1:1234/v1","context":16384,"output":4096}
+```
+
+The selected model uses the same provider ID, for example `local/model-id`.
+Only credential-free loopback/private IP endpoints are accepted; provider/model
+configuration and scoped MCP tool/permissions are owned by the trial.
+OpenCode uses isolated config/data/cache/state locations and its actual native
+assistant session export to bind model, provider, directory and terminal evidence.
+Subscription/API OpenCode routes remain unsupported by this qualification profile;
+it never falls back to a paid provider. Requested settings alone cannot qualify.
+The Codex/Vibe child pair remains subscription-only for every controller profile.
 
 `controller-qualification --config <private config>` validates and reuses a fresh
 receipt without model calls. All controller actions take `--session` and the
