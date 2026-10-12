@@ -36,6 +36,7 @@ export function buildViewerAttempts({ logPath, pidFile, title }) {
   if (process.env.ORCH_ALLOW_FAKE === '1' && process.env.ORCH_FAKE_VIEWER) {
     return [{ how: 'fake', file: process.execPath, args: [process.env.ORCH_FAKE_VIEWER, '-LogPath', logPath, '-PidFile', pidFile] }];
   }
+  if (process.platform === 'linux') return []; // use `orch log`; no GUI terminal is assumed
   return [
     { how: 'wt', file: WT_EXE(), args: ['-w', 'orch', 'new-tab', '--title', title, PS_EXE(), ...viewerArgs] },
     { how: 'powershell-window', file: PS_EXE(), args: viewerArgs },

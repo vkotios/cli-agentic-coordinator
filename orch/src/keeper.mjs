@@ -138,21 +138,54 @@ try {
   blockedExit('record-unreadable', 5, { detail: String((e && e.message) || e) });
 }
 
-// 3 refuse anything that is not a real .exe, and refuse cmd.exe by name.
-//   X1 `cmdwrap` measured that `cmd.exe /d /s /c <shim>` destroys libuv containment:
-//   the wrapper dies and the whole subtree it started stays alive.
+// 3 refuse shell wrappers that break process containment. Windows worker CLIs must be
+// direct .exe files; Linux supports native executables and shebang scripts (spawn uses
+// shell:false and workers are placed in a dedicated process session).
 {
   const exe = String(launch.exe);
   const base = path.basename(exe).toLowerCase();
-  if (!base.endsWith('.exe') || base === 'cmd.exe') {
-    blockedExit('no-exe-entrypoint', 5, { exe });
-  }
+  const invalid = process.platform === 'win32'
+    ? (!base.endsWith('.exe') || base === 'cmd.exe')
+    : ['.cmd', '.bat', '.ps1'].some((suffix) => base.endsWith(suffix));
+  if (invalid) blockedExit('no-exe-entrypoint', 5, { exe });
 }
 
 // 4 build the hello buffer NOW, so Phase B never formats anything (A5).
 const HELLO = Buffer.from(JSON.stringify({ run: RUN_ID, keeper: process.pid }) + '\n', 'utf8');
 
 const PIPE = String(launch.pipe_name || '');
+let PIPE_IDENTITY = null;
+
+function prepareLinuxLaneSocketDir() {
+  if (process.platform !== 'linux' || !EXCLUSIVE) return;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid)) throw new Error('cannot determine the Linux uid for the lane socket');
+  const tmpRoot = path.resolve(process.env.TMPDIR || process.env.TMP || process.env.TEMP || '/tmp');
+  const expected = path.join(tmpRoot, `.orch-${uid}`);
+  const base = path.basename(PIPE);
+  if (path.dirname(PIPE) !== expected || !path.isAbsolute(PIPE) || !base.startsWith('lane-') || !base.endsWith('.sock') || !/^[A-Za-z0-9_-]+$/.test(base.slice(5, -5))) {
+    throw new Error('unsafe Linux lane socket path');
+  }
+  try {
+    fs.mkdirSync(expected, { mode: 0o700 });
+  } catch (e) {
+    if (e?.code !== 'EEXIST') throw e;
+  }
+  const dir = fs.lstatSync(expected);
+  if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 0o077) !== 0) {
+    throw new Error(`unsafe Linux lane socket directory: ${expected}`);
+  }
+}
+
+function readLinuxLaneSocketIdentity() {
+  const uid = process.getuid?.();
+  const socket = fs.lstatSync(PIPE);
+  if (!Number.isInteger(uid) || !socket.isSocket() || socket.uid !== uid) {
+    throw new Error('lane socket ownership could not be established');
+  }
+  return { dev: String(socket.dev), ino: String(socket.ino) };
+}
+
 // CODE-REVIEW FIX (astra M8): only a SERIAL lane is exclusive. A non-serial lane (cloud)
 // never binds the pipe and never publishes lane-wide holder facts, so parallel cloud runs
 // cannot refuse each other. Absent flag = exclusive (the safe default for old records).
@@ -175,6 +208,11 @@ server.on('error', () => {}); // after the bind, a server error may never change
 
 // 5 listen ONCE. No retry, no loop, no ticket.
 if (EXCLUSIVE) {
+  try {
+    prepareLinuxLaneSocketDir();
+  } catch (e) {
+    blockedExit(`lane-unavailable-${e?.code || 'UNSAFE-SOCKET-PATH'}`, 7, { pipe: PIPE, detail: String(e?.message || e) });
+  }
   server.listen(PIPE, onBound);
   server.once('error', onBindError);
 } else {
@@ -230,6 +268,14 @@ function onBindError(e) {
 
 function onBound() {
   server.removeListener('error', onBindError);
+  if (process.platform === 'linux' && EXCLUSIVE) {
+    try {
+      PIPE_IDENTITY = readLinuxLaneSocketIdentity();
+    } catch (e) {
+      server.close(() => blockedExit('lane-socket-identity-unavailable', 7, { pipe: PIPE, detail: String(e?.message || e) }));
+      return;
+    }
+  }
   if (EXCLUSIVE) installHelloHandler();
   onLane();
 }
@@ -324,13 +370,38 @@ function phaseB(ctx) {
   //    are both a safe pre-worker failure.
   let child = null;
   try {
-    child = spawn(launch.exe, launch.args, {
+    const linux = process.platform === 'linux';
+    const workerExe = linux ? process.execPath : launch.exe;
+    let workerArgs = launch.args;
+    if (linux) {
+      const raw = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
+      const close = raw.lastIndexOf(')');
+      const fields = close >= 0 ? raw.slice(close + 1).trim().split(/\s+/) : [];
+      const keeperStart = fields[19] || '';
+      if (!/^\d+$/.test(keeperStart)) {
+        throw Object.assign(new Error('keeper identity could not be established'), { code: 'KEEPER_IDENTITY_UNAVAILABLE' });
+      }
+      if (launch.lane_exclusive !== false && !PIPE_IDENTITY) {
+        throw Object.assign(new Error('lane socket identity could not be established'), { code: 'LANE_SOCKET_IDENTITY_UNAVAILABLE' });
+      }
+      workerArgs = [
+        decodeURIComponent(new URL('./linux-worker-supervisor.mjs', import.meta.url).pathname),
+        launch.exe,
+        JSON.stringify(launch.args),
+        String(process.pid),
+        keeperStart,
+        launch.lane_exclusive === false ? '' : String(launch.pipe_name || ''),
+        PIPE_IDENTITY?.dev || '',
+        PIPE_IDENTITY?.ino || '',
+      ];
+    }
+    child = spawn(workerExe, workerArgs, {
       cwd: launch.cwd,
       env,
       shell: false,
-      detached: false,
+      detached: linux,
       windowsHide: true,
-      stdio: [fdIn, fdOut, fdErr],
+      stdio: linux ? [fdIn, fdOut, fdErr, 'pipe'] : [fdIn, fdOut, fdErr],
     });
   } catch (/** @type {any} */ e) {
     closeFds(ctx);
@@ -342,47 +413,100 @@ function phaseB(ctx) {
   }
 
   // Every handler is registered synchronously, in this same tick, before any await.
-  // Node queues child events on the next tick, so an instantly-exiting worker cannot
-  // slip past us (agy M2).
+  // Linux launches a supervisor first; its private fd 3 reports READY only after the
+  // requested executable itself emits `spawn`. Admission must not mistake the wrapper
+  // process for a worker (agy M2).
   let sawSpawn = false;
   let settled = false;
+  let supervisorStatus = '';
+  let supervisorTimer = null;
+
+  const clearSupervisorTimer = () => {
+    if (supervisorTimer) clearTimeout(supervisorTimer);
+    supervisorTimer = null;
+  };
+
+  function failBeforeWorker(code, detail = '') {
+    if (sawSpawn || settled) return;
+    settled = true;
+    clearSupervisorTimer();
+    closeFds(ctx);
+    const safeCode = /^[A-Z0-9_-]{1,64}$/.test(String(code || '')) ? String(code) : 'SUPERVISOR';
+    const reason = `spawn-failed-${safeCode}`;
+    const message = detail || `Linux worker supervisor did not start the requested worker (${safeCode})`;
+    append(F.keeper, { blocked: reason, at: nowIso(), detail: message });
+    answer({ admission: 'blocked', reason, detail: message });
+    finish(10);
+  }
+
+  function workerSpawned() {
+    if (sawSpawn || settled) return;
+    sawSpawn = true;
+    clearSupervisorTimer();
+    // 12
+    append(F.keeper, { event: 'spawned', worker_pid: child.pid, at: nowIso() });
+    // A1: the worker exists. Only now does the caller hear `job started`.
+    answer({ admission: 'acquired', worker_pid: child.pid });
+    // 13 holder.json is REWRITTEN atomically with the process-group leader pid.
+    holder.worker_pid = child.pid;
+    holder.worker_at = nowIso();
+    const text = JSON.stringify(holder, null, 2) + '\n';
+    writeAtomicGuarded(F.holder, text);
+    if (LANE_HOLDER) writeAtomicGuarded(LANE_HOLDER, text);
+    // Record the session leader identity; it is the verified group id used for
+    // cancellation and is also the supervisor that owns the worker lifecycle.
+    captureWorkerIdentity(child.pid);
+  }
+
+  if (process.platform === 'linux') {
+    const statusChannel = child.stdio?.[3];
+    if (!statusChannel) {
+      failBeforeWorker('SUPERVISOR');
+    } else {
+      supervisorTimer = setTimeout(() => failBeforeWorker('SUPERVISOR_TIMEOUT'), 10000);
+      supervisorTimer.unref?.();
+      statusChannel.on('data', (chunk) => {
+        supervisorStatus += chunk.toString('ascii');
+        if (supervisorStatus.length > 256) {
+          failBeforeWorker('BAD_STATUS');
+          return;
+        }
+        let newline;
+        while ((newline = supervisorStatus.indexOf('\n')) >= 0) {
+          const line = supervisorStatus.slice(0, newline).replace(/\r$/, '');
+          supervisorStatus = supervisorStatus.slice(newline + 1);
+          if (line === 'READY') workerSpawned();
+          else if (line.startsWith('ERROR ')) failBeforeWorker(line.slice(6).trim());
+          else if (line) failBeforeWorker('BAD_STATUS');
+        }
+      });
+      statusChannel.on('error', () => failBeforeWorker('SUPERVISOR'));
+      statusChannel.on('close', () => {
+        if (!sawSpawn && !settled) failBeforeWorker('SUPERVISOR');
+      });
+    }
+  }
 
   child.on('error', (/** @type {any} */ e) => {
     if (sawSpawn) {
       append(F.keeper, { event: 'worker-error-after-spawn', at: nowIso(), code: (e && e.code) || null });
       return; // recorded and ignored; the exit wait continues
     }
-    if (settled) return;
-    settled = true;
-    closeFds(ctx);
-    const reason = `spawn-failed-${(e && e.code) || 'ERROR'}`;
-    append(F.keeper, { blocked: reason, at: nowIso(), detail: String((e && e.message) || e) });
-    answer({ admission: 'blocked', reason, detail: String((e && e.message) || e) });
-    finish(10);
+    failBeforeWorker((e && e.code) || 'ERROR', String((e && e.message) || e));
   });
 
-  child.on('spawn', () => {
-    sawSpawn = true;
-    // 12
-    append(F.keeper, { event: 'spawned', worker_pid: child.pid, at: nowIso() });
-    // A1: the worker exists. Only now does the caller hear `job started`.
-    answer({ admission: 'acquired', worker_pid: child.pid });
-    // 13 holder.json is REWRITTEN atomically with the worker pid - never appended.
-    holder.worker_pid = child.pid;
-    holder.worker_at = nowIso();
-    const text = JSON.stringify(holder, null, 2) + '\n';
-    writeAtomicGuarded(F.holder, text);
-    if (LANE_HOLDER) writeAtomicGuarded(LANE_HOLDER, text);
-    // A2: the keeper records the worker's pid AND its OS creation time itself, so that
-    // nothing an operator needs in order to clear a stuck state depends on a monitor
-    // having run (agy H4). Bounded, asynchronous, guarded: it cannot delay or end the
-    // worker, and a failure simply leaves the creation time to the monitor.
-    captureWorkerIdentity(child.pid);
-  });
+  if (process.platform !== 'linux') child.on('spawn', workerSpawned);
 
   child.on('exit', (code, signal) => {
     workerExited = true;
     if (settled) return;
+    // A supervisor may exit before its status-pipe data is delivered. Let the pipe's
+    // close event decide whether the real worker ever spawned.
+    if (!sawSpawn && process.platform === 'linux') return;
+    if (!sawSpawn) {
+      failBeforeWorker('SUPERVISOR');
+      return;
+    }
     settled = true;
     // 14
     append(F.keeper, { event: 'worker-exit', code: code ?? null, signal: signal ?? null, at: nowIso() });
@@ -407,6 +531,19 @@ function phaseB(ctx) {
 
 /** One bounded, guarded process query. Never blocks, never kills, never throws. */
 function captureWorkerIdentity(pid) {
+  if (process.platform === 'linux') {
+    try {
+      const raw = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
+      const close = raw.lastIndexOf(')');
+      const fields = raw.slice(close + 1).trim().split(/\s+/);
+      // procfs starttime is field 22 (index 19 after the state field); PPID is field 4.
+      if (workerExited || Number(fields[1]) !== process.pid || !/^\d+$/.test(fields[19] || '')) return;
+      append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: `ticks:${fields[19]}`, at: nowIso() });
+    } catch {
+      /* a missing or unreadable identity stays unknown; never adopt it later */
+    }
+    return;
+  }
   try {
     const cmd =
       `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | ` +

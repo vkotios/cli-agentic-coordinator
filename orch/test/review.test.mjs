@@ -8,8 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   KIT,
@@ -89,7 +90,8 @@ test('astra H1: the lane id does not depend on inheritable environment (USERPROF
     });
   const normal = await run({});
   const skewed = await run({ USERPROFILE: 'C:\\Elsewhere\\profile', HOMEDRIVE: 'D:', HOMEPATH: '\\other', USERNAME: 'mallory' });
-  assert.match(normal, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/, normal);
+  if (process.platform === 'linux') assert.match(path.basename(normal), /^lane-[0-9a-f]{12}-local\.sock$/);
+  else assert.match(normal, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
   assert.equal(skewed, normal, 'a shell with a different profile environment derived a DIFFERENT lane - two local lanes');
 });
 
@@ -159,7 +161,7 @@ test('astra H3: an `undetermined` admission still records the keeper identity, s
   const id = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
   const spawned = spawnedIdentity(c.stateRoot, id);
   assert.ok(spawned, 'spawned.json was not written on the undetermined path');
-  assert.match(String(spawned.keeper_created_at), /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
+  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^ticks:\d+$/ : /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
   await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'worker-identity'), { timeoutMs: 20000, what: 'worker identity' });
 
   const res = await orch(['cancel', '--keeper', id, '--json'], c.env);
@@ -219,12 +221,17 @@ test('astra M5: status and wait-lane use no synchronous fs call on a path that c
   }
 });
 
-test('astra M5: a stuck read cannot hold a command open - the deadline answers and the process exits', { timeout: 60000 }, async () => {
-  // The child blocks an async read on a pipe server that accepts and never writes, then
-  // does what the CLI does: answer under a deadline and arm the exit guard.
+test('astra M5: a stuck read cannot hold a command open - the deadline answers and the process exits', { timeout: 60000 }, async (t) => {
+  // POSIX uses an unwritten FIFO; Windows uses the named-pipe server in the child.
+  const fifoDir = process.platform === 'win32' ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'orch-stall-'));
+  const fifoPath = fifoDir ? path.join(fifoDir, 'cancel-result.fifo') : null;
+  if (fifoDir) {
+    t.after(() => fs.rmSync(fifoDir, { recursive: true, force: true }));
+    execFileSync('mkfifo', [fifoPath], { stdio: 'ignore' });
+  }
   const t0 = Date.now();
   const res = await new Promise((resolve) => {
-    execFile(process.execPath, [STALL_CHILD], { encoding: 'utf8', windowsHide: true, timeout: 30000 }, (err, stdout) =>
+    execFile(process.execPath, [STALL_CHILD], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: fifoPath ? { ...process.env, ORCH_STALL_PIPE: fifoPath } : process.env }, (err, stdout) =>
       resolve({ err, stdout }),
     );
   });
@@ -292,7 +299,7 @@ async function cleanupViewers(logFile) {
   for (const p of alive) await killOwnedChecked(p.pid, p.createdAt); // identity read just now
 }
 
-test('astra M7: a viewer still starting when a short run ends is waited for and closed, not leaked', { timeout: 180000 }, async (t) => {
+test('astra M7: a viewer still starting when a short run ends is waited for and closed, not leaked', { timeout: 180000, skip: process.platform !== 'win32' ? 'Windows GUI viewer lifecycle' : false }, async (t) => {
   const c = makeCase('m7-fast');
   const log = path.join(c.base, 'viewers.log');
   t.after(async () => {
@@ -321,7 +328,7 @@ test('astra M7: a viewer still starting when a short run ends is waited for and 
   assert.deepEqual(alive.map((p) => p.pid), [], `viewer(s) left running after the run: ${alive.map((p) => p.pid)}`);
 });
 
-test('astra M7: a replacement monitor re-uses the open viewer and closes it; no second tab is leaked', { timeout: 180000 }, async (t) => {
+test('astra M7: a replacement monitor re-uses the open viewer and closes it; no second tab is leaked', { timeout: 180000, skip: process.platform !== 'win32' ? 'Windows GUI viewer lifecycle' : false }, async (t) => {
   const c = makeCase('m7-restart');
   const log = path.join(c.base, 'viewers.log');
   t.after(async () => {
@@ -371,8 +378,8 @@ test('astra M8: two cloud runs at once are both admitted - a non-serial lane nev
     const lines = keeperLines(c.stateRoot, id);
     assert.ok(lines.some((l) => l.event === 'lane-acquired' && l.exclusive === false), `cloud keeper bound the pipe: ${JSON.stringify(lines)}`);
   }
-  // and the local lane is still exclusive
-  assert.equal(laneScope('cloud').pipeName.endsWith('-cloud'), true);
+  // local and cloud addresses remain distinct even when neither lane is being bound here.
+  assert.notEqual(laneScope('cloud').pipeName, laneScope('local').pipeName);
 });
 
 /* ================================================================= M9 ==== */
@@ -439,7 +446,9 @@ test('agy g2: cancel --keeper does not count an identity MISMATCH as the worker 
 
 test('agy g3: a probe that times out before connecting is `unknown`, never `free`', { timeout: 60000 }, async () => {
   const { tryListen, connectHello } = await import('../src/lanepipe.mjs');
-  const name = `\\\\.\\pipe\\orch-g3-${process.pid}`;
+  const name = process.platform === 'linux'
+    ? path.join(path.dirname(laneScope('local').pipeName), `lane-g3-${process.pid}.sock`)
+    : `\\\\.\\pipe\\orch-g3-${process.pid}`;
   const held = await tryListen(name);
   assert.ok(held.ok);
   held.server.on('connection', (s) => s.on('error', () => {})); // accept, say nothing

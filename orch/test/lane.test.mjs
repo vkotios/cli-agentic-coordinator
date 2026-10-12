@@ -216,7 +216,7 @@ test('A2: orch run records keeper pid AND OS creation time itself, before any mo
   const id = idFrom(r.stdout);
   const spawned = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'runs', id, 'spawned.json'), 'utf8'));
   assert.equal(typeof spawned.keeper_pid, 'number');
-  assert.match(String(spawned.keeper_created_at), /^ms:\d+$/, 'keeper OS creation time was not captured by the spawner');
+  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^ticks:\d+$/ : /^ms:\d+$/, 'keeper OS creation time was not captured by the spawner');
   assert.equal(spawned.monitor_pid, null, 'no monitor was requested');
   const rec = readRunRecord(c.stateRoot, id);
   assert.equal(rec.lane, 'local');

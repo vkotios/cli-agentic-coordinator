@@ -29,8 +29,10 @@ export const OPENCODE_EXE_IN_PREFIX = ['node_modules', 'opencode-ai', 'bin', 'op
 export function resolveOpencodeExe(env = process.env) {
   return resolveCliExe('opencode', {
     env,
-    fallbacks: (e) => npmPrefixes('opencode', e).map((p) => path.join(p, ...OPENCODE_EXE_IN_PREFIX)),
-    hint: 'The opencode.cmd shim is deliberately not accepted: cmd.exe in the chain destroys process containment.',
+    fallbacks: (e) => process.platform === 'win32'
+      ? npmPrefixes('opencode', e).map((p) => path.join(p, ...OPENCODE_EXE_IN_PREFIX))
+      : npmPrefixes('opencode', e).map((p) => path.join(p, 'opencode')),
+    hint: process.platform === 'win32' ? 'The opencode.cmd shim is deliberately not accepted: cmd.exe in the chain destroys process containment.' : undefined,
   });
 }
 

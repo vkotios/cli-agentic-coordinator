@@ -44,7 +44,7 @@ export function messageText(e) {
 function resolveExe() {
   // PATH first (bounded where.exe, see exe.mjs); then the current user's ~/.local/bin,
   // where `uv tool install` puts it.
-  return resolveCliExe('vibe', { fallbacks: (env) => [path.join(env.USERPROFILE || os.homedir(), '.local', 'bin', 'vibe.exe')] });
+  return resolveCliExe('vibe', { fallbacks: (env) => [path.join(env.USERPROFILE || env.HOME || os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'vibe.exe' : 'vibe')] });
 }
 
 export function aliasFor(model) {

@@ -8,6 +8,7 @@
 //  - Every fake process carries its own self-destruct timer (see fake-worker.mjs).
 //  - Nothing outside `<kit>/.state-test` and `<kit>/.lane/<test lane id>` is written.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
@@ -130,7 +131,9 @@ export function makeCase(name, opts = {}) {
     work,
     handoffPath,
     env,
-    lanePipe: `\\\\.\\pipe\\orch-lane-${laneId}-local`,
+    lanePipe: process.platform === 'linux'
+      ? path.join(os.tmpdir(), `.orch-${process.getuid()}`, `lane-${laneId}-local.sock`)
+      : `\\\\.\\pipe\\orch-lane-${laneId}-local`,
     laneDirLocal: path.join(laneHome(), `${laneId}-local`),
     cleanup() {
       if (process.env.ORCH_KEEP_TEST_DIRS === '1') return; // keep evidence while debugging
@@ -160,12 +163,11 @@ export function orch(args, env, opts = {}) {
 /** Run the orch CLI through a PowerShell child that then exits (parent-exit test). */
 export function orchViaShell(args, env) {
   return new Promise((resolve) => {
-    const quoted = [ORCH_BIN, ...args].map((a) => `'${String(a).replace(/'/g, "''")}'`).join(' ');
-    const child = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `& '${process.execPath}' ${quoted}`],
-      { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const command = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh';
+    const shellArgs = process.platform === 'win32'
+      ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `& '${process.execPath}' ${[ORCH_BIN, ...args].map((a) => `'${String(a).replace(/'/g, "''")}'`).join(' ')}`]
+      : ['-c', '"$@"', 'orch-shell', process.execPath, ORCH_BIN, ...args];
+    const child = spawn(command, shellArgs, { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -298,6 +300,14 @@ export async function identityOf(pid, recordedCreatedAt) {
 export async function suspendProcess(pid, recordedCreatedAt, resume = false) {
   const verdict = await identityOf(pid, recordedCreatedAt);
   if (verdict !== 'match') return { ok: false, verdict, output: 'refused: identity is not a match' };
+  if (process.platform === 'linux') {
+    try {
+      process.kill(Number(pid), resume ? 'SIGCONT' : 'SIGSTOP');
+      return { ok: true, verdict, output: `sent ${resume ? 'SIGCONT' : 'SIGSTOP'} to verified pid ${pid}` };
+    } catch (e) {
+      return { ok: false, verdict, output: String(e?.message || e) };
+    }
+  }
   const fn = resume ? 'NtResumeProcess' : 'NtSuspendProcess';
   const script = [
     '$sig = @"',
