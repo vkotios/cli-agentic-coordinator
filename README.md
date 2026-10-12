@@ -99,7 +99,9 @@ This stage records intent; configuration, adoption and policies remain unchanged
 Use the separate `setup preview` and exact-approved `setup apply` to prepare private
 configuration and optional controller adoption. Conflicting settings are preserved;
 route qualification and complete routing/advice policies remain explicit follow-ups.
-See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval and recovery.
+Use `setup health` to inspect current configuration, policy completeness and cached
+usage freshness by role without provider calls or configuration changes.
+See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and recovery.
 
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
    `orch.config.example.json` to `orch.config.json` and edit it, or set the environment variables.

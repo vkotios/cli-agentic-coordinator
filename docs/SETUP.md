@@ -164,3 +164,48 @@ environment overrides take precedence. Installed CLI discovery is the earlier
 session observation; authentication, current model access and qualification remain
 unchecked. MCP exposes `setup_preview`, `setup_apply` and `setup_receipt` with the
 same implementation and explicit file arguments.
+
+## Repeatable health checks
+
+After applying setup, run:
+
+```powershell
+orch setup health --session C:\private\orch-setup --config C:\private\orch-runtime.json --json
+```
+
+MCP exposes `setup_health` with the same `session` and `config` arguments. Both
+paths reread current files and executable locations rather than trusting the
+initial discovery. They report configuration/retention drift, adoption gaps,
+runtime environment overrides, optional routing/adviser/quota policy validation,
+roster restrictions and cached subscription telemetry freshness by role.
+An unselected configuration is reported explicitly; health does not set `ORCH_CONFIG`.
+Executable discovery uses the currently effective runtime configuration and its
+environment overrides, not an unselected candidate's executable settings. Policy
+checks inspect the supplied candidate and report any environment override names.
+Relative environment references resolve from the working directory; relative config
+references resolve beside their configuration file. Supply the current private
+roster through configuration or `ORCH_ROSTER`. Otherwise roster restrictions are
+labeled historical and remain a missing qualification requirement. JSON key order
+alone is not configuration drift. `--state-root` is refused: health checks the
+session's recorded state location and reports conflicting runtime overrides.
+Malformed inputs produce blocked findings with corrective steps; an unsafe path
+or invalid session is refused. A successful command means the report was produced,
+not that its checks passed: inspect `checks` and each route's `missing` list.
+
+Health is read-only. It runs no harness, login or inference command, reads no
+credential store or API key, starts no telemetry collector, and changes no files,
+settings, permissions or reservations. Only existing normalized telemetry caches
+are read; missing, stale or reset-stale values cannot imply current headroom.
+Unknown configuration values and raw error details are excluded from the report.
+
+Routing qualification is labeled as an owner policy declaration. Even a declared
+qualified profile with fresh availability remains `installed-but-unqualified`
+until authentication, exact model access and role operation are explicitly
+verified. Controller model access is likewise unchecked. `launchAllowed` is
+always false: this diagnostic never grants launch authority or replaces the
+normal routing/quota/adviser admission checks. Complete pinned Jev settings can
+be validated, but key/provider admission remains unchecked and no paid call occurs.
+
+Use health again after relocation, reconfiguration, login changes or model changes.
+Resolve reported gaps explicitly; configuration changes still need a fresh setup
+preview and approval. A live disposable qualification run is a separate action.

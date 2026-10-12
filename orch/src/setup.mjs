@@ -272,6 +272,10 @@ export function setupProposal(session) { const s = state(session); if (s.revisio
     fail('Answer all setup questions before requesting a proposal'); return { mode: 'setup-proposal', version: 1, repo: s.meta.repo, harness: s.meta.harness, revision: s.revision, sessionHash: s.hash, answers: s.answers, intentOnly: true, applyAvailable: false, activation: false, authority, readiness: ['controller', 'workers', 'reviewers'].flatMap(role => (role === 'controller' ? [s.answers.routes.controller] : s.answers.routes[role]).map(r => ({ role, harness: r.harness, model: r.model, status: s.meta.discovery.harnesses.find(h => h.harness === r.harness)?.installed ? 'installed-but-unqualified' : 'blocked', nextStep: 'Review and apply the setup proposal, then verify authentication, access and role qualification explicitly' }))) }; }
 export async function cmdSetup(args, io) {
     const [action, ...extra] = args._ ?? [];
+    if (action === 'health') {
+        const {cmdSetupHealth} = await import('./setup-health.mjs');
+        return cmdSetupHealth(args, io);
+    }
     if (['preview', 'apply', 'receipt'].includes(action)) {
         const { cmdSetupApply } = await import('./setup-apply.mjs');
         return cmdSetupApply(args, io);

@@ -82,6 +82,7 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  setup_health:{cmd:'setup',sub:['health'],description:'Read current setup configuration, executable discovery, policy completeness and cached subscription freshness by role. No harness calls, credential reads, collector refresh, qualification or configuration changes.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config outside target repo>')},required:['session','config']},
   setup_preview:{cmd:'setup',sub:['preview'],description:'Preview additive private configuration and optional controller adoption. Existing conflicting settings block writes. No provider, credential, global registration or cleanup actions.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config outside target repo>'),adopt:B('--adopt: preview controller instruction adoption'),update:B('--update: refresh unchanged owned adoption payloads')},required:['session','config']},
   setup_apply:{cmd:'setup',sub:['apply'],description:'Apply explicitly approved previewHash/approve:true from a private JSON file. Rechecks config and adoption inputs, preserves owner instructions, records partial writes; no launches or qualification.',opts:{session:S('--session <completed private session>'),approval:S('--approval <private exact preview approval JSON>')},required:['session','approval']},
   setup_receipt:{cmd:'setup',sub:['receipt'],description:'Read setup apply outcome and completed writes. Interrupted attempts require a fresh approved preview; no automatic rollback.',opts:{session:S('--session <private session>'),preview:S('--preview <exact previewHash>')},required:['session','preview']},
@@ -393,7 +394,8 @@ export async function callTool(name, input, { stateRoot } = {}) {
   }
   if (!t.text) args.json = true;
   Object.assign(args, t.force || {});
-  if (stateRoot && !args['state-root']) args['state-root'] = stateRoot;
+  // Health is explicitly bound to its completed setup session, not server state.
+  if (stateRoot && !args['state-root'] && name !== 'setup_health') args['state-root'] = stateRoot;
   let boundMs = t.boundMs || DEFAULT_BOUND_MS;
   if (name === 'wait_lane') {
     const s = waitLaneSeconds(args.timeout);
