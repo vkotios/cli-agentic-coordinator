@@ -17,6 +17,7 @@ const TOOL_NAMES = [
   'modelrouter_catalog', 'modelrouter_update',
   'modelrouter_history','modelrouter_rollback','modelrouter_recover',
   'setup_start','setup_status','setup_answer','setup_proposal',
+  'setup_preview','setup_apply','setup_receipt',
 ];
 
 async function setupConversation(dir,repo,call){
@@ -27,7 +28,11 @@ async function setupConversation(dir,repo,call){
   const route={harness:'codex',model:'example-model',billing:'subscription',permission:'ask'};
   const choices=[{controller:route,workers:[route],reviewers:[route]},{mode:'deterministic'},{enabled:false},{stateRoot:path.join(dir,'setup-state'),reviewRoot:path.join(dir,'setup-reviews'),cleanup:'retain-unmerged'},{enabled:false}];
   for(const answer of choices){fs.writeFileSync(answersFile,JSON.stringify({expectedRevision:s.revision,questionId:s.nextQuestion.id,answer}));response=await call('setup_answer',{session,answers:answersFile});assert.equal(response.isError,false);s=response.structuredContent.output;}
-  const proposal=await call('setup_proposal',{session});assert.equal(proposal.isError,false);assert.equal(proposal.structuredContent.output.intentOnly,true);return {session,proposal};
+  const proposal=await call('setup_proposal',{session});assert.equal(proposal.isError,false);assert.equal(proposal.structuredContent.output.intentOnly,true);
+  const config=path.join(dir,'setup-config.json'),approval=path.join(dir,'setup-approval.json');
+  response=await call('setup_preview',{session,config});assert.equal(response.isError,false);const preview=response.structuredContent.output;
+  fs.writeFileSync(approval,JSON.stringify({previewHash:preview.previewHash,approve:true}));response=await call('setup_apply',{session,approval});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
+  response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');return {session,proposal};
 }
 
 function catalogFixtures(dir){

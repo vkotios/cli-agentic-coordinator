@@ -33,7 +33,7 @@ export const BOOLEANS = new Set([
   // slice 2
   'force', 'no-wait', 'delete-branch', 'owner-approved-model', 'controller-intervened',
   // slice 3
-  'dry-run', 'update', 'apply', 'refresh', 'advice',
+  'dry-run', 'update', 'apply', 'refresh', 'advice', 'adopt',
 ]);
 export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 

@@ -77,7 +77,7 @@ export const SETUP_QUESTIONS = [
     { id: 'resources', prompt: 'Choose private state/review locations and retain-unmerged cleanup. Every work package must finalize; uncertain, dirty or unmerged work is preserved.', schema: { type: 'object', additionalProperties: false, required: ['stateRoot', 'reviewRoot', 'cleanup'], properties: { stateRoot: { type: 'string' }, reviewRoot: { type: 'string' }, cleanup: { const: 'retain-unmerged' } } } },
     { id: 'retention', prompt: 'Explicitly leave retention disabled, or choose transcript/run days and manual or on-use maintenance. This proposal does not activate retention or install a scheduler.', schema: { oneOf: [{ type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { const: false } } }, { type: 'object', additionalProperties: false, required: ['enabled', 'mode', 'transcriptDays', 'runDays'], properties: { enabled: { const: true }, mode: { enum: ['manual', 'on-use'] }, transcriptDays: { type: 'integer', minimum: 1, maximum: 3650 }, runDays: { type: 'integer', minimum: 1, maximum: 3650 } } }] } }
 ];
-function localPath(value, repo) { text(value); const abs=path.resolve(value); if (!path.isAbsolute(value) || value.startsWith('\\\\') || abs.slice(path.parse(abs).root.length).includes(':') || !samePath(abs, resolvedPath(value)) || isInside(abs, repo))
+export function localPath(value, repo) { text(value); const abs=path.resolve(value); if (!path.isAbsolute(value) || value.startsWith('\\\\') || abs.slice(path.parse(abs).root.length).includes(':') || !samePath(abs, resolvedPath(value)) || isInside(abs, repo))
     fail('Choose an absolute private path outside the target repository'); return value; }
 function validDiscovery(d) {
     object(d, ['platform', 'nodeMajor', 'harnesses', 'models', 'authentication', 'modelAccess', 'providerCalls']);
@@ -189,6 +189,8 @@ function state(session) {
 }
 function view(s) { return { mode: 'setup', repo: s.meta.repo, harness: s.meta.harness, revision: s.revision, answers: s.answers, discovery: s.meta.discovery, nextQuestion: SETUP_QUESTIONS[s.revision] ?? null, complete: s.revision === SETUP_QUESTIONS.length, activation: false, authority }; }
 export function setupStatus(session) { return view(state(session)); }
+export const readSetupInput = read;
+export const checkedSetupPath = safe;
 function discover(catalog, roster) {
     const harnesses = [...new Set([...HARNESSES, ...WORKERS])].map(harness => { try {
         const exe = harness === 'opencode' ? resolveOpencodeExe() : resolveCliExe(harness, { fallbacks: env => ['vibe', 'claude'].includes(harness) ? [path.join(env.USERPROFILE || os.homedir(), '.local', 'bin', harness + '.exe')] : [] });
@@ -270,6 +272,10 @@ export function setupProposal(session) { const s = state(session); if (s.revisio
     fail('Answer all setup questions before requesting a proposal'); return { mode: 'setup-proposal', version: 1, repo: s.meta.repo, harness: s.meta.harness, revision: s.revision, sessionHash: s.hash, answers: s.answers, intentOnly: true, applyAvailable: false, activation: false, authority, readiness: ['controller', 'workers', 'reviewers'].flatMap(role => (role === 'controller' ? [s.answers.routes.controller] : s.answers.routes[role]).map(r => ({ role, harness: r.harness, model: r.model, status: s.meta.discovery.harnesses.find(h => h.harness === r.harness)?.installed ? 'installed-but-unqualified' : 'blocked', nextStep: 'Review and apply the setup proposal, then verify authentication, access and role qualification explicitly' }))) }; }
 export async function cmdSetup(args, io) {
     const [action, ...extra] = args._ ?? [];
+    if (['preview', 'apply', 'receipt'].includes(action)) {
+        const { cmdSetupApply } = await import('./setup-apply.mjs');
+        return cmdSetupApply(args, io);
+    }
     const allowed = ['_', 'json', 'session', 'state-root', ...(action === 'start' ? ['repo', 'harness', 'catalog', 'roster'] : action === 'answer' ? ['answers'] : [])];
     if (extra.length || !['start', 'status', 'answer', 'proposal'].includes(action) || Object.keys(args).some(k => !allowed.includes(k)) || typeof args.session !== 'string')
         fail('Use setup start/status/answer/proposal with explicit --session; no activation options');

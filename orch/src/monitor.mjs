@@ -192,7 +192,7 @@ async function main() {
       const before = dirEv.mismatchLatched;
       dirEv.feed(lines);
       if (dirEv.mismatchLatched && !before) {
-        guard(() => writeJsonAtomic(P.dirLatch, { latched: true, at: nowIso(), sessions: dirEv.sessions }), 'dirlatch');
+        guard(() => { if (runDirIntact()) writeJsonAtomic(P.dirLatch, { latched: true, at: nowIso(), sessions: dirEv.sessions }, { createDir: false }); }, 'dirlatch');
       }
     };
     feedEvidence(heartbeatStream === 'stdout' ? outLines : errLines);
@@ -227,7 +227,7 @@ async function main() {
               // Persist the viewer's identity at once, in the monitor's own small file,
               // so a REPLACEMENT monitor can find and verify it instead of opening a
               // second tab and leaking the first (astra M7).
-              guard(() => writeJsonAtomic(P.viewerRecord, { pid: v.pid, created_at: createdAt, how: v.how, at: nowIso() }), 'viewer.json');
+              guard(() => { if (runDirIntact()) writeJsonAtomic(P.viewerRecord, { pid: v.pid, created_at: createdAt, how: v.how, at: nowIso() }, { createDir: false }); }, 'viewer.json');
               appendMonitorEvent(cfg, ID, { type: 'viewer-open', pid: v.pid, how: v.how });
             }).catch((e) => appendMonitorEvent(cfg, ID, { type: 'viewer-identity-failed', detail: String((e && e.message) || e) }));
           },
@@ -365,7 +365,9 @@ async function main() {
       // Escaped helpers: one final bounded classification. Reported, never killed,
       // never counted for exclusion.
       next.escaped_helpers = await classifyHelpers(state.descendants);
-      guard(() => writeRun(cfg, next), 'final-write');
+      if (!runDirIntact()) { process.exit(0); return; }
+      // Even removal after this check cannot authorize creating the parent again.
+      guard(() => writeRun(cfg, next, { createDir: false }), 'final-write');
       appendMonitorEvent(cfg, ID, { type: 'final', status: next.status, reason: next.reason });
       // astra M7: a viewer still starting up (short run, slow tab) is waited for, bounded,
       // so its identity is known and it can be closed - instead of being left open.
@@ -391,7 +393,7 @@ async function main() {
         process.exit(0);
         return;
       }
-      guard(() => writeRun(cfg, next), 'poll-write');
+      guard(() => writeRun(cfg, next, { createDir: false }), 'poll-write');
     }
 
     await sleep(pollMs);
