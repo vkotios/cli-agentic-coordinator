@@ -101,6 +101,10 @@ configuration and optional controller adoption. Conflicting settings are preserv
 route qualification and complete routing/advice policies remain explicit follow-ups.
 Use `setup health` to inspect current configuration, policy completeness and cached
 usage freshness by role without provider calls or configuration changes.
+Use the separate, explicitly approved `setup smoke` / `setup probe` flow to check
+selected Codex/Vibe subscription routes in an owned read-only fixture. A finalized
+`setup qualify` receipt can be reused by health until its evidence changes or expires;
+it proves bounded model access and role operation, not coding quality or controller ability.
 See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and recovery.
 
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
