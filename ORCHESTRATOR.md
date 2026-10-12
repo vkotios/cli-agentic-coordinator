@@ -25,6 +25,13 @@ evidence. Failed, unknown, expired or changed evidence grants no qualification.
 Retain the reported source/evidence with its disposal reason; inspect uncertain
 attempts instead of relaunching them. This smoke does not qualify coding capability,
 controller orchestration, or authorize future tasks.
+For a separate scoped controller trial, use `setup controller-smoke`, inspect its
+controller/child routes and native tool profile, then approve its exact offer before
+`controller-start` and `controller-run`. The native controller calls the supplied
+fixed lifecycle steps; do not perform them on its behalf. Inspect process/log
+evidence before `controller-qualify`. Reuse only fresh matching receipts through
+`controller-qualification` and health. This proves the observed lifecycle in that
+profile, with task capability and future launch authority remaining separate.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.

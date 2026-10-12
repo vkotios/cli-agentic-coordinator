@@ -105,6 +105,9 @@ Use the separate, explicitly approved `setup smoke` / `setup probe` flow to chec
 selected Codex/Vibe subscription routes in an owned read-only fixture. A finalized
 `setup qualify` receipt can be reused by health until its evidence changes or expires;
 it proves bounded model access and role operation, not coding quality or controller ability.
+The separate controller trial can observe a complete native claim, delegation,
+monitoring, review and cleanup lifecycle in a bound model/tool profile. Its receipt
+keeps task capability and future launch permission separate.
 See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and recovery.
 
 1. **Configure (optional).** Everything has a default (see below). To change one, copy

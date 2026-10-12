@@ -307,3 +307,71 @@ matching proof, but keeps task capability, roster permissions, configuration,
 adoption and usage requirements separate. `runtime-ready` requires those
 requirements too, and still grants no launch permission. A read-only access smoke
 does not qualify a model for coding tasks or prove controller orchestration.
+
+## Native controller lifecycle trial
+
+Controller qualification is separate from child access. `setup controller-smoke`
+offers one isolated lifecycle for the selected controller and the same supported
+Codex/Vibe subscription child pair. The request has `worker`, `reviewer` and
+`maxAgeSeconds` fields. Creating an offer makes no model call. Inspect its controller,
+child routes, native tool profile and one-controller/two-child launch bounds.
+
+Use `controller-start` with `{ "offerHash": "<exact hash>", "approve": true }`
+to prepare the fixture. Use `controller-run` with that exact approval to launch
+one native controller. Preparation creates no model call; run returns promptly
+with a native-runner process and private evidence directory. Normal owner config,
+instructions, policies and credentials are preserved. The child environment strips
+known API/billing overrides and verifies the saved subscription login. No API-key
+fallback is accepted.
+
+The native controller must use its own shell tools to perform the supplied steps:
+claim, worker launch, worker monitoring, reviewer launch, reviewer monitoring,
+review finalization, disposition recording and finish. Each step is restricted
+to this owned trial and exact approved routes. Repeating an unfinished monitor
+step polls the existing job. Each mutating step has an exclusive durable attempt;
+unknown outcomes are retained for inspection and never relaunched automatically.
+Preflight refusals also consume that offer's launch attempt, even when no model
+was called. Inspect the reported refusal and make a fresh explicitly approved
+offer after resolving it; the original evidence is preserved.
+Recordings describe the read-only trial without adding coding-quality acceptance.
+Finish uses the existing closure machinery, removes review resources and releases
+the claim. The source anchor and audit evidence retain a reason and revisit step.
+
+After the controller and runner exit, `controller-qualify` takes
+`{ "offerHash": "<exact hash>" }`. It requires the ordered native tool results,
+an observed exact model, successful native terminal evidence, matching process
+identities, complete child proofs, clean independent review/removal, dispositions
+and the actual closed/released claim. A claimant name, assistant prose or requested
+model is insufficient. Parent-assisted steps, missing/ambiguous model evidence,
+changed instructions/executables, incomplete cleanup and expired evidence refuse
+qualification. No process is automatically killed; inspect retained launch evidence
+if the runner or controller stops unexpectedly.
+
+The initial native profiles are Claude with its Bash tool and Codex with command
+execution, both at medium effort. Codex retains its workspace-write sandbox and
+grants model-driven writes only to the owned trial directory. Coordination locks
+and the child-access proof for this lifecycle remain inside that trial. Claude's
+session-local PreToolUse hook permits only the eight exact prepared commands;
+general Node-prefix approval is absent, and missing guard evidence refuses proof.
+The guard is a command boundary, not an OS sandbox. Neither profile installs or
+changes global hooks. Codex retains
+normal approval rules; environments needing interactive host approval can remain
+unqualified. Other harness/model/tool profiles remain unqualified until their
+native evidence path is supported and observed. This is a coverage boundary,
+not a judgment about a harness or models with different context/tool profiles.
+
+`controller-qualification --config <private config>` validates and reuses a fresh
+receipt without model calls. All controller actions take `--session` and the
+request actions take `--request`; CLI and MCP expose the same contract. Health can
+remove the matching controller-operation gap while preserving permissions,
+current roster, adoption, configuration selection and subscription freshness
+requirements. The receipt is scoped to the observed lifecycle/tool profile; it
+does not qualify coding capability, prove general orchestration judgment or grant
+future launch permission. `launchAllowed` remains false.
+
+Health also needs an explicit matching `controllerProfile` in the private runtime
+configuration before reporting controller readiness. Select the receipt's profile
+only when that is the profile you will use; an absent selection remains pending,
+and a different tool profile is blocked. Qualification never writes this choice
+or treats a native Bash/command trial as proof for a different interactive or MCP
+tool configuration.

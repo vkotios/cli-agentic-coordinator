@@ -82,6 +82,12 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  setup_controller_smoke:{cmd:'setup',sub:['controller-smoke'],description:'Offer a scoped native controller lifecycle using owned child routes; no model calls or launch authority.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config>'),request:S('--request <worker/reviewer/maxAgeSeconds JSON>')},required:['session','config','request']},
+  setup_controller_start:{cmd:'setup',sub:['controller-start'],description:'Prepare an exact approved controller offer and its fixed native lifecycle instructions; no model launch.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true JSON>')},required:['session','request']},
+  setup_controller_run:{cmd:'setup',sub:['controller-run'],description:'Start one exact-approved native subscription controller with durable launch/process/log evidence. Never repeats an uncertain spawn.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true JSON>')},required:['session','request']},
+  setup_controller_step:{cmd:'setup',sub:['controller-step'],description:'Perform one fixed approved controller lifecycle step. Mutating uncertainty is retained without automatic retries; monitor steps may poll.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true/step JSON>')},required:['session','request']},
+  setup_controller_qualify:{cmd:'setup',sub:['controller-qualify'],description:'Capture complete native controller tool/model, claim, child, review and closure proof. Missing or changed evidence cannot qualify.',opts:{session:S('--session <private session>'),request:S('--request <offerHash JSON>')},required:['session','request']},
+  setup_controller_qualification:{cmd:'setup',sub:['controller-qualification'],description:'Validate and reuse fresh scoped controller lifecycle receipts, without model calls or owner policy changes.',opts:{session:S('--session <private session>'),config:S('--config <private runtime config>')},required:['session','config']},
   setup_smoke:{cmd:'setup',sub:['smoke'],description:'Offer a private read-only worker/reviewer access smoke for selected subscription routes. Explicit indexes/freshness request; no model calls or owner repository changes.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config>'),request:S('--request <worker/reviewer indexes and maxAgeSeconds JSON>')},required:['session','config','request']},
   setup_probe:{cmd:'setup',sub:['probe'],description:'Launch one explicitly approved worker or reviewer access probe through existing orch machinery, with API overrides removed. Exclusive attempts; uncertain attempts are never relaunched automatically.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true/role JSON>')},required:['session','request']},
   setup_qualify:{cmd:'setup',sub:['qualify'],description:'Capture exact-model access proof only after terminal run evidence and clean independent review/removal. No model calls, policy enablement or task-quality qualification.',opts:{session:S('--session <private session>'),request:S('--request <offerHash JSON>')},required:['session','request']},
@@ -399,7 +405,7 @@ export async function callTool(name, input, { stateRoot } = {}) {
   if (!t.text) args.json = true;
   Object.assign(args, t.force || {});
   // Health is explicitly bound to its completed setup session, not server state.
-  if (stateRoot && !args['state-root'] && !['setup_health','setup_smoke','setup_probe','setup_qualify','setup_qualification'].includes(name)) args['state-root'] = stateRoot;
+  if (stateRoot && !args['state-root'] && !name.startsWith('setup_controller_') && !['setup_health','setup_smoke','setup_probe','setup_qualify','setup_qualification'].includes(name)) args['state-root'] = stateRoot;
   let boundMs = t.boundMs || DEFAULT_BOUND_MS;
   if (name === 'wait_lane') {
     const s = waitLaneSeconds(args.timeout);
