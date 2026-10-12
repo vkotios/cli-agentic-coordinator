@@ -201,11 +201,109 @@ Unknown configuration values and raw error details are excluded from the report.
 Routing qualification is labeled as an owner policy declaration. Even a declared
 qualified profile with fresh availability remains `installed-but-unqualified`
 until authentication, exact model access and role operation are explicitly
-verified. Controller model access is likewise unchecked. `launchAllowed` is
+verified. Matching fresh access receipts are reported as `subscription-observed`
+and `verified`; they describe the recorded observation, not a new login check.
+Controller operation is never inferred from child runs. `launchAllowed` is
 always false: this diagnostic never grants launch authority or replaces the
 normal routing/quota/adviser admission checks. Complete pinned Jev settings can
 be validated, but key/provider admission remains unchecked and no paid call occurs.
+Access is observed per harness/model/billing route. A controller sharing a verified
+child route can show that access observation, while its controller operation stays
+unqualified and still prevents controller runtime readiness.
 
 Use health again after relocation, reconfiguration, login changes or model changes.
 Resolve reported gaps explicitly; configuration changes still need a fresh setup
 preview and approval. A live disposable qualification run is a separate action.
+
+## Explicit access qualification
+
+The first live smoke supports one selected Codex subscription worker and one
+selected Vibe subscription reviewer (either harness can take either role).
+Other harnesses and billing modes remain unqualified by this smoke. Choose
+different canonical models, then write a private request:
+
+```json
+{"worker":0,"reviewer":0,"maxAgeSeconds":3600}
+```
+
+```powershell
+orch setup smoke --session C:\private\orch-setup --config C:\private\orch-runtime.json --request C:\private\smoke.json --json
+```
+
+This creates an immutable offer, performs no model call, and changes no owner
+repository. It binds the completed session/configuration, selected routes,
+current roster, executable bytes and role instructions. Inspect its routes,
+private resource paths and bounds before approving. Approval is per offer and
+role; write `{"offerHash":"<returned hash>","approve":true,"role":"worker"}`
+to a private file, then run:
+
+```powershell
+orch setup probe --session C:\private\orch-setup --request C:\private\approved-probe.json --json
+```
+
+That exact offer-and-role approval is also the one-run owner model approval used
+by `orch run`. Routes marked `ask` and canonical roster models marked
+`requires_permission` still need this approval for each probe. Their preferences
+and roster flags remain unchanged; the receipt grants no future model permission.
+
+The probe uses normal orch supervision in a new owned Git fixture. Inherited
+API-key/auth-token and base-URL/API-base override families are removed from its
+child environment, along with orch overrides and Node injection options.
+Codex must report a ChatGPT subscription login; Vibe uses saved native sign-in
+and refuses API material in its profile dotenv file. No global login/configuration
+is changed. Each role has one durable launch attempt and no automatic retry.
+If a launch response is lost, inspect the retained state and attempt; a repeated
+probe never starts a replacement job. Disabled roster routes remain disabled.
+Subscription-login refusals are recorded as `refused`; transport, admission or
+identity uncertainty remains `uncertain`. Neither can automatically retry the
+same offer/role. An expired unused offer creates no trial fixture.
+Configured routing/quota/adviser policies are not silently bypassed: such setups
+must use their admitted task path rather than this isolated access smoke.
+
+Inspect the returned worker run through normal `status`/`result` with the offered
+state root. After successful exact-model worker proof, approve the same offer
+with `role:"reviewer"` and run the probe again. The reviewer uses the existing
+detached read-only review machinery. Both models must read a private challenge
+from the fixture and return their role-specific response; the challenge is not
+supplied in their prompt.
+The random fixture directory ID is independent of the challenge, so working
+directory metadata cannot reveal the value the models must read.
+
+After the reviewer stops, write `{"offerHash":"<returned hash>"}` and run:
+
+```powershell
+orch setup qualify --session C:\private\orch-setup --request C:\private\capture.json --json
+orch setup qualification --session C:\private\orch-setup --config C:\private\orch-runtime.json --json
+```
+
+Qualify invokes the existing review finalizer without another model call. Active,
+failed, substituted or unknown-model runs, changed source, unclean containment or
+unremoved review resources cannot produce a successful receipt. The immutable
+private receipt binds the full source evidence inventory. Reuse rereads it, the
+run/review proofs and unchanged fixture; changed evidence or expired observations
+fall back to unqualified. Captured observations can survive unrelated runtime
+settings or complete policy references added afterward: health validates those
+policies separately. Selected routes, billing, session/resource locations, current
+roster, executable bindings and role instructions must still match. Before launch
+and initial capture, the offer's complete config bytes remain an exact approval
+binding. Use a fresh offer for a new explicit trial. At most
+16 offers are retained per session. No retention or maintenance scheduler is enabled.
+When all recorded observations have expired, the status summary is `expired`.
+Vibe proof also requires the exact assigned alias. A fallback warning involving
+that alias, an unknown source or substitution refuses proof. A startup warning
+about a different saved-profile alias is retained in the source record and counted
+as `otherProfileWarnings`; it does not erase exact assigned-model evidence.
+
+The review worktree is removed by its registered-resource cleanup. The owned
+source anchor and run evidence are intentionally retained for receipt validation,
+with a reason and explicit disposal/revisit step. If qualification fails, inspect
+the attempt/run/review state; finalize an already-stopped review with the existing
+review finish command and preserve uncertain resources. No automatic kill, purge,
+branch deletion or replacement model call occurs.
+
+MCP exposes `setup_smoke`, `setup_probe`, `setup_qualify` and
+`setup_qualification` with the same file-based arguments. Health consumes fresh
+matching proof, but keeps task capability, roster permissions, configuration,
+adoption and usage requirements separate. `runtime-ready` requires those
+requirements too, and still grants no launch permission. A read-only access smoke
+does not qualify a model for coding tasks or prove controller orchestration.

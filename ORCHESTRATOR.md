@@ -15,6 +15,16 @@ grants launch permission or verifies subscriptions. Run `setup health` / `setup_
 with the complete session and private config after apply or reconfiguration. Resolve
 reported gaps; installed files, cached quota and declared qualification never prove
 current authentication or exact model access. See `docs/SETUP.md`.
+For selected Codex/Vibe subscription routes, `setup smoke` / `setup_smoke` returns
+an offer for a separate owned read-only fixture. Get approval for its exact hash
+and each role before `setup probe` / `setup_probe`. Inspect the launched runs;
+`setup qualify` / `setup_qualify` finalizes the independent review and captures
+only successful exact-model proof with clean containment and removed review resources.
+Read `setup qualification` / `setup_qualification` and health to reuse fresh matching
+evidence. Failed, unknown, expired or changed evidence grants no qualification.
+Retain the reported source/evidence with its disposal reason; inspect uncertain
+attempts instead of relaunching them. This smoke does not qualify coding capability,
+controller orchestration, or authorize future tasks.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.
