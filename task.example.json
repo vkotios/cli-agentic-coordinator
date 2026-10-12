@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "type": "helper",
+  "class": "C2",
+  "size": "S",
+  "risk": "standard",
+  "capability": "example-scoped-coding",
+  "tools": ["read", "shell"],
+  "modalities": ["text"],
+  "contextTokens": 4000
+}

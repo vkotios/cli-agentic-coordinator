@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "catalogVersion": "example-1",
+  "availabilityMaxAgeMinutes": 60,
+  "preference": "rotation",
+  "profiles": [{
+    "id": "example-local-worker",
+    "cli": "opencode",
+    "harnessVersion": "example-version",
+    "model": "localai/example-coder",
+    "role": "worker",
+    "account": "local",
+    "billing": "local",
+    "enabled": false,
+    "availability": {"status": "unknown", "checkedAt": null},
+    "qualification": {"status": "unqualified", "evidence": null},
+    "launch": {"agent": null, "effort": null, "flags": []},
+    "capability": "example-scoped-coding",
+    "supports": {
+      "types": ["helper"], "classes": ["C2"], "risks": ["standard"],
+      "tools": ["read", "shell"], "modalities": ["text"], "contextTokens": 8000
+    },
+    "costRank": 0,
+    "latencyRank": 0
+  }]
+}

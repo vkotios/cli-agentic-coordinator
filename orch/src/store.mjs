@@ -75,10 +75,10 @@ export function readRun(cfg, id) {
 }
 
 /** MONITOR ONLY (and `orch run` at creation). Never called by a read-only command. */
-export function writeRun(cfg, rec) {
+export function writeRun(cfg, rec, options = {}) {
   assertLive(cfg, 'run', rec.id);
   rec.updated_at = nowIso();
-  writeJsonAtomic(paths(cfg, rec.id).record, rec);
+  writeJsonAtomic(paths(cfg, rec.id).record, rec, options);
   return rec;
 }
 
@@ -87,7 +87,7 @@ export function appendMonitorEvent(cfg, id, event) {
   const p = paths(cfg, id);
   try {
     assertLive(cfg, 'run', id);
-    fs.mkdirSync(p.dir, { recursive: true });
+    // Run creation owns this directory. Late monitor errors must not resurrect it.
     fs.appendFileSync(p.events, JSON.stringify({ ts: nowIso(), ...event }) + '\n');
     return true;
   } catch {

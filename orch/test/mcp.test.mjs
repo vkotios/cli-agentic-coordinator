@@ -13,8 +13,41 @@ import { toArgv, TOOLS, WAIT_LANE_DEFAULT_S, WAIT_LANE_MAX_S, callTool, waitLane
 
 const TOOL_NAMES = [
   'run', 'status', 'result', 'log_tail', 'cancel', 'wait_lane', 'claim', 'release', 'claims', 'worktree_create', 'worktree_list',
-  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain',
+  'scope', 'review', 'review_finish', 'gate_record', 'gate_status', 'record', 'pick', 'cleanup', 'finish', 'maintain', 'usage', 'quota',
+  'modelrouter_catalog', 'modelrouter_update',
+  'modelrouter_history','modelrouter_rollback','modelrouter_recover',
+  'setup_start','setup_status','setup_answer','setup_proposal',
+  'setup_preview','setup_apply','setup_receipt','setup_health',
+  'setup_smoke','setup_probe','setup_qualify','setup_qualification',
 ];
+
+async function setupConversation(dir,repo,call){
+  const session=path.join(dir,'onboarding-session'),answersFile=path.join(dir,'onboarding-answer.json');
+  let response=await call('setup_start',{repo,harness:'codex',session});
+  assert.equal(response.isError,false);let s=response.structuredContent.output;
+  assert.equal((await call('setup_status',{session})).structuredContent.output.revision,0);
+  const route={harness:'codex',model:'example-model',billing:'subscription',permission:'ask'};
+  const choices=[{controller:route,workers:[route],reviewers:[route]},{mode:'deterministic'},{enabled:false},{stateRoot:path.join(dir,'setup-state'),reviewRoot:path.join(dir,'setup-reviews'),cleanup:'retain-unmerged'},{enabled:false}];
+  for(const answer of choices){fs.writeFileSync(answersFile,JSON.stringify({expectedRevision:s.revision,questionId:s.nextQuestion.id,answer}));response=await call('setup_answer',{session,answers:answersFile});assert.equal(response.isError,false);s=response.structuredContent.output;}
+  const proposal=await call('setup_proposal',{session});assert.equal(proposal.isError,false);assert.equal(proposal.structuredContent.output.intentOnly,true);
+  const config=path.join(dir,'setup-config.json'),approval=path.join(dir,'setup-approval.json');
+  response=await call('setup_preview',{session,config});assert.equal(response.isError,false);const preview=response.structuredContent.output;
+  fs.writeFileSync(approval,JSON.stringify({previewHash:preview.previewHash,approve:true}));response=await call('setup_apply',{session,approval});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
+  response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
+  response=await call('setup_health',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.readOnly,true);assert.equal(response.structuredContent.output.providerCalls,0);
+  response=await call('setup_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
+  fs.writeFileSync(approval,JSON.stringify({worker:0,reviewer:0,maxAgeSeconds:3600}));response=await call('setup_smoke',{session,config,request:approval});assert.equal(response.isError,true,'identical reviewer/worker model refused before any call');
+  fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64),approve:false,role:'worker'}));response=await call('setup_probe',{session,request:approval});assert.equal(response.isError,true);
+  fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64)}));response=await call('setup_qualify',{session,request:approval});assert.equal(response.isError,true);
+  return {session,proposal};
+}
+
+function catalogFixtures(dir){
+  const catalog=path.join(dir,'catalog.json'),proposal=path.join(dir,'catalog-update.json');
+  const baseline={version:1,sourcePolicyVersion:1,catalogVersion:'fixture-1',asOf:'2026-10-10T00:00:00.000Z',sources:[],models:[]};
+  fs.writeFileSync(catalog,JSON.stringify(baseline));fs.writeFileSync(proposal,JSON.stringify({...baseline,baseCatalogVersion:'fixture-1',catalogVersion:'fixture-2'}));
+  return {catalog,proposal};
+}
 
 /** A minimal JSON-RPC client over the server's stdio. */
 function startServer(env) {
@@ -92,7 +125,7 @@ function stable(v) {
   if (v && typeof v === 'object') {
     const o = {};
     for (const [k, x] of Object.entries(v)) {
-      if (/^(age|age_s|quiet_seconds|last_activity_at|waited_ms|monitor|lane_state|keeper_identity|worker_identity|undetermined|checked_at|finished_at|recorded_at)$/.test(k)) continue;
+      if (/^(age|age_s|quiet_seconds|last_activity_at|waited_ms|monitor|lane_state|keeper_identity|worker_identity|undetermined|checked_at|checkedAt|finished_at|recorded_at)$/.test(k)) continue;
       o[k] = stable(x);
     }
     return o;
@@ -186,6 +219,36 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
     assert.deepEqual(stable(mcpRes.structuredContent.output), stable(cli.out), `${name}: MCP == CLI`);
     assert.equal(mcpRes.structuredContent.exit_code, cli.code, `${name}: same exit code`);
   };
+
+  const onboarding=await setupConversation(c.base,repo,(name,args)=>srv.call(name,args));
+  await equalCli('setup_status',await srv.call('setup_status',{session:onboarding.session}),['setup','status','--session',onboarding.session]);
+  await equalCli('setup_proposal',onboarding.proposal,['setup','proposal','--session',onboarding.session]);
+
+  const catalogueFiles=catalogFixtures(c.base),catalogueBytes=fs.readFileSync(catalogueFiles.catalog);
+  const catalogue=await srv.call('modelrouter_catalog',{catalog:catalogueFiles.catalog});
+  assert.equal(catalogue.isError,false,text(catalogue));
+  await equalCli('modelrouter_catalog',catalogue,['modelrouter','catalog','--catalog',catalogueFiles.catalog]);
+  const update=await srv.call('modelrouter_update',{...catalogueFiles,'dry-run':true});
+  assert.equal(update.isError,false,text(update));
+  await equalCli('modelrouter_update',update,['modelrouter','update','--catalog',catalogueFiles.catalog,'--proposal',catalogueFiles.proposal,'--dry-run']);
+  assert.deepEqual(fs.readFileSync(catalogueFiles.catalog),catalogueBytes);
+  const catalogueApplied=await srv.call('modelrouter_update',{...catalogueFiles,apply:true,approval:update.structuredContent.output.approvalHash});
+  assert.equal(catalogueApplied.isError,false,text(catalogueApplied));const catalogueSnapshot=catalogueApplied.structuredContent.output.snapshot;
+  await equalCli('modelrouter_history',await srv.call('modelrouter_history',{catalog:catalogueFiles.catalog}),['modelrouter','history','--catalog',catalogueFiles.catalog]);
+  await equalCli('modelrouter_rollback',await srv.call('modelrouter_rollback',{catalog:catalogueFiles.catalog,snapshot:catalogueSnapshot}),['modelrouter','rollback','--catalog',catalogueFiles.catalog,'--snapshot',catalogueSnapshot]);
+  await equalCli('modelrouter_recover',await srv.call('modelrouter_recover',{catalog:catalogueFiles.catalog,snapshot:catalogueSnapshot}),['modelrouter','recover','--catalog',catalogueFiles.catalog,'--snapshot',catalogueSnapshot]);
+
+  // The same opted-in cached telemetry view is reachable through the real MCP server.
+  const usageConfig=path.join(c.base,'usage.json');
+  fs.writeFileSync(usageConfig,JSON.stringify({version:1,pools:[],bindings:[]}));
+  const usage=await srv.call('usage',{config:usageConfig});
+  assert.equal(usage.isError,false,text(usage));
+  assert.equal(usage.structuredContent.output.enabled,true);
+  await equalCli('usage',usage,['usage','--config',usageConfig]);
+  const quota=await srv.call('quota',{});
+  assert.equal(quota.isError,false,text(quota));
+  assert.equal(quota.structuredContent.output.enabled,false);
+  await equalCli('quota',quota,['quota']);
 
   // claim / claims / pick
   const claim = await srv.call('claim', { wp: 'WP-M', by: 'claude-code', note: 't3' });
@@ -331,6 +394,17 @@ test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency 
   assert.equal(client.getServerVersion().name, 'orch');
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((x) => x.name).sort(), [...TOOL_NAMES].sort());
+  const onboardingRepo=path.join(c.base,'onboarding-repo');makeRepo(onboardingRepo,{'README.md':'fixture\n'});
+  await setupConversation(c.base,onboardingRepo,(name,args)=>client.callTool({name,arguments:args}));
+  const catalogueFiles=catalogFixtures(c.base);
+  const catalogue=/** @type {any} */ (await client.callTool({name:'modelrouter_catalog',arguments:{catalog:catalogueFiles.catalog}}));
+  assert.equal(catalogue.isError,false);assert.equal(catalogue.structuredContent.output.catalog.catalogVersion,'fixture-1');
+  const update=/** @type {any} */ (await client.callTool({name:'modelrouter_update',arguments:{...catalogueFiles,'dry-run':true}}));
+  assert.equal(update.isError,false);assert.equal(update.structuredContent.output.mode,'preview');assert.equal(update.structuredContent.output.changes.length,0);
+  const applied=/** @type {any} */ (await client.callTool({name:'modelrouter_update',arguments:{...catalogueFiles,apply:true,approval:update.structuredContent.output.approvalHash}}));assert.equal(applied.isError,false);
+  const history=/** @type {any} */ (await client.callTool({name:'modelrouter_history',arguments:{catalog:catalogueFiles.catalog}}));assert.equal(history.isError,false);assert.equal(history.structuredContent.output.entries[0].status,'committed');
+  const restored=/** @type {any} */ (await client.callTool({name:'modelrouter_rollback',arguments:{catalog:catalogueFiles.catalog,snapshot:applied.structuredContent.output.snapshot}}));assert.equal(restored.isError,false);assert.equal(restored.structuredContent.output.mode,'rollback-preview');
+  const recovered=/** @type {any} */ (await client.callTool({name:'modelrouter_recover',arguments:{catalog:catalogueFiles.catalog,snapshot:applied.structuredContent.output.snapshot}}));assert.equal(recovered.isError,false);assert.equal(recovered.structuredContent.output.alreadyResolved,true);
   const claim = await client.callTool({ name: 'claim', arguments: { wp: 'WP-SDK', by: 'owner' } });
   assert.equal(claim.isError, false);
   const claims = /** @type {any} */ (await client.callTool({ name: 'claims', arguments: {} }));

@@ -25,6 +25,22 @@ const USAGE = `orch - launch and supervise worker CLI runs, and record the work-
   orch wait-lane [--lane local] [--timeout <s>] [--json]
   orch monitor <id> [--json]
   orch gc [--lane local] [--json]
+  orch usage [--refresh] [--pool <id>] [--role controller|worker|reviewer]
+             [--config <private usage configuration>] [--json]
+  orch quota [--quota-policy <private file>] [--refresh] [--json]
+  orch modelrouter catalog [--catalog <JSON>] [--json]
+  orch modelrouter update --proposal <JSON> [--catalog <JSON>] [--dry-run] [--json]
+             [--apply --approval <preview hash>] (explicit private --catalog required)
+  orch modelrouter history --catalog <private JSON> [--json]
+  orch modelrouter rollback|recover --catalog <private JSON> --snapshot <id> [--json]
+             [--apply --approval <preview hash>] (otherwise read-only preview)
+             generic metadata only; does not change enabled routes
+  orch pick ... --routing-policy <private file> --task <task.json>
+  orch pick ... [--advice --advice-policy <private file>] (optional bounded Jev advice)
+  orch run|review ... --routing-policy <file> --task <task.json> --profile <id>
+  orch pick ... [--quota-policy <file>] --capability <group> [--refresh]
+  orch run|review ... --capability <group> --size XS|S|M [--quota-purpose normal|retry]
+             cached subscription telemetry; --refresh invokes configured helpers with a cooldown
 
 Workflow (slice 2)
   orch claim <WP> --by <claude-code|codex|opencode|vibe|owner> [--session <s>] [--note <t>]
@@ -58,6 +74,18 @@ Workflow (slice 2)
            retention is disabled until configured in <state-root>/config.json
 
 Integration (slice 3)
+  orch setup start --repo <Git root> --harness claude|codex|opencode|vibe --session <private directory>
+             [--catalog <JSON>] [--roster <JSON>] [--json]
+  orch setup status|proposal --session <private directory> [--json]
+  orch setup answer --session <private directory> --answers <revision-bound JSON> [--json]
+  orch setup preview --session <private directory> --config <private config> [--adopt] [--update] [--json]
+  orch setup apply --session <private directory> --approval <exact preview approval JSON> [--json]
+  orch setup receipt --session <private directory> --preview <previewHash> [--json]
+  orch setup health --session <completed private directory> --config <private config> [--json]
+  orch setup smoke --session <completed private directory> --config <private config> --request <route indexes JSON> [--json]
+  orch setup probe|qualify --session <private directory> --request <exact offer request JSON> [--json]
+  orch setup qualification --session <private directory> --config <private config> [--json]
+             resumable choices only; no configuration/adoption/policy activation
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands
   orch adopt --repo <path> [--harness claude|codex|opencode|vibe]... [--dry-run] [--update] [--json]
            append owned instruction blocks and install only selected integrations (default Claude + Codex)
@@ -70,7 +98,8 @@ Platform: Windows 10/11 and Linux (macOS is not supported yet).
 Local gateway benchmark: node orch/tools/bench-gateway.mjs --help
 
 Exit codes
-  run       0 admitted | 3 lane-busy | 2 usage-or-preflight | 4 undetermined
+  modelrouter 0 inspected/previewed | 3 preview conflicts | 2 invalid input/options
+  run       0 admitted | 3 lane-busy | 2 usage/preflight/quota/routing-deferred | 4 undetermined
   cancel    0 confirmed gone or already terminal | 3 unconfirmed | 2 usage
   wait-lane 0 lane free | 3 timed out while held
   monitor   0 started | 3 already-running | 4 run is terminal

@@ -57,6 +57,14 @@ const N = (description) => ({ type: ['integer', 'string'], description });
 const A = (description) => ({ type: 'array', items: { type: 'string' }, description });
 
 const LAUNCH_OPTS = {
+  'routing-policy': S('--routing-policy <private task-fit policy>'),
+  task: S('--task <typed task JSON file>'),
+  profile: S('--profile <selected exact execution profile>'),
+  'routing-mode': S('--routing-mode qualified|qualification'),
+  size: S('--size XS|S|M (quota forecast size)'),
+  'quota-policy': S('--quota-policy <private subscription policy>'),
+  capability: S('--capability <explicit equivalence group>'),
+  'quota-purpose': S('--quota-purpose normal|retry (forecast reserve class)'),
   agent: S('--agent <name> (opencode/vibe agent)'),
   flag: A('--flag <x>, repeatable: extra adapter flags'),
   'max-turns': N('--max-turns N'),
@@ -74,6 +82,44 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  setup_smoke:{cmd:'setup',sub:['smoke'],description:'Offer a private read-only worker/reviewer access smoke for selected subscription routes. Explicit indexes/freshness request; no model calls or owner repository changes.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config>'),request:S('--request <worker/reviewer indexes and maxAgeSeconds JSON>')},required:['session','config','request']},
+  setup_probe:{cmd:'setup',sub:['probe'],description:'Launch one explicitly approved worker or reviewer access probe through existing orch machinery, with API overrides removed. Exclusive attempts; uncertain attempts are never relaunched automatically.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true/role JSON>')},required:['session','request']},
+  setup_qualify:{cmd:'setup',sub:['qualify'],description:'Capture exact-model access proof only after terminal run evidence and clean independent review/removal. No model calls, policy enablement or task-quality qualification.',opts:{session:S('--session <private session>'),request:S('--request <offerHash JSON>')},required:['session','request']},
+  setup_qualification:{cmd:'setup',sub:['qualification'],description:'Read and reuse unexpired qualification receipts after validating executable/config/source bindings. Missing or changed evidence remains unqualified; no model calls.',opts:{session:S('--session <private session>'),config:S('--config <private runtime config>')},required:['session','config']},
+  setup_health:{cmd:'setup',sub:['health'],description:'Read current setup configuration, executable discovery, policy completeness and cached subscription freshness by role. No harness calls, credential reads, collector refresh, qualification or configuration changes.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config outside target repo>')},required:['session','config']},
+  setup_preview:{cmd:'setup',sub:['preview'],description:'Preview additive private configuration and optional controller adoption. Existing conflicting settings block writes. No provider, credential, global registration or cleanup actions.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config outside target repo>'),adopt:B('--adopt: preview controller instruction adoption'),update:B('--update: refresh unchanged owned adoption payloads')},required:['session','config']},
+  setup_apply:{cmd:'setup',sub:['apply'],description:'Apply explicitly approved previewHash/approve:true from a private JSON file. Rechecks config and adoption inputs, preserves owner instructions, records partial writes; no launches or qualification.',opts:{session:S('--session <completed private session>'),approval:S('--approval <private exact preview approval JSON>')},required:['session','approval']},
+  setup_receipt:{cmd:'setup',sub:['receipt'],description:'Read setup apply outcome and completed writes. Interrupted attempts require a fresh approved preview; no automatic rollback.',opts:{session:S('--session <private session>'),preview:S('--preview <exact previewHash>')},required:['session','preview']},
+  setup_start:{cmd:'setup',sub:['start'],description:'Start or resume a private onboarding question session for any supported controlling harness. Checks installed executables without login or inference. No configuration/adoption/policy activation.',opts:{repo:S('--repo <existing Git root>'),harness:S('--harness claude|codex|opencode|vibe'),session:S('--session <private directory outside target repo>'),catalog:S('--catalog <optional generic metadata>'),roster:S('--roster <optional explicit owner choices>')},required:['repo','harness','session']},
+  setup_status:{cmd:'setup',sub:['status'],description:'Read the next unanswered setup question and accepted choices without writing, prompting on stdin or contacting providers.',opts:{session:S('--session <private directory>')},required:['session']},
+  setup_answer:{cmd:'setup',sub:['answer'],description:'Record one explicit revision-bound structured answer from a private JSON file. Never overwrites an answer, activates settings or reads credentials.',opts:{session:S('--session <private directory>'),answers:S('--answers <expectedRevision/questionId/answer JSON>')},required:['session','answers']},
+  setup_proposal:{cmd:'setup',sub:['proposal'],description:'Read completed onboarding intent and honest installed/unqualified readiness. No apply/activation, installations, auth, model calls, purge or scheduler.',opts:{session:S('--session <private directory>')},required:['session']},
+  modelrouter_catalog: {
+    cmd: 'modelrouter', sub: ['catalog'],
+    description: 'Read source-backed generic model metadata. No network, model calls, owner roster changes or launch authority.',
+    opts: {catalog: S('--catalog <versioned catalogue JSON>')},
+  },
+  modelrouter_update: {
+    cmd: 'modelrouter', sub: ['update'],
+    description: 'Preview a source-backed catalogue proposal. Explicit apply requires a private catalogue and exact preview approval; saves snapshots. Generic metadata never enables models or changes access, permissions or qualification.',
+    opts: {catalog: S('--catalog <base JSON>'),proposal: S('--proposal <structured update JSON>'),'dry-run': B('--dry-run (preview only)'),apply:B('--apply (requires explicit private catalogue and approval)'),approval:S('--approval <preview approvalHash>'),roster: S('--roster <optional owner links JSON>'),'routing-policy': S('--routing-policy <optional owner profile links JSON>')},
+    required: ['proposal'],
+  },
+  modelrouter_history:{cmd:'modelrouter',sub:['history'],description:'Read bounded private catalogue snapshots and interrupted publication outcomes without creating files or changing settings.',opts:{catalog:S('--catalog <private JSON>')},required:['catalog']},
+  modelrouter_rollback:{cmd:'modelrouter',sub:['rollback'],description:'Preview restoring exact previous catalogue bytes. Explicit apply and preview approval are required; unrelated current revisions are preserved.',opts:{catalog:S('--catalog <private JSON>'),snapshot:S('--snapshot <transaction ID>'),'dry-run':B('--dry-run'),apply:B('--apply'),approval:S('--approval <preview approvalHash>')},required:['catalog','snapshot']},
+  modelrouter_recover:{cmd:'modelrouter',sub:['recover'],description:'Preview resolving an interrupted catalogue journal from verified before/after bytes. Explicit apply and approval record its outcome; never replace catalogue bytes or take over stale locks.',opts:{catalog:S('--catalog <private JSON>'),snapshot:S('--snapshot <transaction ID>'),'dry-run':B('--dry-run'),apply:B('--apply'),approval:S('--approval <preview approvalHash>')},required:['catalog','snapshot']},
+  quota: {
+    cmd: 'quota',
+    description: 'Shared subscription quota headroom, controller warnings and estimated launch holds. Cached reads do not mutate. Explicit refresh runs bounded telemetry helpers and reconciles proven finished holds. Never changes inference billing, running jobs or controller claims.',
+    opts: {'quota-policy': S('--quota-policy <private policy>'), refresh: B('--refresh')},
+    boundMs: 90000,
+  },
+  usage: {
+    cmd: 'usage',
+    description: 'Shared subscription usage for configured controller, worker and reviewer billing pools. Cached status launches and writes nothing. Explicit refresh runs bounded telemetry helpers, respects per-pool cooldown and retains stale evidence and isolated errors; it never changes inference billing or admission.',
+    opts: { config: S('--config <private usage configuration>'), refresh: B('--refresh: collect subscribed pool observations'), pool: S('--pool <configured pool alias>'), role: S('--role controller|worker|reviewer') },
+    boundMs: 90000,
+  },
   maintain: {
     cmd: 'maintain',
     description: 'orch maintain: read-only retention preview, opt-in exact transcript collection, explicit legacy enrollment and investigation pins. Preserves compact results and process/model evidence.',
@@ -99,7 +145,7 @@ export const TOOLS = {
       ...LAUNCH_OPTS,
     },
     required: ['cli', 'dir', 'handoff'],
-    boundMs: 60000,
+    boundMs: 120000,
   },
   status: {
     cmd: 'status',
@@ -260,8 +306,8 @@ export const TOOLS = {
   },
   pick: {
     cmd: 'pick',
-    description: 'orch pick: propose a worker model from the ledger (rotation rule; reviewer != implementer). Read-only.',
-    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>') },
+    description: 'orch pick: propose an eligible model from the ledger; reviewer differs from implementer. An enabled quota policy allocates equal-capability useful work across subscription reset cycles. Cached reads are read-only; explicit refresh collects usage and reconciles confirmed holds. Explicit advice can contact Jev and write bounded private accounting only with an enabled adviser policy and key; no launch authority. Admission rechecks and reserves at launch.',
+    opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh'), 'routing-policy': S('--routing-policy <private task-fit policy>'), task: S('--task <typed task JSON>'), 'routing-mode': S('--routing-mode qualified|qualification'), advice: B('--advice: request explicitly enabled Jev advice'), 'advice-policy': S('--advice-policy <private adviser policy>') },
     required: ['workload', 'size'],
   },
 };
@@ -352,7 +398,8 @@ export async function callTool(name, input, { stateRoot } = {}) {
   }
   if (!t.text) args.json = true;
   Object.assign(args, t.force || {});
-  if (stateRoot && !args['state-root']) args['state-root'] = stateRoot;
+  // Health is explicitly bound to its completed setup session, not server state.
+  if (stateRoot && !args['state-root'] && !['setup_health','setup_smoke','setup_probe','setup_qualify','setup_qualification'].includes(name)) args['state-root'] = stateRoot;
   let boundMs = t.boundMs || DEFAULT_BOUND_MS;
   if (name === 'wait_lane') {
     const s = waitLaneSeconds(args.timeout);

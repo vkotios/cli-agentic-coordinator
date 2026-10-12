@@ -27,13 +27,57 @@ project: a database reset rule, generated-file rules, immutable migrations, a CI
 
 ## Borrowed code
 
-**None.** No source file from Orbit, Taurus, coding-agent-a2a, Hydra, acpx, Runner, VibeAround or
+No source file from Orbit, Taurus, coding-agent-a2a, Hydra, acpx, Runner, VibeAround or
 edulelis/opencode-mcp was copied into this repository. Those projects were evaluated as possible
 donors; nothing was needed, so nothing was lifted and no licence obligation is incurred beyond the dev
 dependencies above.
 
 If code is ever copied, it must be recorded here with project, licence, file and the lines taken.
 edulelis/opencode-mcp has no LICENSE file, so it remains **ideas only** and its code must not be copied.
+
+### CodexBar subscription contract adaptations
+
+`src/subscription-collectors.mjs` narrowly adapts provider request/field contracts from
+[steipete/CodexBar v0.74.0](https://github.com/steipete/CodexBar/tree/c2f22ccf8751efc8fe697bfe4714769107965274),
+commit `c2f22ccf8751efc8fe697bfe4714769107965274`, MIT:
+
+- `Sources/CodexBarCore/Providers/Cursor/CursorStatusProbe+UsageSummary.swift`: individual included
+  allowance cents, percentage fields, billing-cycle reset and separate on-demand spend.
+- `Sources/CodexBarCore/Providers/Copilot/CopilotUsageFetcher.swift` and
+  `Sources/CodexBarCore/CopilotUsageModels.swift`:
+  request headers, premium/chat quota fields, unlimited/zero-entitlement placeholders and one credit counter.
+  The added identity verification uses GitHub's supported REST version `2022-11-28` separately
+  from the upstream internal Copilot quota API version.
+- `Sources/CodexBarCore/Resources/Plugins/muse.ts`: device-token subscription endpoint, active-subscription
+  checks and session/weekly quota fields; minted inference keys and payment metadata are discarded.
+
+These are fresh Node implementations, not verbatim source copies. No upstream credential manager,
+account discovery/fallback, team selector, UI, entitlement inference or dependency is bundled.
+The upstream notice is retained for these narrow adaptations:
+
+```text
+MIT License
+
+Copyright (c) 2026 Peter Steinberger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Ideas used without code (attribution for honesty, not for licence)
 

@@ -16,9 +16,9 @@ export function nowIso() {
  * another process has the destination open - a concurrent `orch status` read is
  * enough. Retry briefly rather than losing a state write.
  */
-export function writeFileAtomic(file, data, { attempts = 12, waitMs = 25 } = {}) {
+export function writeFileAtomic(file, data, { attempts = 12, waitMs = 25, createDir = true } = {}) {
   const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true });
+  if (createDir) fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
   fs.writeFileSync(tmp, data);
   for (let i = 0; ; i++) {
@@ -40,8 +40,8 @@ export function writeFileAtomic(file, data, { attempts = 12, waitMs = 25 } = {})
   }
 }
 
-export function writeJsonAtomic(file, obj) {
-  writeFileAtomic(file, JSON.stringify(obj, null, 2) + '\n');
+export function writeJsonAtomic(file, obj, options = {}) {
+  writeFileAtomic(file, JSON.stringify(obj, null, 2) + '\n', options);
 }
 
 export function readJson(file, fallback = null) {

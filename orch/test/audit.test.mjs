@@ -41,13 +41,13 @@ const readCode = (f) => codeOnly(read(f));
 
 /* ------------------------------------------------------------- G7 -------- */
 
-test('G7: kill helpers are private; Linux supervision may only tear down its verified session', () => {
+test('G7: kill helpers are private; defined only in procs; Linux supervision may only tear down its verified session', () => {
   const offenders = [];
   for (const f of sourceFiles()) {
     if (f === 'procs.mjs') continue;
     const text = readCode(f);
     if (/\btaskkill\b/i.test(text)) offenders.push(`${f}: names taskkill directly`);
-    if (/\bkillChecked\b|\btreeKillChecked\b/.test(text) && !['commands.mjs', 'viewer.mjs'].includes(f)) {
+    if (/\bkillChecked\b|\btreeKillChecked\b/.test(text) && !['commands.mjs', 'viewer.mjs', 'usage-collector.mjs'].includes(f)) {
       offenders.push(`${f}: reaches a kill helper`);
     }
     if (f === 'linux-worker-supervisor.mjs') {
@@ -77,7 +77,7 @@ test('G7: the monitor cannot kill the worker or the keeper - its only kill is th
   assert.ok(!/treeKillChecked/.test(viewer), 'the viewer must never tree-kill');
 });
 
-test('G7: treeKillChecked is reached ONLY by `orch cancel <id>`; killChecked only by cancel --keeper and the viewer', () => {
+test('G7: worker tree kill requires cancel; owned telemetry cleanup cannot target a coding job', () => {
   const cmds = readCode('commands.mjs');
   // The tree kill appears exactly once, in the worker-cancel path.
   assert.equal((cmds.match(/treeKillChecked\(/g) || []).length, 1);
@@ -87,6 +87,13 @@ test('G7: treeKillChecked is reached ONLY by `orch cancel <id>`; killChecked onl
   assert.ok(treeIdx > cancelIdx && treeIdx < keeperIdx, 'the tree kill must live inside cmdCancel');
   const singleIdx = cmds.indexOf('killChecked(keeperPid');
   assert.ok(singleIdx > keeperIdx, 'the single kill must live inside cancelKeeper');
+  const telemetry=readCode('usage-collector.mjs');
+  assert.equal((telemetry.match(/treeKillChecked\(/g) || []).length,1);
+  assert.match(telemetry,/spawnHelper=spawn/);
+  assert.match(telemetry,/child=spawnHelper\(c.command,args/);
+  assert.match(telemetry,/ownChildCreationTime\(child.pid/);
+  assert.match(telemetry,/treeKillChecked\(child.pid,createdAt/);
+  assert.ok(!/from ['"]\.\/(commands|keeper|monitor|records)\.mjs['"]/.test(telemetry),'telemetry must not import coding job identities');
   // No kill anywhere in run / status / list / result / log / wait-lane / monitor / gc.
   for (const fn of ['cmdRun', 'cmdStatus', 'cmdList', 'cmdResult', 'cmdLog', 'cmdWaitLane', 'cmdMonitor', 'cmdGc']) {
     const start = cmds.indexOf(`function ${fn}`);

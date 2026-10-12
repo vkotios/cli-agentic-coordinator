@@ -90,6 +90,21 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
 
 ## Quick start
 
+For a harness-guided onboarding conversation, use `orch setup start --repo <Git root>
+--harness claude|codex|opencode|vibe --session <private directory> --json`.
+It collects resumable choices and returns one question at a time through the CLI or MCP.
+This stage records intent; configuration, adoption and policies remain unchanged.
+Use the separate `setup preview` and exact-approved `setup apply` to prepare private
+configuration and optional controller adoption. Conflicting settings are preserved;
+route qualification and complete routing/advice policies remain explicit follow-ups.
+Use `setup health` to inspect current configuration, policy completeness and cached
+usage freshness by role without provider calls or configuration changes.
+Use the separate, explicitly approved `setup smoke` / `setup probe` flow to check
+selected Codex/Vibe subscription routes in an owned read-only fixture. A finalized
+`setup qualify` receipt can be reused by health until its evidence changes or expires;
+it proves bounded model access and role operation, not coding quality or controller ability.
+See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and recovery.
+
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
    `orch.config.example.json` to `orch.config.json` and edit it, or set the environment variables.
 2. **Create your roster.** Copy `orch/roster.example.json` to `orch/roster.json` and list the models you
@@ -166,6 +181,11 @@ resolve against the directory the file is in. An invalid file is an error, never
 | review root (throwaway review worktrees) | `reviewRoot` | `ORCH_REVIEW_ROOT` (flag `--review-root`) | Windows: `%LOCALAPPDATA%\cli-agentic-coordinator\reviews`; Linux: `$XDG_DATA_HOME/cli-agentic-coordinator/reviews`, else `~/.local/share/cli-agentic-coordinator/reviews` |
 | roster | `roster` | `ORCH_ROSTER` (flag `--roster`) | `orch/roster.json` |
 | ledger | `ledger` | `ORCH_LEDGER` (flag `--ledger`) | `<state root>/ledger.jsonl` |
+| subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
+| subscription allocation policy | `quotaPolicy` | `ORCH_QUOTA_POLICY` (`--quota-policy`) | disabled |
+| task-fit routing policy | `routingPolicy` | `ORCH_ROUTING_POLICY` (`--routing-policy`) | disabled |
+| generic model catalogue | `modelCatalog` | `ORCH_MODEL_CATALOG` (`--catalog`) | bundled dated metadata; no enabled routes |
+| optional Jev adviser policy | `advicePolicy` | `ORCH_ADVICE_POLICY` (`--advice-policy`) | disabled; explicit `pick --advice` required |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE` | found on `PATH` / the npm global prefix at run time |
@@ -182,6 +202,52 @@ Notes:
 - The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under the OS temp directory on Linux. Its identifier is derived from your account (not from any setting), so the exclusion is machine-wide whatever the lane directory. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
+
+## Subscription usage
+
+Optional [quota policy](docs/QUOTA.md) adds equal-capability reset-aware allocation and
+atomic forecast holds for new launches. `orch quota --refresh --json` shows shared headroom
+and controller warnings. Unknown capacity defers assignments; running jobs continue.
+See [the policy example](quota.config.example.json). Collector installation alone does not enable it.
+Optional [task-fit routing](docs/ROUTING.md) filters exact execution profiles by complexity,
+review risk, context/tools and qualification before quota allocation. It requires a typed task
+and explicit profile on launches; research entries remain disabled until qualified and configured.
+Optional [Jev advice](docs/ADVICE.md) can suggest a revalidated final tie-break, or run in shadow
+mode. It requires an enabled private policy, a bounded OpenRouter API key and explicit
+`pick --advice`; it does not change worker/reviewer subscription billing.
+
+The [model catalogue](docs/MODEL_CATALOG.md) keeps source-backed generic metadata separate
+from your enabled roster. `orch modelrouter catalog --json` inspects it;
+`orch modelrouter update --proposal <JSON> --dry-run --json` previews changes and conflicts
+without changing models, policies or launch behavior.
+An explicit accepted preview can update a private catalogue copy using `--apply --approval`;
+adjacent snapshots support inspection, exact-byte rollback and explicit interrupted-transaction
+recovery. The bundled catalogue remains immutable, and owner routes remain unchanged.
+
+`orch usage` gives every controlling harness the same view of its own subscription and the pools
+used by its workers and reviewers. Configure `usageConfig` in the private `orch.config.json`, or pass
+`--config <file>` for one call. Keep the usage configuration, helper credential profiles and account
+fingerprints outside version control. See [the usage contract](docs/USAGE.md) and
+[the configuration example](usage.config.example.json).
+
+```powershell
+orch usage --json
+orch usage --refresh --json
+orch usage --role controller --json
+orch usage --pool coding-subscription --json
+```
+
+The MCP `usage` tool has the same `refresh`, `pool`, `role` and `config` options. The default reads
+cached observations without launching or writing anything. Explicit refresh runs configured telemetry
+helpers with a durable cooldown per billing pool; independent failures do not discard other results.
+Observation times stay unchanged when cached, and expired reset windows are marked `reset-stale`.
+Unknown measurements remain unknown. No scheduler is installed, running jobs continue, and this
+telemetry command does not change model selection, admission, billing mode or overage settings.
+
+The bundled Node JSON helper supports explicit Cursor, GitHub Copilot and Muse subscription profiles
+without WSL or Docker. It verifies the selected account and preserves provider-specific quota, spend
+and unknown values. See [collector setup and coverage](docs/USAGE.md#cursor-copilot-and-muse-subscription-helper)
+for credentials, account fingerprints and qualification prerequisites.
 
 ## Cleanup and finalization
 

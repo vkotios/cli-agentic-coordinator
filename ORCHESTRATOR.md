@@ -3,6 +3,29 @@
 Host-neutral. Everything that must not be forgotten is a script or a file, not memory.
 Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch pick` and model evidence: `docs/MODELS.md` and the ledger.
 
+For first-use onboarding, `orch setup start` (MCP: `setup_start`) opens a private
+resumable question session. Ask the owner the returned question, submit the explicit
+revision-bound answer and read the next question. After all answers, inspect the
+intent proposal. This stage does not change config, adoption, access or qualification;
+never treat recorded preferences as enabled settings. For a completed session, use
+`setup preview` / `setup_preview`, inspect conflicts and pending qualification,
+then ask the owner to approve the exact preview before `setup apply` / `setup_apply`.
+Read the receipt; interrupted or partial writes need a fresh preview. Apply never
+grants launch permission or verifies subscriptions. Run `setup health` / `setup_health`
+with the complete session and private config after apply or reconfiguration. Resolve
+reported gaps; installed files, cached quota and declared qualification never prove
+current authentication or exact model access. See `docs/SETUP.md`.
+For selected Codex/Vibe subscription routes, `setup smoke` / `setup_smoke` returns
+an offer for a separate owned read-only fixture. Get approval for its exact hash
+and each role before `setup probe` / `setup_probe`. Inspect the launched runs;
+`setup qualify` / `setup_qualify` finalizes the independent review and captures
+only successful exact-model proof with clean containment and removed review resources.
+Read `setup qualification` / `setup_qualification` and health to reuse fresh matching
+evidence. Failed, unknown, expired or changed evidence grants no qualification.
+Retain the reported source/evidence with its disposal reason; inspect uncertain
+attempts instead of relaunching them. This smoke does not qualify coding capability,
+controller orchestration, or authorize future tasks.
+
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.
 - You **do not write implementation code**, and you do not solve the task in the handoff. A handoff gives scope, anchors, contracts and machine-checkable acceptance criteria. It contains solution text only when the contract *is* the text (exact strings, names, schemas).
@@ -27,6 +50,17 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
     releasing the claim. Retry failed cleanup explicitly; never discard uncertain or unmerged work.
 
 ## 3. Monitoring (mandatory for every run, local and cloud)
+- If subscription telemetry is configured, run `orch usage --refresh --json` at WP start, before
+  assignments, at normal status checkpoints and after results (MCP: `usage`, `refresh: true`). Inspect
+  both controller and child-route pool bindings. Model/harness aliases sharing a subscription share
+  headroom. Preserve unknown/stale/reset-stale values and collector errors; this telemetry step does
+  not change admission, billing mode or an existing run. `orch usage --json` reads the cache only.
+- If quota policy is enabled, also inspect `orch quota --refresh --json`. Use the explicitly
+  qualified capability group in `pick`, `run` and `review`, with `--size` for forecast costs.
+  Allocate useful work across equivalent subscription pools; warn/checkpoint when low and defer
+  if none is usable. Running jobs continue. Launch atomically rechecks/reserves the chosen route;
+  it never substitutes a controller or changes billing. See `docs/QUOTA.md` for reserves, shared
+  holds and uncertainty. Use `--quota-purpose retry` only for an authorized retry.
 - Within **90 s** of launch: `orch status <id>` must show a live process and first log activity. If not: failed launch — read the log, fix the cause, record it. Do not blind-retry.
 - Then check on a schedule (Claude Code: Monitor on the run log plus a ScheduleWakeup fallback; Codex, OpenCode and Vibe: periodic `orch status`). Interval 3–5 min cloud, 5–10 min local. Qualify the controller's ability to perform these checks in its configured tool profile.
 - **Judge activity, not speed.** A slow local run that is producing steps is healthy. Do not set short timeouts on local models.
@@ -36,6 +70,22 @@ Launch details and verified quirks per CLI: `docs/CLI_GUIDE.md`. Roster, `orch p
 - Close the worker's window when its run has ended and its record is written.
 
 ## 4. Choosing a worker
+When task-fit routing is configured, supply `--task <JSON>` to `pick` and carry its exact
+`--profile` to `run`/`review`. Describe task complexity separately from slice size, and include
+context/tools/modalities and risk. Critical reviews require C4 and a different known family.
+Inspect routing exclusions and quota decisions; do not lower requirements to use spare capacity.
+Use qualification mode only for an explicitly intended trial. See `docs/ROUTING.md`.
+Optional `pick --advice` requires an enabled private Jev policy and bounded OpenRouter API key.
+Inspect its receipt; shadow keeps deterministic selection, assist only proposes a revalidated
+eligible tie-break. Launch guards remain authoritative. See `docs/ADVICE.md`.
+Use `orch modelrouter catalog --json` to inspect generic model metadata. For a requested
+refresh, read nominated official sources and prepare a private structured proposal; inspect
+`orch modelrouter update --proposal <JSON> --dry-run --json`. It previews changes and conflicts
+without altering enabled routes or qualification. See `docs/MODEL_CATALOG.md`.
+Apply only an accepted preview to an explicit private `--catalog` using its `--approval` hash.
+Inspect retained history; rollback and recovery need their own previews and explicit approval.
+Never treat a catalogue update as roster enablement or qualification.
+
 | Workload | First choice | Notes |
 |---|---|---|
 | XS/S mechanical, tests, scoped edits | local models via opencode | rotate across models; slow is fine |
