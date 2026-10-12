@@ -11,7 +11,10 @@ never treat recorded preferences as enabled settings. For a completed session, u
 `setup preview` / `setup_preview`, inspect conflicts and pending qualification,
 then ask the owner to approve the exact preview before `setup apply` / `setup_apply`.
 Read the receipt; interrupted or partial writes need a fresh preview. Apply never
-grants launch permission or verifies subscriptions. See `docs/SETUP.md`.
+grants launch permission or verifies subscriptions. Run `setup health` / `setup_health`
+with the complete session and private config after apply or reconfiguration. Resolve
+reported gaps; installed files, cached quota and declared qualification never prove
+current authentication or exact model access. See `docs/SETUP.md`.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.

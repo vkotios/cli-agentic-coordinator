@@ -17,7 +17,7 @@ const TOOL_NAMES = [
   'modelrouter_catalog', 'modelrouter_update',
   'modelrouter_history','modelrouter_rollback','modelrouter_recover',
   'setup_start','setup_status','setup_answer','setup_proposal',
-  'setup_preview','setup_apply','setup_receipt',
+  'setup_preview','setup_apply','setup_receipt','setup_health',
 ];
 
 async function setupConversation(dir,repo,call){
@@ -32,7 +32,8 @@ async function setupConversation(dir,repo,call){
   const config=path.join(dir,'setup-config.json'),approval=path.join(dir,'setup-approval.json');
   response=await call('setup_preview',{session,config});assert.equal(response.isError,false);const preview=response.structuredContent.output;
   fs.writeFileSync(approval,JSON.stringify({previewHash:preview.previewHash,approve:true}));response=await call('setup_apply',{session,approval});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
-  response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');return {session,proposal};
+  response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
+  response=await call('setup_health',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.readOnly,true);assert.equal(response.structuredContent.output.providerCalls,0);return {session,proposal};
 }
 
 function catalogFixtures(dir){
