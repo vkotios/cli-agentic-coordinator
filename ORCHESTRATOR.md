@@ -39,6 +39,9 @@ configured local OpenCode; inspect billing and tool-profile coverage in `docs/SE
 For measured coding/review cases, use `setup task-smoke`, approve its exact offer,
 then `task-start` and the supplied fixed `task-step` sequence. Capture with
 `task-qualify` only after independent checks, review cleanup and claim release.
+The measured child profiles support different Codex/Vibe/Copilot/Muse subscription
+harnesses. Copilot Auto records case results with its observed model, without a
+pinned exact-model capability proposal. Controller child profiles remain Codex/Vibe.
 `task-qualification` reuses fresh case evidence without model calls or policy
 activation. These cases do not qualify an entire workload class or context capacity.
 For a failed or abandoned trial, inspect active jobs and use exact-approved
