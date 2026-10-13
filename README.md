@@ -1,7 +1,7 @@
 # cli-agentic-coordinator
 
 One orchestrator agent in your chosen harness coordinating **worker coding CLIs** (opencode, vibe,
-codex, agy) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
+codex, agy, Copilot, Muse) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
 write the code. The `orch` tool is the only way work gets launched, and it keeps the record.
 
 What `orch` enforces:
@@ -70,9 +70,11 @@ escalates.
   | vibe (Mistral) | cloud implementer / reviewer | the model is selected through the worktree's `.vibe/config.toml` |
   | codex (OpenAI) | cloud implementer / reviewer | `codex exec`, model always pinned |
   | agy (Gemini) | cloud reviewer | print mode, plan mode |
+  | GitHub Copilot CLI | subscription implementer / reviewer | direct native executable; explicit model or Auto access route |
+  | Muse Code (Meta) | subscription implementer / reviewer | native versioned executable; saved device sign-in |
 
-  GitHub Copilot CLI is recognised by the guard but has no orch adapter yet. Per-CLI details and verified
-  quirks: `docs/CLI_GUIDE.md`.
+  Copilot and Muse currently support subscription workers and reviewers; controller support is separate.
+  Per-CLI details and verified quirks: `docs/CLI_GUIDE.md`.
 
 ## Install
 

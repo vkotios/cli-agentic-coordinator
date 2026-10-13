@@ -58,7 +58,7 @@ the user's answer. For example, the first answer can be:
 
 Replace the example models with exact selectors you can use. The controller must
 match the harness selected at start. Worker/reviewer choices use existing launch
-adapters: Codex, OpenCode, Vibe or agy. Merely selecting a model, billing mode or
+adapters: Codex, OpenCode, Vibe, agy, Copilot or Muse. Merely selecting a model, billing mode or
 `permission: "allowed"` does not authorize or launch it. Review independence,
 actual access and qualification still need verification before real work.
 
@@ -453,3 +453,9 @@ Source and incident evidence are retained with a reason and revisit condition.
 It never kills an agent, relaunches a model or removes the source fixture. Changed
 runtime configuration or uncertain cleanup requires inspection through existing
 status, cleanup and finish commands; closure cannot create a successful receipt.
+
+Copilot and Muse worker/reviewer choices currently require subscription billing.
+They are not controller profiles. Existing Codex/Vibe qualification commands do
+not silently qualify these routes: inspect native model/access and read-only
+review evidence separately. Copilot Auto may be requested explicitly for access;
+it cannot be declared an exact-model task-fit routing profile.

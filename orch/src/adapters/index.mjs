@@ -3,12 +3,14 @@ import vibe from './vibe.mjs';
 import codex from './codex.mjs';
 import agy from './agy.mjs';
 import fake from './fake.mjs';
+import copilot from './copilot.mjs';
+import muse from './muse.mjs';
 import { OrchError } from '../errors.mjs';
 
-export const ADAPTERS = { opencode, vibe, codex, agy, fake };
+export const ADAPTERS = { opencode, vibe, codex, agy, copilot, muse, fake };
 
 /** Adapters a real dispatch may name. `fake` exists only for the test suite. */
-export const PUBLIC_ADAPTERS = ['opencode', 'vibe', 'codex', 'agy'];
+export const PUBLIC_ADAPTERS = ['opencode', 'vibe', 'codex', 'agy', 'copilot', 'muse'];
 
 export function getAdapter(name) {
   const a = ADAPTERS[name];

@@ -45,6 +45,20 @@ async function seal(f) {
 }
 const collect = (f) => orch(['maintain', '--kind', 'metadata', '--apply', '--run', f.id, '--json'], f.c.env);
 
+test('P04b: native Copilot usage metadata can retire while compact model/result evidence survives',async t=>{
+  const f=fixture(t,'p04b-native-usage');f.rec.cli='copilot';f.rec.model_actual='example-served';fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(f.rec));
+  fs.writeFileSync(path.join(f.dir,'stdout.log'),JSON.stringify({type:'assistant.message',data:{content:'fixture answer'}})+'\n');
+  fs.writeFileSync(path.join(f.dir,'copilot-usage.json'),JSON.stringify({agentMetrics:{main:{modelMetrics:{'example-served':{requests:{count:1}}}}}}));
+  await transcripts(f);await seal(f);const r=await collect(f);assert.equal(r.code,0,r.stderr);assert.equal(json(r).runs[0].state,'collected');assert.equal(fs.existsSync(f.dir),false);
+  const result=await orch(['result',f.id,'--json'],f.c.env);assert.equal(result.code,0,result.stderr);assert.equal(json(result).final_message,'fixture answer');assert.equal(json(result).model_actual,'example-served');
+});
+
+test('P04b repairs: another harness cannot retire an unexpected Copilot usage file',async t=>{
+  const f=fixture(t,'p04b-foreign-usage');fs.writeFileSync(path.join(f.dir,'copilot-usage.json'),'owner file');await transcripts(f);
+  const r=await orch(['maintain','--kind','metadata','--enroll',f.id,'--by','owner','--reason','fixture','--json'],f.c.env);
+  assert.notEqual(r.code,0);assert.match(r.stderr,/unexpected original file/);assert.equal(fs.readFileSync(path.join(f.dir,'copilot-usage.json'),'utf8'),'owner file');
+});
+
 test('P03c: explicit metadata enrollment preserves the original record bytes', async (t) => {
   const f = fixture(t, 'p03c-seal');
   await transcripts(f);

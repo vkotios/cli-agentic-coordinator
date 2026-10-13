@@ -30,6 +30,7 @@ export function validateRoutingPolicy(raw){
   const profiles=raw.profiles.map(p=>{
     if(!PUBLIC_ADAPTERS.includes(p.cli)&&!(p.cli==='fake'&&process.env.ORCH_ALLOW_FAKE==='1'))fail('Profile needs an existing launch adapter');
     const adapter=getAdapter(p.cli);
+    if(p.cli==='copilot'&&canonicalId(p.model)==='auto')fail('Copilot Auto is an explicit access route, not an exact-model task-fit profile');
     if(!['worker','reviewer'].includes(p.role)||!['local','subscription'].includes(p.billing)||typeof p.enabled!=='boolean'||typeof p.model!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,119}$/.test(p.model)||typeof p.harnessVersion!=='string'||!p.harnessVersion||p.harnessVersion.length>64)fail('Invalid execution profile identity');
     if((p.billing==='local')!==(adapter.lane==='local')||(p.billing==='local'&&p.account!=='local'))fail('Profile billing must match its adapter and explicit account');
     if(!['available','unknown','unavailable'].includes(p.availability?.status)||(p.availability.status==='available'&&!date(p.availability.checkedAt)))fail('Availability requires status and a checked timestamp');
@@ -38,6 +39,7 @@ export function validateRoutingPolicy(raw){
     if(!s)fail('Profiles require task-specific capability declarations');
     const launch=p.launch??{agent:null,effort:null,flags:[]};
     if(!Array.isArray(launch.flags)||launch.flags.length>16||launch.flags.some(f=>typeof f!=='string'||!f||f.length>256)||[launch.agent,launch.effort].some(v=>v!=null&&(typeof v!=='string'||!v||v.length>64)))fail('Invalid declared launch selectors');
+    if(adapter.validateRequest)try{adapter.validateRequest({model:p.model,agent:launch.agent,effort:launch.effort,flags:launch.flags,role:p.role==='reviewer'?'review':'implement'});}catch(e){fail('Execution profile cannot launch: '+e.message);}
     return {id:identifier(p.id),cli:p.cli,harnessVersion:p.harnessVersion,model:p.model,role:p.role,account:identifier(p.account),billing:p.billing,enabled:p.enabled,availability:{status:p.availability.status,checkedAt:p.availability.checkedAt??null},qualification:{status:p.qualification.status,evidence:p.qualification.evidence??null},launch:{agent:launch.agent??null,effort:launch.effort??null,flags:[...launch.flags]},capability:identifier(p.capability),supports:{types:list(s.types,Object.keys(TYPES)),classes:list(s.classes,['C1','C2','C3','C4']),risks:list(s.risks,['standard','critical']),tools:list(s.tools),modalities:list(s.modalities,['text','image','audio','video','document']),contextTokens:amount(s.contextTokens)},costRank:amount(p.costRank,100),latencyRank:amount(p.latencyRank,100)};
   });
   if(new Set(profiles.map(p=>p.id)).size!==profiles.length||new Set(profiles.map(p=>JSON.stringify([p.role,p.cli,canonicalId(p.model)]))).size!==profiles.length)fail('Ambiguous profile/model/account selectors; an execution route must be unique');

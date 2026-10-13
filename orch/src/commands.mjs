@@ -115,11 +115,12 @@ async function runLocked(args, io, opts) {
   return withQuotaAdmission({args,cfg,cli:cliName,model,role,id}, async (quota, markAttempted) => {
   // Adapter pre-flight runs in THIS process, BEFORE any record exists, so a bad handoff
   // or a bad model config fails the caller's command loudly and leaves nothing half-born.
-  const pre = adapter.preLaunch
-    ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'] })
-    : { notes: [], extra: {} };
-
   const P = paths(cfg, id);
+  const pre = adapter.preLaunch
+    ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'],
+        agent: args.agent || null, flags: args.flag || [], maxTurns: args['max-turns'] != null ? Number(args['max-turns']) : null,
+        maxPrice: args['max-price'] != null ? String(args['max-price']) : null, effort: args.effort || null, runDir: P.dir, launchPromptPath: P.prompt })
+    : { notes: [], extra: {} };
   beginRunArtifacts(cfg, id);
   fs.mkdirSync(P.dir);
 
