@@ -217,10 +217,11 @@ preview and approval. A live disposable qualification run is a separate action.
 
 ## Explicit access qualification
 
-The first live smoke supports one selected Codex subscription worker and one
-selected Vibe subscription reviewer (either harness can take either role).
-Other harnesses and billing modes remain unqualified by this smoke. Choose
-different canonical models, then write a private request:
+The live access smoke supports selected Codex, Vibe, Copilot and Muse subscription
+routes, with different harnesses for worker and reviewer. Other harnesses and
+billing modes remain unqualified by this smoke. Choose different canonical models;
+the completed evidence also rejects equal actual worker/reviewer models. Write a
+private request:
 
 ```json
 {"worker":0,"reviewer":0,"maxAgeSeconds":3600}
@@ -455,7 +456,14 @@ runtime configuration or uncertain cleanup requires inspection through existing
 status, cleanup and finish commands; closure cannot create a successful receipt.
 
 Copilot and Muse worker/reviewer choices currently require subscription billing.
-They are not controller profiles. Existing Codex/Vibe qualification commands do
-not silently qualify these routes: inspect native model/access and read-only
-review evidence separately. Copilot Auto may be requested explicitly for access;
-it cannot be declared an exact-model task-fit routing profile.
+They are not controller profiles. The access smoke/probe/qualify flow supports
+either role for both harnesses and checks their native model evidence. Copilot
+Auto may be requested explicitly without a reasoning effort; its receipt reports
+automatic subscription access and the observed serving model. Health labels this
+`automatic-selection` and keeps exact-model access unqualified. Auto cannot be
+declared an exact-model task-fit routing profile. Muse records native runtime-model
+evidence, not independent backend verification. Requested-only, contradictory or
+unknown native model evidence cannot qualify either route. Reusable receipts bind
+any Copilot usage sidecar as well as original run, role and cleanup evidence.
+Controller and representative task trials retain their existing Codex/Vibe child
+profiles; this access extension does not expand those qualification paths.

@@ -15,11 +15,13 @@ grants launch permission or verifies subscriptions. Run `setup health` / `setup_
 with the complete session and private config after apply or reconfiguration. Resolve
 reported gaps; installed files, cached quota and declared qualification never prove
 current authentication or exact model access. See `docs/SETUP.md`.
-For selected Codex/Vibe subscription routes, `setup smoke` / `setup_smoke` returns
+For selected Codex/Vibe/Copilot/Muse subscription routes, `setup smoke` / `setup_smoke` returns
 an offer for a separate owned read-only fixture. Get approval for its exact hash
 and each role before `setup probe` / `setup_probe`. Inspect the launched runs;
 `setup qualify` / `setup_qualify` finalizes the independent review and captures
-only successful exact-model proof with clean containment and removed review resources.
+successful native model/access proof with clean containment and removed review resources.
+Copilot Auto receipts report automatic subscription access and the observed model;
+they do not qualify an exact-model routing profile or coding capability.
 Read `setup qualification` / `setup_qualification` and health to reuse fresh matching
 evidence. Failed, unknown, expired or changed evidence grants no qualification.
 Retain the reported source/evidence with its disposal reason; inspect uncertain

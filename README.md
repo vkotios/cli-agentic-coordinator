@@ -106,9 +106,11 @@ route qualification and complete routing/advice policies remain explicit follow-
 Use `setup health` to inspect current configuration, policy completeness and cached
 usage freshness by role without provider calls or configuration changes.
 Use the separate, explicitly approved `setup smoke` / `setup probe` flow to check
-selected Codex/Vibe subscription routes in an owned read-only fixture. A finalized
+selected Codex/Vibe/Copilot/Muse subscription routes in an owned read-only fixture. A finalized
 `setup qualify` receipt can be reused by health until its evidence changes or expires;
 it proves bounded model access and role operation, not coding quality or controller ability.
+Copilot Auto records automatic subscription access and its observed model; it does not
+qualify an exact-model task-fit route. Worker and reviewer must use different actual models.
 The separate controller trial can observe a complete native claim, delegation,
 monitoring, review and cleanup lifecycle in a bound model/tool profile. Its receipt
 keeps task capability and future launch permission separate.

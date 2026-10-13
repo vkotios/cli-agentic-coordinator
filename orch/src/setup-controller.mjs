@@ -51,6 +51,8 @@ const receiptFile=(session,id)=>path.join(directory(session),'receipts',id+'.jso
 export async function offerController(session,options,seams={}){
   exact(options,['configFile','worker','reviewer','maxAgeSeconds']);
   const proposal=setupProposal(session),controller=proposal.answers.routes.controller;
+  const childRoutes=[proposal.answers.routes.workers[options.worker],proposal.answers.routes.reviewers[options.reviewer]];
+  if(childRoutes.some(r=>!r||!['codex','vibe'].includes(r.harness)))fail('Controller child profiles remain limited to Codex/Vibe');
   const additional=['vibe','opencode'].includes(controller.harness),profile=additional?additionalControllerProfile(controller):null;
   if(!additional&&(!['claude','codex'].includes(controller.harness)||controller.billing!=='subscription'))fail('Selected native controller profile is unsupported');
   const localProvider=controller.harness==='opencode'?validateControllerLocalProvider(controller,input(options.configFile).controllerLocalProvider):null;
