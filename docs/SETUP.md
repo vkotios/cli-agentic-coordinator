@@ -399,3 +399,57 @@ only when that is the profile you will use; an absent selection remains pending,
 and a different tool profile is blocked. Qualification never writes this choice
 or treats a native Bash/command trial as proof for a different interactive or MCP
 tool configuration.
+
+## Measured coding and review cases
+
+`setup task-smoke` (MCP: `setup_task_smoke`) offers a separate owned representative
+case for the selected Codex/Vibe subscription pair. Its private request contains
+`worker`, `reviewer`, `caseId: "numeric-summary-v1"` and `maxAgeSeconds`. It makes
+no model calls. Inspect the exact routes, case contracts and bounds before approving
+the returned offer hash with `task-start`. Preparation preserves the owner repo and
+configuration. Other routes and cases remain unsupported by this first case.
+
+The fixed `task-step` order is claim, worker, monitor-worker, verify-worker,
+reviewer, monitor-reviewer, finalize, record, finish. Each request contains the
+exact `offerHash`, `approve: true` and `step`. Poll only pending monitor steps;
+uncertain mutations are retained and never automatically relaunched.
+
+The worker implements a specified pure numeric-summary function in `stats.mjs`.
+An independent bounded verifier checks results, input validation, fully and partly
+sparse arrays and absence of input mutation. It executes the captured, validated
+bytes and binds their fingerprint to the source before and after verification.
+Its syntax gate rejects imports, dynamic execution,
+process access and computed/prototype member access. It runs with a minimal
+environment, restricted filesystem/child/worker permissions, a small memory limit
+and a bounded local verification time. This is a controlled pure-function case,
+not a sandbox for arbitrary hostile programs. Agent runs retain the existing
+advisory monitoring and explicit cancellation rules.
+
+The independent reviewer must demonstrate both deliberately seeded finite-number
+filtering defects in the protected `review-target.mjs` with checked input/output
+witnesses. The seeded target remains unchanged as evidence. These findings are
+recorded as confirmed but outside the worker's `stats.mjs` change scope. The
+existing acceptance gate also requires the worker's independent verification and
+scope checks to pass. Review resources must be removed and the claim released.
+
+`task-qualify` captures native exact-model/role/keeper evidence, case outcomes,
+gate and closure records, and protected source/configuration fingerprints.
+`task-qualification` validates fresh matching receipts without model calls.
+Changed code, instructions, executables, configuration, evidence or expired
+receipts grant no observation. Health shows measured `taskCases` separately from
+owner-declared routing qualification. Measured task evidence also proves the observed
+subscription/model access, but does not replace a separate read-only role smoke.
+Passing one short case does not establish
+general C2 suitability, critical review ability or a model's context capacity.
+
+Returned routing proposals remain disabled and marked `trial`; inspect the case
+coverage before explicitly selecting a capability group and owner policy.
+Qualification does not write those settings or authorize future tasks.
+
+For failure or abandonment, `task-close` takes the exact offer hash and explicit
+approval. It inspects only the owned trial, refuses active/uncertain runs, finalizes
+reviews, records unqualified runs and uses the existing cleanup/finish machinery.
+Source and incident evidence are retained with a reason and revisit condition.
+It never kills an agent, relaunches a model or removes the source fixture. Changed
+runtime configuration or uncertain cleanup requires inspection through existing
+status, cleanup and finish commands; closure cannot create a successful receipt.

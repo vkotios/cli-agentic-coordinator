@@ -73,6 +73,7 @@ async function materialize(p){const t=trialPaths(p);if(fs.existsSync(t.dir))fail
 export function subscriptionEnvironment(source=process.env){const env={...source};for(const k of Object.keys(env))if(k.toUpperCase().startsWith('ORCH_')||k.toUpperCase().startsWith('VIBE_')&&k.toUpperCase()!=='VIBE_HOME'||k.toUpperCase().startsWith('OPENCODE_')||/(?:_API_KEY|_AUTH_TOKEN|_ACCESS_TOKEN|_BASE_URL|_API_BASE)$/i.test(k)||['NODE_OPTIONS','ANTHROPIC_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX'].includes(k.toUpperCase()))delete env[k];return env;}
 function child(exe,args,env,cwd){return new Promise((resolve,reject)=>execFile(exe,args,{cwd,env,windowsHide:true,timeout:30000,maxBuffer:65536},(e,stdout,stderr)=>{if(e)reject(new OrchError('Probe command did not complete cleanly; inspect the retained attempt','qualification-launch-uncertain'));else resolve({stdout,stderr});}));}
 export function smokeBinding(harness){return nativeBinding(harness);}
+export function checkSmokeConfiguration(session,configFile){configFor(session,configFile);}
 export function smokePlan(session,offerHash,seams={},reuse=false){return loadPlan(session,offerHash,seams,reuse);}
 export function smokeRouteProof(session,offerHash,role,seams={}){return runProof(loadPlan(session,offerHash,seams,true),role,[]);}
 export async function smokeEvidence(session,offerHash,seams={},reuse=false){const p=loadPlan(session,offerHash,seams,reuse),proof=await proofSet(p);return {version:1,offerHash,sessionHash:p.sessionHash,...proof,createdAt:new Date(seams.now??Date.now()).toISOString(),expiresAt:new Date(Math.min(...proof.routes.map(r=>Date.parse(r.endedAt)))+p.maxAgeSeconds*1000).toISOString(),cleanup:CLEANUP,scope:SCOPE};}
@@ -86,8 +87,8 @@ async function nativeLaunch(p){const t=trialPaths(p.plan),env=subscriptionEnviro
   // This private path is reached only after exact offer/role approve:true. The
   // existing model-permission flag authorizes this probe, never future runs.
   const common=['--model',p.route.model,'--state-root',p.stateRoot,'--no-window','--effort','medium','--json','--owner-approved-model'];
-  if(p.wp)common.push('--wp',p.wp,'--by',p.by,'--slice','controller-smoke','--allow','challenge.txt');
-  const args=p.role==='worker'?['run','--cli',p.route.harness,'--dir',p.workdir,'--handoff',p.prompt,...common]:['review','--run',p.workerId,'--reviewer',p.route.harness,'--ref','HEAD','--prompt',p.prompt,'--by','owner','--no-wait',...common];if(p.route.harness==='vibe')args.push('--max-turns','8');const out=await child(process.execPath,[BIN,...args],env,p.workdir);let result;try{result=JSON.parse(out.stdout);}catch{fail('Probe launch response is unknown; inspect existing jobs and never relaunch blindly');}if(result.admission&&result.admission!=='acquired')fail('Probe launch was not admitted; inspect the retained attempt');return {run_id:result.run_id??result.id,...(result.review_id?{review_id:result.review_id}:{})};
+  if(p.wp)common.push('--wp',p.wp,'--by',p.by,'--slice',p.slice??'controller-smoke','--allow',...(p.allow??['challenge.txt']));
+  const args=p.role==='worker'?['run','--cli',p.route.harness,'--dir',p.workdir,'--handoff',p.prompt,...common]:['review','--run',p.workerId,'--reviewer',p.route.harness,'--ref','HEAD','--prompt',p.prompt,'--by','owner','--no-wait',...common];if(p.route.harness==='vibe')args.push('--max-turns',String(p.maxTurns??8));const out=await child(process.execPath,[BIN,...args],env,p.workdir);let result;try{result=JSON.parse(out.stdout);}catch{fail('Probe launch response is unknown; inspect existing jobs and never relaunch blindly');}if(result.admission&&result.admission!=='acquired')fail('Probe launch was not admitted; inspect the retained attempt');return {run_id:result.run_id??result.id,...(result.review_id?{review_id:result.review_id}:{})};
 }
 function launchFile(p,role){return path.join(p.trialRoot,'attempts',role+'-launched.json');}
 function refusalFile(p,role){return path.join(p.trialRoot,'attempts',role+'-outcome.json');}
@@ -104,7 +105,7 @@ function reviewRecord(p){
   if(review.id!==launch.review_id||review.run_id!==launch.run_id||review.implementer_run!==input(launchFile(p,'worker')).run_id||!samePath(review.source_repo??'',p.workdir)||!samePath(review.review_root??'',p.reviewRoot)||!samePath(review.worktree??'',path.join(p.reviewRoot,launch.review_id)))fail('Review is not bound to the owned smoke');
   return {file,review};
 }
-function otherProfileWarning(w,route){
+export function otherProfileWarning(w,route){
   if(route.harness!=='vibe'||typeof w!=='string'||!w.startsWith('vibe.log fallback warning (this-run):'))return false;
   const match=FALLBACK_WARNING_RE.exec(w);
   return !!match&&!['',aliasFor(route.model).toLowerCase(),canonicalId(route.model)].includes(match[1].toLowerCase());

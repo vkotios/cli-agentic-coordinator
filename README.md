@@ -83,7 +83,9 @@ npm ci
 node bin\orch.mjs --help
 ```
 
-`orch` has no runtime dependencies; `npm ci` installs only the type checker and the MCP client used by
+Core `orch` commands have no runtime dependencies. The optional measured task-case verifier uses
+the TypeScript parser installed by `npm ci`; keep that installation for task qualification.
+`npm ci` also installs the MCP client used by
 the tests. Optionally make `orch` a command, for example in your PowerShell profile:
 
 ```powershell

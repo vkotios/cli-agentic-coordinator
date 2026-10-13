@@ -83,6 +83,7 @@ export async function setupHealth(session,options,seams={}){
   let access={routes:[],status:'unavailable'};
   try{access=await qualificationStatus(session,{configFile:file},seams);}catch{ /* Invalid evidence grants no readiness. */ }
   let controllers={routes:[],childRoutes:[]};try{controllers=await controllerQualification(session,{configFile:file},seams);access.routes.push(...controllers.childRoutes);}catch{ /* Native controller evidence fails closed. */ }
+  let tasks={routes:[]};try{const {taskQualification}=await import('./setup-task.mjs');tasks=await taskQualification(session,{configFile:file},seams);access.routes.push(...tasks.routes.map(r=>({...r,status:'access-verified',verifiedAt:r.endedAt})));}catch{ /* Measured cases never activate policies or broaden role qualification. */ }
   const roles=['controller','worker','reviewer'].flatMap(role=>(role==='controller'?[a.routes.controller]:a.routes[role==='worker'?'workers':'reviewers']).map(r=>{
     const missing=[],sameModel=models.filter(m=>canonicalId(m.model)===canonicalId(r.model)),own=sameModel.filter(m=>m.cli===r.harness),profiles=routing.doc?.profiles.filter(x=>x.cli===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.role===role&&x.billing===r.billing)??[];
     if(!installed[r.harness])missing.push('cli-not-installed');if(own.some(m=>m.enabled===false))missing.push('owner-route-disabled');if(r.permission==='ask'||sameModel.some(m=>m.requires_permission===true))missing.push('owner-model-permission-required');
@@ -92,6 +93,7 @@ export async function setupHealth(session,options,seams={}){
     if(rosterEvidence==='historical')missing.push('roster-not-rechecked');
     if(profiles.length>1)missing.push('multiple-capability-profiles');if(profiles.length===1&&!profiles[0].enabled)missing.push('routing-profile-disabled');
     const profile=profiles.length===1?profiles[0]:null,age=profile?.availability.checkedAt?now-Date.parse(profile.availability.checkedAt):null;
+    const taskCases=tasks.routes.filter(x=>x.role===role&&x.harness===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.billing===r.billing).map(x=>({caseId:x.caseId,status:x.status,evidenceRef:x.evidenceRef,verifiedAt:x.endedAt,expiresAt:x.expiresAt,scope:x.scope,contextCapacityQualified:false}));
     const availability=profile?.availability.status==='available'&&age!==null&&age>=0&&age<=routing.doc.availabilityMaxAgeMinutes*60000?'fresh':profile?.availability.status==='unavailable'?'unavailable':profile?.availability.status==='available'?'stale':'unknown';
     if(profile&&availability!=='fresh')missing.push('routing-availability-'+availability);
     if(!profile&&role!=='controller')missing.push('routing-profile-missing');
@@ -102,14 +104,14 @@ export async function setupHealth(session,options,seams={}){
     if(controller&&config.controllerProfile!==undefined&&!equal(config.controllerProfile,controller.profile))missing.push('controller-tool-profile-mismatch');
     const blockers=missing.filter(x=>!['routing-profile-missing','multiple-capability-profiles','roster-not-rechecked'].includes(x));
     const observations=access.routes.filter(x=>x.harness===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.billing===r.billing&&x.status==='access-verified');
-    const smoke=controller??observations.find(x=>x.role===role),observed=smoke??observations[0];
+    const smoke=controller??observations.find(x=>x.role===role&&!x.evidenceRef?.startsWith('orch-task:')),observed=smoke??observations[0];
     if(controller&&config.controllerProfile===undefined)missing.push('controller-tool-profile-not-selected');
     if(!observed)missing.push('authentication-not-checked','model-access-not-checked');
     if(!smoke)missing.push(role==='controller'?'controller-operation-not-qualified':'role-smoke-needed');
     if(role==='controller'?!controller:profile?.qualification.status!=='qualified')missing.push('role-qualification-needed');
     if(!configuration.selected)missing.push('config-not-selected');
     if(checks.find(c=>c.id==='adoption')?.status!=='ok')missing.push('adoption-not-ready');
-    return {role,harness:r.harness,model:r.model,billing:r.billing,status:blockers.length?'blocked':missing.length?'installed-but-unqualified':'runtime-ready',authentication:observed?'subscription-observed':'not-checked',modelAccess:observed?'verified':'not-checked',roleSmoke:smoke?{status:'verified',offerHash:smoke.offerHash,expiresAt:smoke.expiresAt,otherProfileWarnings:smoke.otherProfileWarnings,scope:smoke.scope,...(controller?{profile:controller.profile}:{})}:{status:'unqualified'},rosterEvidence,qualification:{status:controller?'controller-observed':profile?.qualification.status??'unqualified',source:controller?'native-controller-receipt':profile?'owner-routing-policy':'not-checked',evidencePresent:!!controller||!!profile?.qualification.evidence},availability,missing,launchAllowed:false,nextStep:'Resolve reported requirements; a read-only smoke does not qualify coding capability or authorize a task launch'};
+    return {role,harness:r.harness,model:r.model,billing:r.billing,status:blockers.length?'blocked':missing.length?'installed-but-unqualified':'runtime-ready',authentication:observed?'subscription-observed':'not-checked',modelAccess:observed?'verified':'not-checked',roleSmoke:smoke?{status:'verified',offerHash:smoke.offerHash,expiresAt:smoke.expiresAt,otherProfileWarnings:smoke.otherProfileWarnings,scope:smoke.scope,...(controller?{profile:controller.profile}:{})}:{status:'unqualified'},rosterEvidence,qualification:{status:controller?'controller-observed':profile?.qualification.status??'unqualified',source:controller?'native-controller-receipt':profile?'owner-routing-policy':'not-checked',evidencePresent:!!controller||!!profile?.qualification.evidence},taskCases,availability,missing,launchAllowed:false,nextStep:'Resolve reported requirements; a read-only smoke does not qualify coding capability or authorize a task launch'};
   }));
   return {version:1,mode:'setup-health',checkedAt:new Date(now).toISOString(),repo,configuration,checks,roles,routing:{status:routing.status,profiles:routing.doc?.profiles.length??0},usage:{status:usage.status,pools:telemetry.pools.map(x=>({id:x.id,freshness:x.freshness,error:!!x.error}))},quota:{status:quota.status},advice:{status:advice.status,providerAdmission:'not-checked'},readOnly:true,providerCalls:0,credentialReads:0,activation:false};
 }
