@@ -11,7 +11,8 @@ import {configFilePath} from './config.mjs';
 import {whereAll} from './exe.mjs';
 import {resolveOpencodeExe} from './adapters/opencode.mjs';
 import {resolveCopilotExe} from './adapters/copilot.mjs';
-import {resolveMuseExe} from './adapters/muse.mjs';
+import {resolveMuseExe,museAuthPath,validateMuseSubscription} from './adapters/muse.mjs';
+import {readBounded} from './adapters/subscription-cli.mjs';
 import {getAdapter} from './adapters/index.mjs';
 import {gitOk,samePath,isInside} from './git.mjs';
 import {canonicalId,ROSTER_FILE} from './models.mjs';
@@ -75,7 +76,7 @@ async function materialize(p){const t=trialPaths(p);if(fs.existsSync(t.dir))fail
   fs.writeFileSync(t.config,encode({stateRoot:p.stateRoot,reviewRoot:p.reviewRoot,roster:p.roster.file,exe:Object.fromEntries(p.bindings.map(b=>[b.harness,b.exe]))}),{flag:'wx'});for(const role of ['worker','reviewer'])fs.writeFileSync(t[role],`Read-only access qualification. Read challenge.txt. Make no edits, commits or configuration changes. Return one line: ORCH_QUALIFICATION:<the value from challenge.txt>:${role}. This tests model access and this role's read-only operation, not coding quality.\n`,{flag:'wx'});
   const baseline=(await gitOk(['rev-parse','HEAD'],{cwd:p.workdir})).trim(),source=Object.fromEntries(['challenge.txt','.gitignore','.gitattributes',...(vibe.length?['.vibe/config.toml']:[])].map(f=>[f,digest(path.join(p.workdir,f))]));exclusive(path.join(t.dir,'fixture.json'),{baseline,source,challengeHash:digest(path.join(p.workdir,'challenge.txt')),configHash:digest(t.config),prompts:{worker:digest(t.worker),reviewer:digest(t.reviewer)}});
 }
-export function subscriptionEnvironment(source=process.env){const env={...source};for(const k of Object.keys(env))if(k.toUpperCase().startsWith('ORCH_')||k.toUpperCase().startsWith('VIBE_')&&k.toUpperCase()!=='VIBE_HOME'||k.toUpperCase().startsWith('OPENCODE_')||k.toUpperCase().startsWith('COPILOT_PROVIDER_')||['GH_TOKEN','GITHUB_TOKEN','COPILOT_GITHUB_TOKEN','COPILOT_MODEL','COPILOT_OFFLINE','COPILOT_ASSISTED_APPROVAL'].includes(k.toUpperCase())||/(?:_API_KEY|_AUTH_TOKEN|_ACCESS_TOKEN|_BASE_URL|_API_BASE)$/i.test(k)||['NODE_OPTIONS','ANTHROPIC_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX'].includes(k.toUpperCase()))delete env[k];return env;}
+export function subscriptionEnvironment(source=process.env){const env={...source};for(const k of Object.keys(env))if(k.toUpperCase().startsWith('ORCH_')||k.toUpperCase().startsWith('VIBE_')&&k.toUpperCase()!=='VIBE_HOME'||k.toUpperCase().startsWith('OPENCODE_')||k.toUpperCase().startsWith('COPILOT_PROVIDER_')||['GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','GH_HOST','COPILOT_GH_HOST','GH_CONFIG_DIR','GITHUB_SERVER_URL','GITHUB_API_URL','COPILOT_GITHUB_TOKEN','COPILOT_MODEL','COPILOT_OFFLINE','COPILOT_ASSISTED_APPROVAL'].includes(k.toUpperCase())||/(?:_API_KEY|_AUTH_TOKEN|_ACCESS_TOKEN|_BASE_URL|_API_BASE)$/i.test(k)||['NODE_OPTIONS','ANTHROPIC_BASE_URL','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX'].includes(k.toUpperCase()))delete env[k];return env;}
 function child(exe,args,env,cwd){return new Promise((resolve,reject)=>execFile(exe,args,{cwd,env,windowsHide:true,timeout:30000,maxBuffer:65536},(e,stdout,stderr)=>{if(e)reject(new OrchError('Probe command did not complete cleanly; inspect the retained attempt','qualification-launch-uncertain'));else resolve({stdout,stderr});}));}
 export function smokeBinding(harness){return nativeBinding(harness);}
 export function checkSmokeConfiguration(session,configFile){configFor(session,configFile);}
@@ -86,7 +87,7 @@ export async function launchSmoke(p){return nativeLaunch(p);}
 export async function prepareSmokeFixture(session,request,seams={}){exact(request,['offerHash','approve']);if(request.approve!==true)fail('Approve the exact fixture offer explicitly');const p=loadPlan(session,request.offerHash,seams);return withOperationLock({stateRoot:path.resolve(session)},'setup-qualification',async()=>{if((seams.now??Date.now())-Date.parse(p.createdAt)>p.maxAgeSeconds*1000)fail('Qualification offer expired');if(!fs.existsSync(p.trialRoot))await materialize(p);await cleanSource(p);return p;});}
 async function nativeLaunch(p){const t=trialPaths(p.plan),env=subscriptionEnvironment();env.ORCH_CONFIG=t.config;
   try{
-    if(p.route.harness==='codex'){const auth=await child(p.binding.exe,['login','status'],env,p.workdir);if(!/(?:^|\r?\n)Logged in using ChatGPT(?:\r?\n|$)/.test(auth.stderr+auth.stdout))fail('Codex subscription login not verified');}
+    if(p.route.harness==='muse')validateMuseSubscription(JSON.parse(readBounded(museAuthPath(),1048576).replace(/^\uFEFF/,'')));if(p.route.harness==='codex'){const auth=await child(p.binding.exe,['login','status'],env,p.workdir);if(!/(?:^|\r?\n)Logged in using ChatGPT(?:\r?\n|$)/.test(auth.stderr+auth.stdout))fail('Codex subscription login not verified');}
     if(p.route.harness==='vibe'){const dot=path.join(process.env.VIBE_HOME||path.join(process.env.USERPROFILE||os.homedir(),'.vibe'),'.env');if(fs.existsSync(dot)&&/^\s*MISTRAL_API_KEY\s*=\s*[^\r\n]+/im.test(bytes(dot,65536).toString('utf8')))fail('Vibe API dotenv material configured');}
   }catch{throw new OrchError('Subscription authentication was refused before any model launch','qualification-auth-refused');}
   // This private path is reached only after exact offer/role approve:true. The

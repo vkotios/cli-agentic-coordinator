@@ -55,15 +55,15 @@ test('P04c: requested-only or forged native model evidence cannot qualify Auto',
   for(const extra of [{model_actual:null},{model_actual_source:'requested-only'},{model_actual:'forged-model'}]){const c=await fixture(t),o=await offer(c);await launch(c,o,'worker',extra);await assert.rejects(launch(c,o,'reviewer'));}
 });
 test('P04c: mixed-case Copilot billing and authentication overrides are removed',()=>{
-  const env=api.subscriptionEnvironment({Gh_Token:'private',GitHub_Token:'private',Copilot_GitHub_Token:'private',Copilot_Provider_Api_Key:'private',COPILOT_PROVIDER_TYPE:'openai',META_API_KEY:'private',MUSE_AUTH_PATH:'native-signin',PATH:'native-path'});
-  for(const k of ['Gh_Token','GitHub_Token','Copilot_GitHub_Token','Copilot_Provider_Api_Key','COPILOT_PROVIDER_TYPE','META_API_KEY'])assert.equal(env[k],undefined);assert.equal(env.MUSE_AUTH_PATH,'native-signin');
+  const env=api.subscriptionEnvironment({Gh_Token:'private',GitHub_Token:'private',Copilot_GitHub_Token:'private',Copilot_Provider_Api_Key:'private',COPILOT_PROVIDER_TYPE:'openai',Gh_Enterprise_Token:'private',GitHub_Enterprise_Token:'private',GH_HOST:'untrusted.example',Copilot_Gh_Host:'untrusted.example',GH_CONFIG_DIR:'redirected',GITHUB_SERVER_URL:'https://untrusted.example',GITHUB_API_URL:'https://untrusted.example',META_API_KEY:'private',MUSE_AUTH_PATH:'native-signin',PATH:'native-path'});
+  for(const k of ['Gh_Token','GitHub_Token','Copilot_GitHub_Token','Copilot_Provider_Api_Key','COPILOT_PROVIDER_TYPE','Gh_Enterprise_Token','GitHub_Enterprise_Token','GH_HOST','Copilot_Gh_Host','GH_CONFIG_DIR','GITHUB_SERVER_URL','GITHUB_API_URL','META_API_KEY'])assert.equal(env[k],undefined);assert.equal(env.MUSE_AUTH_PATH,'native-signin');
 });
 test('P04c: Auto native launch omits unsupported effort and turn-limit flags',()=>{
   assert.equal(typeof api.smokeLaunchArguments,'function');const p={route:{harness:'copilot',model:'Auto'},role:'worker',stateRoot:'state',workdir:'source',prompt:'prompt'};
   const args=api.smokeLaunchArguments(p);assert.ok(!args.includes('--effort'));assert.ok(!args.includes('--max-turns'));assert.ok(args.includes('--owner-approved-model'));
 });
 test('P04c: health reports Auto subscription access without exact model or task readiness',async t=>{
-  const c=await fixture(t),o=await offer(c);await complete(c,o);const health=await setupHealth(c.session,{configFile:c.config},{binding,discover:()=>({codex:true,copilot:true,muse:true})});const auto=health.roles.find(r=>r.harness==='copilot');assert.equal(auto.authentication,'subscription-observed');assert.equal(auto.modelAccess,'automatic-selection');assert.ok(auto.missing.includes('exact-model-access-not-qualified'));assert.notEqual(auto.status,'runtime-ready');assert.equal(auto.launchAllowed,false);
+  const c=await fixture(t),o=await offer(c);await complete(c,o);const health=await setupHealth(c.session,{configFile:c.config},{binding,discover:()=>({codex:true,copilot:true,muse:true})});const auto=health.roles.find(r=>r.harness==='copilot');assert.equal(auto.authentication,'subscription-observed');assert.equal(auto.modelAccess,'automatic-selection');assert.ok(auto.missing.includes('exact-model-access-not-qualified'));assert.notEqual(auto.status,'runtime-ready');assert.equal(auto.launchAllowed,false);assert.equal(auto.roleSmoke.modelEvidenceSource,'copilot-native-call-usage');
 });
 
 test('P04c: exact Copilot/Muse evidence remains invalid after record or executable drift',async t=>{
@@ -72,8 +72,8 @@ test('P04c: exact Copilot/Muse evidence remains invalid after record or executab
   fs.appendFileSync(path.join(o.stateRoot,'runs','worker-proof','run.json'),' ');const tampered=await api.qualificationStatus(c.session,{configFile:c.config},{binding});assert.equal(tampered.routes.length,0);
 });
 test('P04c: an uncertain Auto launch and incomplete cleanup preserve evidence without retries',async t=>{
-  const c=await fixture(t),o=await offer(c);await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding,launch:()=>{throw Error('private-unknown');}}));
-  await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding,launch:()=>assert.fail('unsafe retry')}));assert.equal((await api.qualificationStatus(c.session,{configFile:c.config},{binding})).trials[0].attempts[0].state,'uncertain');
+  const c=await fixture(t),o=await offer(c);let calls=0;await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding,launch:()=>{calls++;throw Error('private-unknown');}}));
+  await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding,launch:()=>{calls++;throw Error('unsafe retry');}}));assert.equal((await api.qualificationStatus(c.session,{configFile:c.config},{binding})).trials[0].attempts[0].state,'uncertain');assert.equal(calls,1);
   const other=await fixture(t),offer2=await offer(other);await launch(other,offer2,'worker');await launch(other,offer2,'reviewer');const file=resourceFile({stateRoot:offer2.stateRoot},'review-proof'),record=JSON.parse(fs.readFileSync(file,'utf8'));write(file,{...record,state:'cleanup-pending'});
   await assert.rejects(api.qualifySmoke(other.session,{offerHash:offer2.offerHash},{binding,finish:async()=>{}}));assert.ok(fs.existsSync(path.join(offer2.stateRoot,'runs','worker-proof','run.json')));
 });
@@ -87,4 +87,13 @@ test('P04c: a Copilot usage sidecar is sealed and changed native bytes invalidat
   const c=await fixture(t),o=await offer(c);await launch(c,o,'worker');const dir=path.join(o.stateRoot,'runs','worker-proof'),stdout=path.join(dir,'stdout.log');fs.writeFileSync(stdout,fs.readFileSync(stdout,'utf8').split('\n').filter(line=>!line.includes('assistant.usage')).join('\n'));
   const usage=path.join(dir,'copilot-usage.json');write(usage,{agentMetrics:{main:{modelMetrics:{'example-served':{requests:{count:1}}}}}});await launch(c,o,'reviewer');const receipt=await api.qualifySmoke(c.session,{offerHash:o.offerHash},{binding});assert.ok(receipt.proofs.some(p=>p.file===usage));
   write(usage,{agentMetrics:{main:{modelMetrics:{'example-served':{requests:{count:2}}}}}});assert.equal((await api.qualificationStatus(c.session,{configFile:c.config},{binding})).routes.length,0);
+});
+
+test('P04c: malformed task requests fail as controlled contract refusals before route access',async t=>{
+  const c=await fixture(t),task=await import('../src/setup-task.mjs');for(const options of [undefined,null,{},[]])await assert.rejects(task.offerTask(c.session,options,{binding}),e=>e instanceof Error&&'code' in e&&e.code==='task-qualification-refused');
+});
+
+test('P04c: missing Muse authentication is a retained refusal before any model launch',async t=>{
+  const c=await fixture(t,true),o=await offer(c),prior=process.env.MUSE_AUTH_PATH;process.env.MUSE_AUTH_PATH=path.join(c.base,'missing-auth.json');
+  try{await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding}),e=>e instanceof Error&&'code' in e&&e.code==='qualification-auth-refused');const status=await api.qualificationStatus(c.session,{configFile:c.config},{binding});assert.equal(status.trials[0].attempts[0].state,'refused');assert.equal(status.routes.length,0);}finally{if(prior===undefined)delete process.env.MUSE_AUTH_PATH;else process.env.MUSE_AUTH_PATH=prior;}
 });
