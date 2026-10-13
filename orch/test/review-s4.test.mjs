@@ -25,7 +25,8 @@ async function setupImpl(c, { model = 'localai/qwen3-coder-30b', extraFiles = {}
   makeRepo(repo, { 'src/a.js': '1\n', 'secret/answer.md': 'the answer\n', 'secret/deep/x.md': 'x\n', 'README.md': 'r\n', ...extraFiles });
   assert.equal((await orch(['claim', 'WP-R', '--by', by], c.env)).code, 0);
   const w = json(await orch(['worktree', 'create', '--repo', repo, '--wp', 'WP-R', '--slice', 's1', '--by', by, '--json'], c.env));
-  const r = await orch(['run', '--cli', 'fake', '--model', model, '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-R', '--slice', 's1', '--by', by, '--allow', 'src/a.js', '--no-window'], c.env);
+  // Give real OS identity capture time; never manufacture a resolved helper audit.
+  const r = await orch(['run', '--cli', 'fake', '--model', model, '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-R', '--slice', 's1', '--by', by, '--allow', 'src/a.js', '--no-window', '--flag', '--hold', '--flag', '5'], c.env);
   assert.equal(r.code, 0, r.stderr);
   const runId = idFrom(r.stdout);
   await waitForStatus(c.stateRoot, runId, ['completed', 'failed'], { timeoutMs: 60000 });
@@ -35,7 +36,7 @@ async function setupImpl(c, { model = 'localai/qwen3-coder-30b', extraFiles = {}
 }
 
 function reviewArgs(s, c, extra = []) {
-  return ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--prompt', c.handoffPath, '--by', s.by, '--review-root', s.reviewRoot, '--no-window', '--json', ...extra];
+  return ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--prompt', c.handoffPath, '--by', s.by, '--review-root', s.reviewRoot, '--no-window', '--json', '--flag', '--hold', '--flag', '5', ...extra];
 }
 
 async function cleanupFinishedCase(c) {

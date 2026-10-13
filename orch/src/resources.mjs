@@ -11,6 +11,7 @@ import { paths, readRun, TERMINAL, keeperFacts } from './store.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { sha256File } from './scope.mjs';
 import { listRunEvidence, readArchived } from './archive.mjs';
+import { reconcileHelpers } from './helper-reconciliation.mjs';
 
 const directory = (cfg) => path.join(cfg.stateRoot, 'resources');
 export const resourceFile = (cfg, id) => {
@@ -216,6 +217,8 @@ export async function dependentRunBlock(cfg, r) {
     }
     if (!depends) continue;
     if (!TERMINAL.has(run.status)) return `dependent run ${run.id} is active or starting`;
+    const helpers = await reconcileHelpers(run, Date.now() + 4000);
+    if (helpers.reason) return `run ${run.id} ${helpers.reason}`;
     let archived;
     try { archived = readArchived(cfg, 'run', run.id); } catch { return `run ${run.id} compact evidence unreadable`; }
     if (archived) {

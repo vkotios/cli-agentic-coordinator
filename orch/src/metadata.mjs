@@ -11,7 +11,8 @@ import { wpKey, readClaim } from './claims.mjs';
 import { listResources, readClosure, recordsIn, withOperationLock } from './resources.mjs';
 import { readLedger, ledgerPath } from './ledger.mjs';
 import { computeGate } from './gate.mjs';
-import { dependencies, quiescent, timestamp, transcriptEvidence, retentionFile } from './retention.mjs';
+import { dependencies, quiescent, inspectQuiescence, timestamp, transcriptEvidence, retentionFile } from './retention.mjs';
+import { reconcileHelpers } from './helper-reconciliation.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId } from './archive.mjs';
 
@@ -78,7 +79,9 @@ async function liveCheck(cfg, kind, record, deadline, archived = null) {
     if (!TERMINAL.has(record.status)) return 'run not terminal';
     if (record.helper_audit !== undefined && !['observed','not-applicable'].includes(record.helper_audit?.state)) return 'helper ancestry unverified';
     if (!archived) return quiescent(cfg, record, deadline);
-    if (!archived.quiescent || (record.escaped_helpers || []).some((h) => h.verdict !== 'gone' && h.status !== 'gone')) return 'historical process evidence uncertain';
+    if (!archived.quiescent) return 'historical process evidence uncertain';
+    const helpers = await reconcileHelpers(record, deadline);
+    if (helpers.reason) return helpers.reason;
     const checks = archived.processes || [];
     if (checks.length) {
       const left = deadline - Date.now(); if (left <= 0) return 'maintenance time budget reached';
@@ -136,9 +139,9 @@ async function completeSnapshot(cfg, kind, id, record, deadline) {
   const monitor = readDocument(P.monitorAlive) || {};
   const processes = [];
   for (const [pid, at] of [[spawned.monitor_pid, spawned.monitor_created_at], [monitor.pid, monitor.created_at]]) if (pid) processes.push({ pid, created_at: at });
-  const reason = await quiescent(cfg, record, deadline);
-  if (reason) throw new OrchError(reason, 'retirement-protected');
-  return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), facts, spawned, processes, quiescent: true, transcripts: { ...transcripts, snapshot: { ...transcripts.snapshot, run: compactRecord } }, scope: readDocument(path.join(P.dir, 'scope.json')), package: record.wp ? readClosure(cfg, record.wp) : null };
+  const current = await inspectQuiescence(cfg, record, deadline);
+  if (current.reason) throw new OrchError(current.reason, 'retirement-protected');
+  return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), facts, spawned, processes, quiescent: true, helper_reconciliation: current.helper_reconciliation, transcripts: { ...transcripts, snapshot: { ...transcripts.snapshot, run: compactRecord } }, scope: readDocument(path.join(P.dir, 'scope.json')), package: record.wp ? readClosure(cfg, record.wp) : null };
 }
 async function prepareSeal(cfg, kind, id, record, authorization, deadline) {
   const reason = await liveCheck(cfg, kind, record, deadline);
