@@ -25,14 +25,16 @@ async function setupImpl(c) {
   makeRepo(repo, { 'src/a.js': '1\n', 'secret/answer.md': 'the answer\n', 'README.md': 'r\n' });
   assert.equal((await orch(['claim', 'WP-F', '--by', 'codex'], c.env)).code, 0);
   const w = json(await orch(['worktree', 'create', '--repo', repo, '--wp', 'WP-F', '--slice', 's1', '--by', 'codex', '--json'], c.env));
-  const r = await orch(['run', '--cli', 'fake', '--model', 'localai/qwen3-coder-30b', '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-F', '--slice', 's1', '--by', 'codex', '--allow', 'src/a.js', '--no-window'], c.env);
+  // Cleanup now requires a genuine observed identity; a sub-CIM-latency worker
+  // deliberately leaves unknown ancestry. Keep this fixture alive for capture.
+  const r = await orch(['run', '--cli', 'fake', '--model', 'localai/qwen3-coder-30b', '--dir', w.path, '--handoff', c.handoffPath, '--wp', 'WP-F', '--slice', 's1', '--by', 'codex', '--allow', 'src/a.js', '--no-window', '--flag', '--hold', '--flag', '5'], c.env);
   const runId = idFrom(r.stdout);
   await waitForStatus(c.stateRoot, runId, ['completed', 'failed'], { timeoutMs: 60000 });
   fs.writeFileSync(path.join(w.path, 'src/a.js'), '2\n');
   const commit = commitAll(w.path, 'implementation');
   return { repo, wt: w, commit, runId, reviewRoot: path.join(c.base, 'reviews') };
 }
-const reviewArgs = (s, c, extra = []) => ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--model', 'gemini-3.8-flash-high', '--prompt', c.handoffPath, '--by', 'codex', '--review-root', s.reviewRoot, '--no-window', '--json', ...extra];
+const reviewArgs = (s, c, extra = []) => ['review', '--run', s.runId, '--ref', s.commit, '--reviewer', 'fake', '--model', 'gemini-3.8-flash-high', '--prompt', c.handoffPath, '--by', 'codex', '--review-root', s.reviewRoot, '--no-window', '--json', '--flag', '--hold', '--flag', '5', ...extra];
 const registered = (repo, wt) => g(repo, 'worktree', 'list', '--porcelain').toLowerCase().includes(path.basename(wt).toLowerCase());
 
 /* ------------------------------------------------------------------ c1 ---- */

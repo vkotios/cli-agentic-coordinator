@@ -16,6 +16,7 @@ import { writeJsonAtomic, nowIso, readTailLines } from './util.mjs';
 import { publishExclusive } from './exclusive.mjs';
 import { readArchived, readArchivedAsync, assertLive, listReviewEvidence, readEvidence } from './archive.mjs';
 import { maintainMetadata, enrollMetadata } from './metadata.mjs';
+import { reconcileHelpers } from './helper-reconciliation.mjs';
 
 const FILES = { stdout: 'stdout.log', stderr: 'stderr.log', prompt: 'prompt.txt' };
 const DAY = 86400000;
@@ -202,31 +203,33 @@ function pin(cfg, id) {
   if (doc && (doc.version !== 1 || doc.id !== id || typeof doc.active !== 'boolean' || !doc.reason || !doc.by)) throw new OrchError('invalid investigation pin', 'retention-unreadable');
   return doc && doc.active;
 }
-export async function quiescent(cfg, rec, deadline) {
-  if (rec.helper_audit !== undefined && !['observed','not-applicable'].includes(rec.helper_audit?.state)) return 'helper ancestry unverified';
+export async function inspectQuiescence(cfg, rec, deadline) {
+  const helper_reconciliation = await reconcileHelpers(rec, deadline);
+  const result = reason => ({ reason, helper_reconciliation });
+  if (helper_reconciliation.reason) return result(helper_reconciliation.reason);
   const P = paths(cfg, rec.id);
   const f = keeperFacts(readTailLines(safe(P.keeper), 32768));
-  if (!f.blocked && (!f.workerExit || f.streamsClosed !== 'streams-closed')) return 'worker exit or closed streams not confirmed';
-  if (f.writeFailures) return 'keeper write failures require investigation';
+  if (!f.blocked && (!f.workerExit || f.streamsClosed !== 'streams-closed')) return result('worker exit or closed streams not confirmed');
+  if (f.writeFailures) return result('keeper write failures require investigation');
   const s = readStrict(P.spawned) || {};
   const m = readStrict(P.monitorAlive);
   const checks = [];
   if (!f.keeperExit) {
-    if (!s.keeper_pid || !s.keeper_created_at) return 'keeper liveness unknown';
+    if (!s.keeper_pid || !s.keeper_created_at) return result('keeper liveness unknown');
     checks.push([s.keeper_pid, s.keeper_created_at]);
   }
   if (s.monitor_pid) checks.push([s.monitor_pid, s.monitor_created_at]);
   if (m && m.pid) checks.push([m.pid, m.created_at]);
-  for (const h of rec.escaped_helpers || []) {
-    if (h.verdict !== 'gone' && h.status !== 'gone') return 'escaped helper needs investigation';
-  }
   if (checks.length) {
     const left = deadline - Date.now();
-    if (left <= 0) return 'maintenance time budget reached';
+    if (left <= 0) return result('maintenance time budget reached');
     const table = await readProcessTable({ deadlineMs: Math.min(1000, left), pids: checks.map(([pid]) => pid) });
-    if (checks.some(([pid, at]) => verifyIdentity(pid, at, table).verdict !== 'gone')) return 'monitor or keeper process live or uncertain';
+    if (checks.some(([pid, at]) => verifyIdentity(pid, at, table).verdict !== 'gone')) return result('monitor or keeper process live or uncertain');
   }
-  return null;
+  return result(null);
+}
+export async function quiescent(cfg, rec, deadline) {
+  return (await inspectQuiescence(cfg, rec, deadline)).reason;
 }
 export function dependencies(cfg, rec, authority) {
   if (pin(cfg, rec.id)) return { reason: 'investigation pin' };
@@ -278,8 +281,9 @@ async function planRun(cfg, id, policy, deadline) {
     const success = rec.status === 'completed' && ['accepted', 'accepted-with-fixes'].includes(readLedger(ledgerPath(cfg)).rows.find((r) => r.run_id === id).disposition);
     const days = success ? policy.successDays : policy.otherDays;
     if (now - since < days * DAY) return { ...base, reason: 'retention age not reached', eligible_at: new Date(since + days * DAY).toISOString() };
-    const live = await quiescent(cfg, rec, deadline);
-    if (live) return { ...base, reason: live };
+    const live = await inspectQuiescence(cfg, rec, deadline);
+    base.helper_reconciliation = live.helper_reconciliation;
+    if (live.reason) return { ...base, reason: live.reason };
     if (receipt && !snapshotValid(receipt, id)) return { ...base, reason: 'compact evidence corrupt' };
     for (const [key, name] of Object.entries(FILES)) {
       const file = safe(path.join(P.dir, name));

@@ -141,7 +141,8 @@ for (const by of ['opencode', 'vibe']) {
     const created = await orch(['worktree', 'create', '--repo', repo, '--wp', wp, '--slice', 's1', '--by', by, '--json'], c.env);
     assert.equal(created.code, 0, created.stderr);
     const w = json(created);
-    const args = ['run', '--cli', 'fake', '--dir', w.path, '--handoff', c.handoffPath, '--wp', wp, '--slice', 's1', '--allow', 'a.txt', '--no-window'];
+    // This cleanup-success fixture needs captured OS birth/ancestry evidence.
+    const args = ['run', '--cli', 'fake', '--dir', w.path, '--handoff', c.handoffPath, '--wp', wp, '--slice', 's1', '--allow', 'a.txt', '--no-window', '--flag', '--hold', '--flag', '5'];
     const wrongRun = await orch([...args, '--by', other], c.env);
     assert.equal(wrongRun.code, 2);
     assert.match(wrongRun.stderr, new RegExp(`held by ${by}`));
@@ -150,6 +151,7 @@ for (const by of ['opencode', 'vibe']) {
     runId = idFrom(launched.stdout);
     await waitForStatus(c.stateRoot, runId, ['completed'], { timeoutMs: 60000 });
     const run = readRunRecord(c.stateRoot, runId);
+    assert.equal(run.helper_audit.state, 'observed');
     assert.equal(run.by, by);
     assert.equal(run.scope.worktree_id, w.id);
     assert.equal((await orch(['record', runId, '--disposition', 'blocked', '--notes', 'claim lifecycle fixture; no implementation accepted', '--json'], c.env)).code, 0);

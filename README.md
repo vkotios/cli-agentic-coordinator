@@ -329,6 +329,19 @@ Successful retention applies to completed, accepted runs; all other terminal dis
 `otherDays`. Age starts at the later terminal/package closure time. Runs need a durable disposition,
 finished package, resolved gates/reviews and confirmed process quiescence. Active or uncertain runs,
 reopened packages, incomplete cleanup, containment incidents and investigation pins remain protected.
+Escaped helpers are rechecked by their recorded PID and creation time during maintenance and
+worktree cleanup. A matching helper or unreadable identity still protects the resource. An absent
+incarnation or a PID reused by a different process resolves that liveness blocker without killing
+anything or rewriting the original monitor audit. Nonempty helper lists need verified ancestry and
+complete recorded identities; a later process query cannot repair unknown historical ancestry.
+Inventories above 60 helpers stay protected pending manual investigation. Unknown ancestry also
+blocks worktree cleanup even with an empty candidate list, for example when a worker exits before
+its creation time is captured. Inspect the retained run and process evidence; there is no bypass
+or automatic repair in this feature. Keep the resources protected pending a separately approved
+evidence-based resolution, and do not clear audit fields to force cleanup.
+Transcript previews expose `helper_reconciliation` separately from the original helper report.
+Metadata archives retain that separate observation, but deletion and recovery always check again.
+These checks do not activate retention or qualify a model, controller or future launch.
 Only stdout, stderr and the run's prompt copy are eligible. Compact final messages (up to 64 KiB,
 with an explicit truncation flag), requested/actual model evidence, run/process records, reviews,
 gates, routing ledger and cleanup receipts remain. `result` reads the compact answer after collection;
