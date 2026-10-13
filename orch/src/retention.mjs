@@ -203,6 +203,7 @@ function pin(cfg, id) {
   return doc && doc.active;
 }
 export async function quiescent(cfg, rec, deadline) {
+  if (rec.helper_audit !== undefined && !['observed','not-applicable'].includes(rec.helper_audit?.state)) return 'helper ancestry unverified';
   const P = paths(cfg, rec.id);
   const f = keeperFacts(readTailLines(safe(P.keeper), 32768));
   if (!f.blocked && (!f.workerExit || f.streamsClosed !== 'streams-closed')) return 'worker exit or closed streams not confirmed';

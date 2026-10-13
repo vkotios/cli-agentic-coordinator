@@ -90,3 +90,7 @@ test('P07g: terminal status waits for keeper completion without relaunching',asy
 test('P07g: ignored files outside the worker allowlist fail independent scope verification',async t=>{
   const c=await completeTask(t,'worker');fs.writeFileSync(path.join(c.o.workdir,'.vibe','unexpected.mjs'),'retained incident');await api.taskStep(c.session,{offerHash:c.o.offerHash,approve:true,step:'monitor-worker'},c.seams);await assert.rejects(api.taskStep(c.session,{offerHash:c.o.offerHash,approve:true,step:'verify-worker'},c.seams),/allowlist/);
 });
+
+test('P07h: explicit unknown helper ancestry cannot qualify an otherwise completed case',async t=>{
+  const c=await completeTask(t),file=path.join(c.state,'runs','controller-worker-proof','run.json'),record=JSON.parse(fs.readFileSync(file,'utf8'));write(file,{...record,helper_audit:{state:'unknown',reason:'worker-identity-unknown'}});await assert.rejects(api.qualifyTask(c.session,{offerHash:c.o.offerHash},c.seams),/helper|terminal proof/);
+});

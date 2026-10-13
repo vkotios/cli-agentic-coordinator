@@ -7,6 +7,15 @@ quirk after upgrading, and record new ones here.
 Legend: **verified** = observed on the stated version on Windows 11 with Node 24.
 **unverified** = from documentation or research, not confirmed by a run.
 
+Helper ancestry is an observation, not an OS sandbox. Parent PIDs can be reused,
+so the monitor checks creation order against the recorded worker identity and,
+after exit, its keeper-recorded lifetime. Older unrelated branches are excluded.
+Missing identities or timestamps remain unknown: status distinguishes uncertain
+helper candidates from verified live escapes, and an unknown helper audit cannot
+qualify a route or authorize retirement. Helpers are never killed by monitoring
+and never affect lane admission. Explicit cancellation retains its documented
+identity-checked tree-termination behaviour.
+
 Common to all workers:
 
 - Workers are started only through `orch run` / `orch review`. Never start one by hand: the guard hook
