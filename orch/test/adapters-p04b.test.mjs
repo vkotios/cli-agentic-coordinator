@@ -149,7 +149,7 @@ for(const role of ['implement','review']){
         const built=copilot.build({...ctx,role,model,effort:model==='Auto'?null:'medium'}),removed=new Set(built.envDelete.map(k=>k.toUpperCase()));
         for(const key of copilotOverrideKeys)assert.ok(removed.has(key),`inherited ${key} must not reach the subscription child`);
         for(const key of Object.keys(process.env).filter(k=>keys.some(x=>x.toUpperCase()===k.toUpperCase())||k.toUpperCase().startsWith('COPILOT_PROVIDER_')))assert.ok(built.envDelete.includes(key),`actual inherited spelling ${key} must be removed`);
-        assert.equal(built.envDelete.includes('P04E_KEEP'),false);assert.equal(process.env.P04E_KEEP,'fixture-preserved');assert.equal(process.env.GH_ENTERPRISE_TOKEN,'fixture-override');
+        assert.equal(built.envDelete.includes('P04E_KEEP'),false);assert.equal(process.env.P04E_KEEP,'fixture-preserved');assert.equal(process.env.gh_enterprise_token,'fixture-override');
       }
     });
   });
@@ -158,15 +158,15 @@ for(const role of ['implement','review']){
     const {cmdRun}=await import('../src/commands.mjs'),c=makeCase('p04e-environment',{handoff:'Read-only environment fixture'});t.after(()=>c.cleanup());
     const fixture=path.join(c.base,'environment-worker.mjs');
     fs.writeFileSync(fixture,`const names=${JSON.stringify(copilotOverrideKeys)};const presentOverrides=Object.keys(process.env).filter(k=>names.includes(k.toUpperCase())||k.toUpperCase().startsWith('COPILOT_PROVIDER_'));console.log(JSON.stringify({type:'assistant.usage',data:{model:'example-exact-model'}}));console.log(JSON.stringify({type:'assistant.message',data:{content:JSON.stringify({presentOverrides,keep:process.env.P04E_KEEP})}}));`);
-    const vars={...c.env,ORCH_COPILOT_EXE:process.execPath,...Object.fromEntries(copilotOverrideKeys.map(k=>[k,'fixture-override'])),copilot_provider_api_key:'fixture-override',P04E_KEEP:'fixture-preserved'},before={};
-    for(const[k,v]of Object.entries(vars)){before[k]=process.env[k];process.env[k]=v;}
+    const vars={...c.env,ORCH_COPILOT_EXE:process.execPath,...Object.fromEntries(copilotOverrideKeys.map((k,i)=>[k==='GH_TOKEN'?'Gh_Token':i%2?k.toLowerCase():k,'fixture-override'])),copilot_provider_api_key:'fixture-override',P04E_KEEP:'fixture-preserved'},before={};
     /** @type {any} */ const adapter=copilot;const originalBuild=adapter.build;
-    adapter.testOnly=true;adapter.build=function(ctx){const built=originalBuild.call(this,ctx);return {...built,file:process.execPath,args:[fixture]};};
     try{
+      for(const[k,v]of Object.entries(vars)){before[k]=process.env[k];process.env[k]=v;}
+      adapter.testOnly=true;adapter.build=function(ctx){const built=originalBuild.call(this,ctx);return {...built,file:process.execPath,args:[fixture]};};
       const launched=await cmdRun({cli:'copilot',model:'example-exact-model',dir:c.work,handoff:c.handoffPath,'no-window':true,json:true},{log(){}},{role});
       const record=await waitForStatus(c.stateRoot,launched.id??launched.run_id,['completed','failed','blocked'],{timeoutMs:60000});assert.equal(record.status,'completed');assert.equal(record.role,role);
       await waitFor(()=>!fs.existsSync(path.join(c.stateRoot,'runs',record.id,'monitor.alive')),{timeoutMs:30000,what:'environment fixture monitor exit'});
-      const message=copilot.extractFinalMessage(readRunFile(c.stateRoot,record.id,'stdout.log')),observed=JSON.parse(message);assert.deepEqual(observed.presentOverrides,[]);assert.equal(observed.keep,'fixture-preserved');assert.equal(process.env.GH_ENTERPRISE_TOKEN,'fixture-override');
+      const message=copilot.extractFinalMessage(readRunFile(c.stateRoot,record.id,'stdout.log')),observed=JSON.parse(message);assert.deepEqual(observed.presentOverrides,[]);assert.equal(observed.keep,'fixture-preserved');assert.equal(process.env.gh_enterprise_token,'fixture-override');
     }finally{adapter.build=originalBuild;delete adapter.testOnly;for(const[k,v]of Object.entries(before))if(v===undefined)delete process.env[k];else process.env[k]=v;}
   });
 }
