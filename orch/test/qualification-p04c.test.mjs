@@ -77,11 +77,11 @@ test('P04c: an uncertain Auto launch and incomplete cleanup preserve evidence wi
   const other=await fixture(t),offer2=await offer(other);await launch(other,offer2,'worker');await launch(other,offer2,'reviewer');const file=resourceFile({stateRoot:offer2.stateRoot},'review-proof'),record=JSON.parse(fs.readFileSync(file,'utf8'));write(file,{...record,state:'cleanup-pending'});
   await assert.rejects(api.qualifySmoke(other.session,{offerHash:offer2.offerHash},{binding,finish:async()=>{}}));assert.ok(fs.existsSync(path.join(offer2.stateRoot,'runs','worker-proof','run.json')));
 });
-test('P04c: extending access smoke does not enable unqualified controller or task child profiles',async t=>{
-  const c=await fixture(t),controller=await import('../src/setup-controller.mjs'),task=await import('../src/setup-task.mjs'),cases=await import('../src/task-cases.mjs');
+test('P04c: extending access does not enable controller child profiles',async t=>{
+  const c=await fixture(t),controller=await import('../src/setup-controller.mjs');
   const options={configFile:c.config,worker:0,reviewer:0,maxAgeSeconds:3600};
   await assert.rejects(controller.offerController(c.session,options,{binding}),/Codex.*Vibe|child.*profile/i);
-  await assert.rejects(task.offerTask(c.session,{...options,caseId:cases.TASK_CASE},{binding}),/Codex.*Vibe|child.*profile/i);
+
 });
 test('P04c: a Copilot usage sidecar is sealed and changed native bytes invalidate reuse',async t=>{
   const c=await fixture(t),o=await offer(c);await launch(c,o,'worker');const dir=path.join(o.stateRoot,'runs','worker-proof'),stdout=path.join(dir,'stdout.log');fs.writeFileSync(stdout,fs.readFileSync(stdout,'utf8').split('\n').filter(line=>!line.includes('assistant.usage')).join('\n'));

@@ -95,7 +95,7 @@ export async function setupHealth(session,options,seams={}){
     if(rosterEvidence==='historical')missing.push('roster-not-rechecked');
     if(profiles.length>1)missing.push('multiple-capability-profiles');if(profiles.length===1&&!profiles[0].enabled)missing.push('routing-profile-disabled');
     const profile=profiles.length===1?profiles[0]:null,age=profile?.availability.checkedAt?now-Date.parse(profile.availability.checkedAt):null;
-    const taskCases=tasks.routes.filter(x=>x.role===role&&x.harness===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.billing===r.billing).map(x=>({caseId:x.caseId,status:x.status,evidenceRef:x.evidenceRef,verifiedAt:x.endedAt,expiresAt:x.expiresAt,scope:x.scope,contextCapacityQualified:false}));
+    const taskCases=tasks.routes.filter(x=>x.role===role&&x.harness===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.billing===r.billing).map(x=>({caseId:x.caseId,status:x.status,evidenceRef:x.evidenceRef,verifiedAt:x.endedAt,expiresAt:x.expiresAt,scope:x.scope,...(x.accessKind?{accessKind:x.accessKind,observedModel:x.observedModel,modelEvidenceSource:x.modelEvidenceSource}:{}),contextCapacityQualified:false}));
     const availability=profile?.availability.status==='available'&&age!==null&&age>=0&&age<=routing.doc.availabilityMaxAgeMinutes*60000?'fresh':profile?.availability.status==='unavailable'?'unavailable':profile?.availability.status==='available'?'stale':'unknown';
     if(profile&&availability!=='fresh')missing.push('routing-availability-'+availability);
     if(!profile&&role!=='controller')missing.push('routing-profile-missing');

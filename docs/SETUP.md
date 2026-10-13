@@ -404,7 +404,7 @@ tool configuration.
 ## Measured coding and review cases
 
 `setup task-smoke` (MCP: `setup_task_smoke`) offers a separate owned representative
-case for the selected Codex/Vibe subscription pair. Its private request contains
+case for selected different Codex/Vibe/Copilot/Muse subscription harnesses. Its private request contains
 `worker`, `reviewer`, `caseId: "numeric-summary-v1"` and `maxAgeSeconds`. It makes
 no model calls. Inspect the exact routes, case contracts and bounds before approving
 the returned offer hash with `task-start`. Preparation preserves the owner repo and
@@ -446,6 +446,11 @@ general C2 suitability, critical review ability or a model's context capacity.
 Returned routing proposals remain disabled and marked `trial`; inspect the case
 coverage before explicitly selecting a capability group and owner policy.
 Qualification does not write those settings or authorize future tasks.
+Copilot Auto case receipts retain the actual serving model and automatic-selection
+label. They are observations of that automatic route, so they produce no pinned
+exact-model routing proposal. Muse and explicit Copilot selectors can produce
+disabled case-scoped proposals after native model and independent review checks.
+Vibe-specific fixture configuration is created only when a Vibe route participates.
 
 For failure or abandonment, `task-close` takes the exact offer hash and explicit
 approval. It inspects only the owned trial, refuses active/uncertain runs, finalizes
@@ -465,5 +470,5 @@ declared an exact-model task-fit routing profile. Muse records native runtime-mo
 evidence, not independent backend verification. Requested-only, contradictory or
 unknown native model evidence cannot qualify either route. Reusable receipts bind
 any Copilot usage sidecar as well as original run, role and cleanup evidence.
-Controller and representative task trials retain their existing Codex/Vibe child
+Controller trials retain their existing Codex/Vibe child
 profiles; this access extension does not expand those qualification paths.
