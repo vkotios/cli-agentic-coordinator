@@ -76,6 +76,7 @@ async function snapshotFiles(cfg, kind, id, deadline) {
 async function liveCheck(cfg, kind, record, deadline, archived = null) {
   if (kind === 'run') {
     if (!TERMINAL.has(record.status)) return 'run not terminal';
+    if (record.helper_audit !== undefined && !['observed','not-applicable'].includes(record.helper_audit?.state)) return 'helper ancestry unverified';
     if (!archived) return quiescent(cfg, record, deadline);
     if (!archived.quiescent || (record.escaped_helpers || []).some((h) => h.verdict !== 'gone' && h.status !== 'gone')) return 'historical process evidence uncertain';
     const checks = archived.processes || [];
@@ -123,7 +124,7 @@ function dependencyCheck(cfg, kind, record, seal) {
   return { finalized_at: seal.finalized_at };
 }
 async function completeSnapshot(cfg, kind, id, record, deadline) {
-  const runFields = new Set(['id', 'cli', 'lane', 'status', 'reason', 'status_note', 'exit_code', 'created_at', 'started_at', 'ended_at', 'updated_at', 'dir', 'dir_real', 'dir_evidence', 'wp', 'slice', 'role', 'review_of', 'by', 'scope', 'orch_written', 'escaped_helpers', 'keeper_pid', 'keeper_created_at', 'worker_pid', 'last_activity_at', 'last_activity_signal', 'post_exit_warnings', 'routed_default_model', 'quota', 'routing']);
+  const runFields = new Set(['id', 'cli', 'lane', 'status', 'reason', 'status_note', 'exit_code', 'created_at', 'started_at', 'ended_at', 'updated_at', 'dir', 'dir_real', 'dir_evidence', 'wp', 'slice', 'role', 'review_of', 'by', 'scope', 'orch_written', 'escaped_helpers', 'helper_audit', 'keeper_pid', 'keeper_created_at', 'worker_pid', 'last_activity_at', 'last_activity_signal', 'post_exit_warnings', 'routed_default_model', 'quota', 'routing']);
   const reviewFields = new Set(['id', 'implementer_run', 'implementer_models', 'wp', 'slice', 'by', 'reviewer_cli', 'reviewer_model', 'reviewer_canonical', 'reviewer_model_actual', 'reviewer_run_status', 'reviewer_run_reason', 'warnings', 'ref', 'commit', 'source_repo', 'implementer_dir', 'worktree', 'worktree_created', 'worktree_removed', 'worktree_remove_error', 'blinded', 'blinding_verified', 'status', 'outcome', 'containment', 'finished_at', 'created_at', 'run_id', 'breaches', 'unknown', 'admission', 'launch_error', 'setup_error']);
   const compactRecord = Object.fromEntries(Object.entries(record).filter(([k]) => (kind === 'run' ? runFields.has(k) || k.startsWith('model_') : reviewFields.has(k))));
   if (kind === 'review') return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), evidence_hashes: Object.fromEntries(Object.entries(record.evidence || {}).map(([k, v]) => [k, digest(JSON.stringify(v))])), cleanup: listResources(cfg).filter((r) => r.id === id).map((r) => ({ id: r.id, state: r.state, cleanup_error: r.cleanup_error || null })) };

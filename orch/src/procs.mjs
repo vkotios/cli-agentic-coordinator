@@ -143,6 +143,80 @@ export function descendantsOf(root, table) {
   return out;
 }
 
+function creationEpoch(value) {
+  const text = normalizeCreationTime(value);
+  if (typeof text !== 'string' || !/^ms:-?\d+$/.test(text)) return null;
+  const n = Number(text.slice(3));
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** A PPID snapshot is adjacency, not ownership. Bind every edge to creation order.
+ * A keeper-recorded exit permits a historical root: its direct children must have
+ * been born during that worker's lifetime, even if the PID is now absent/reused.
+ * @param {number} root @param {string|null} recordedCreatedAt @param {Array|null} table
+ * @param {{exitedAt?:string|null}} [options]
+ */
+export function observeDescendants(root, recordedCreatedAt, table, options = {}) {
+  const identity = verifyIdentity(root, recordedCreatedAt, table), birth = creationEpoch(recordedCreatedAt);
+  const exit = options.exitedAt == null ? null : creationEpoch(options.exitedAt);
+  const unknown = (reason, adjacency = false) => ({ state: 'unknown', rootVerified: false, rootIdentity: identity.verdict, reason,
+    candidates: adjacency ? descendantsOf(root, table).map(p => ({ ...p, ancestry: 'unknown' })) : [] });
+  if (!Number.isSafeInteger(Number(root)) || Number(root) <= 0) return unknown('worker-pid-unreadable');
+  if (!table) return unknown('process-table-unreadable');
+  if (birth === null) return unknown('worker-creation-time-unreadable', true);
+  if (options.exitedAt != null && (exit === null || exit < birth)) return unknown('worker-lifetime-unreadable');
+  if (identity.verdict !== 'match' && exit === null) return unknown('worker-identity-' + identity.verdict);
+  const replacementBirth = identity.verdict !== 'match' && identity.found ? creationEpoch(identity.found.createdAt) : null;
+  if (identity.verdict !== 'match' && identity.found && (replacementBirth === null || replacementBirth <= birth)) return unknown('replacement-identity-unreadable');
+  const byParent = new Map();
+  for (const p of table) {
+    if (!byParent.has(p.ppid)) byParent.set(p.ppid, []);
+    byParent.get(p.ppid).push(p);
+  }
+  const candidates = [], seen = new Set([Number(root)]), stack = [{ pid: Number(root), birth, ancestry: 'verified' }];
+  let uncertain = false;
+  while (stack.length) {
+    const parent = stack.pop();
+    for (const child of byParent.get(parent.pid) || []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      const at = creationEpoch(child.createdAt);
+      // Reject an entire impossible branch; never traverse an older incarnation.
+      if (at !== null && (at < birth || parent.birth !== null && at < parent.birth || parent.pid === Number(root) && (exit !== null && at > exit || replacementBirth !== null && at > replacementBirth))) continue;
+      const overlapsReplacement = parent.pid === Number(root) && replacementBirth !== null && at === replacementBirth;
+      const ancestry = parent.ancestry === 'verified' && at !== null && !overlapsReplacement ? 'verified' : 'unknown';
+      if (ancestry === 'unknown') uncertain = true;
+      candidates.push({ ...child, ancestry });
+      stack.push({ pid: child.pid, birth: at, ancestry });
+    }
+  }
+  return { state: uncertain ? 'unknown' : 'observed', rootVerified: true, rootIdentity: identity.verdict,
+    reason: uncertain ? 'descendant-creation-time-unreadable' : null, candidates };
+}
+
+/** Remember incarnations, not just PIDs. A later query cannot fill an old missing birth. */
+export function rememberDescendants(map, observation) {
+  for (const p of observation.candidates) {
+    const createdAt = normalizeCreationTime(p.createdAt), key = `${p.pid}@${createdAt ?? '?'}`, previous = map.get(key);
+    if (!previous || previous.ancestry !== 'verified' && p.ancestry === 'verified') {
+      map.set(key, { pid: p.pid, name: p.name, createdAt, ancestry: p.ancestry });
+    }
+  }
+}
+
+/** Read-only identity classification. A current identity match cannot prove ancestry. */
+export function classifyObservedHelpers(map, table) {
+  const out = [];
+  for (const p of map.values()) {
+    const v = verifyIdentity(p.pid, p.createdAt, table);
+    if (v.verdict === 'gone' || v.verdict === 'mismatch') continue;
+    const verified = v.verdict === 'match' && p.ancestry === 'verified';
+    out.push({ pid: p.pid, name: p.name, created_at: p.createdAt, ancestry: p.ancestry,
+      state: verified ? 'alive' : 'unknown', ...(verified ? {} : { reason: v.reason || 'ancestry-unverified' }) });
+  }
+  return out;
+}
+
 /**
  * THE identity predicate (v3 §6, carried from v2 §2.9). Four labels, and `unknown`
  * is a real answer that no caller may downgrade.

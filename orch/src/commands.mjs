@@ -617,6 +617,7 @@ export async function inspect(cfg, id, dl) {
     exit_code: facts.workerExit ? facts.workerExit.code : (rec.exit_code ?? null),
     dir_evidence: rec.dir_evidence || 'none',
     escaped_helpers: rec.escaped_helpers || [],
+    helper_audit: rec.helper_audit ?? null,
     last_activity_at: rec.last_activity_at || null,
     last_activity_signal: rec.last_activity_signal || null,
     quiet_seconds: rec.last_activity_at ? Math.round((Date.now() - Date.parse(rec.last_activity_at)) / 1000) : null,
@@ -708,8 +709,11 @@ export async function cmdStatus(args, io = console) {
     if (r.cancel_requested) io.log('  cancel requested');
     if (r.note) io.log(`  note: ${r.note}`);
     for (const h of r.escaped_helpers || []) {
-      io.log(`  ESCAPED HELPER pid ${h.pid} (${h.name}) is alive. orch did not kill it and never will.`);
+      io.log(h.state === 'unknown'
+        ? `  HELPER CANDIDATE pid ${h.pid} (${h.name}): identity or ancestry is unknown; no kill authorized.`
+        : `  ESCAPED HELPER pid ${h.pid} (${h.name}) is alive. orch did not kill it and never will.`);
     }
+    if (r.helper_audit?.state === 'unknown') io.log(`  HELPER AUDIT unknown (${r.helper_audit.reason || 'unverified ancestry'}); inspect before qualification or retirement.`);
     io.log(`  stdout=${r.stdout_bytes}B stderr=${r.stderr_bytes}B  last activity ${r.last_activity_at ?? '-'} (${r.quiet_seconds ?? '-'}s ago)`);
     for (const [stream, payload] of Object.entries(r.transcripts || {})) if (payload.state !== 'available') io.log(`  ${stream}: ${payload.state}`);
     if (r.retention_evidence_error) io.log(`  retention evidence error: ${r.retention_evidence_error}`);
@@ -776,6 +780,7 @@ export function cmdResult(args, io = console) {
     metadata: readArchived(cfg, 'run', id)?.metadata || { state: 'available' },
     warnings: rec.post_exit_warnings || [],
     escaped_helpers: rec.escaped_helpers || [],
+    helper_audit: rec.helper_audit ?? null,
     paths: { ...P },
   };
   if (args.json) {

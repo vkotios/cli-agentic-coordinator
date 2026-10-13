@@ -22,7 +22,7 @@ import { paths, readRun, writeRun, appendMonitorEvent, TERMINAL, keeperFacts } f
 import { getAdapter } from './adapters/index.mjs';
 import { laneScope } from './lanescope.mjs';
 import { tryListen } from './lanepipe.mjs';
-import { readProcessTable, verifyIdentity, descendantsOf } from './procs.mjs';
+import { readProcessTable, verifyIdentity, observeDescendants, rememberDescendants, classifyObservedHelpers } from './procs.mjs';
 import { Tailer } from './tailer.mjs';
 import { DirectoryEvidence } from './direvidence.mjs';
 import { deriveStatus } from './statusrules.mjs';
@@ -111,6 +111,7 @@ async function main() {
     stderrBytes: 0,
     events: [],
     descendants: new Map(),
+    helperAudit: { state: 'unknown', rootVerified: false, reason: 'not-checked' },
     viewerOpened: false,
     viewerPid: null,
     viewerCreatedAt: null,
@@ -240,6 +241,7 @@ async function main() {
     const workerPid = facts.workerPid ?? rec.worker_pid ?? null;
     const workerCreatedAt = facts.workerCreatedAt ?? null;
     let workerVerdict = 'unknown';
+    let processSnapshot = null, processScanned = false;
     // CODE-REVIEW FIX (astra H4): the monitor NEVER fills in a missing creation time.
     // It used to copy the creation time of whatever process held the recorded pid "now";
     // after a pid reuse that made an unrelated process verify `match`, and `orch cancel`
@@ -248,14 +250,9 @@ async function main() {
     // and every kill path refuses.
     if (workerPid && (Date.now() - state.lastProcScan > cfg.procScanMs || finished)) {
       state.lastProcScan = Date.now();
-      const table = await readProcessTable({ deadlineMs: 5000 });
-      if (table) {
-        const id = verifyIdentity(workerPid, workerCreatedAt, table);
-        workerVerdict = id.verdict;
-        for (const d of descendantsOf(workerPid, table)) {
-          if (!state.descendants.has(d.pid)) state.descendants.set(d.pid, { pid: d.pid, name: d.name, createdAt: d.createdAt });
-        }
-      }
+      processSnapshot = await readProcessTable({ deadlineMs: 5000 });
+      processScanned = true;
+      workerVerdict = verifyIdentity(workerPid, workerCreatedAt, processSnapshot).verdict;
     }
 
     const spawnedFile = readJson(P.spawned, null);
@@ -279,6 +276,19 @@ async function main() {
       }
     }
     const finishedNow = !!fresh.workerExit || !!fresh.blocked;
+    // The worker may have exited while CIM was reading. Its keeper-recorded birth
+    // and exit bind a historical root; never borrow the current PID holder's birth.
+    if (finishedNow && fresh.workerPid && (!processScanned || fresh.workerPid !== workerPid || !finished)) {
+      processSnapshot = await readProcessTable({ deadlineMs: 5000 });
+      processScanned = true;
+    }
+    if (processScanned) {
+      const observation = observeDescendants(fresh.workerPid, fresh.workerCreatedAt, processSnapshot, { exitedAt: fresh.workerExit?.at });
+      rememberDescendants(state.descendants, observation);
+      state.helperAudit = { state: observation.state, rootVerified: observation.rootVerified, reason: observation.reason };
+    } else if (fresh.blocked && !fresh.workerPid) {
+      state.helperAudit = { state: 'not-applicable', rootVerified: true, reason: 'worker-not-spawned' };
+    }
     if (finishedNow && !finished) {
       // The worker finished while the identity reads were in flight: drain now, so the
       // last bytes of the log still reach the directory evidence (v3 §5 final drain).
@@ -365,6 +375,10 @@ async function main() {
       // Escaped helpers: one final bounded classification. Reported, never killed,
       // never counted for exclusion.
       next.escaped_helpers = await classifyHelpers(state.descendants);
+      const helperObservationResolved = state.helperAudit.rootVerified && !next.escaped_helpers.some(h => h.state === 'unknown');
+      next.helper_audit = { state: helperObservationResolved
+        ? (state.helperAudit.state === 'not-applicable' ? 'not-applicable' : 'observed') : 'unknown',
+        reason: helperObservationResolved && state.helperAudit.state === 'unknown' ? null : state.helperAudit.reason, checked_at: nowIso() };
       if (!runDirIntact()) { process.exit(0); return; }
       // Even removal after this check cannot authorize creating the parent again.
       guard(() => writeRun(cfg, next, { createDir: false }), 'final-write');
@@ -384,6 +398,7 @@ async function main() {
     }
 
     if (!TERMINAL.has(next.status)) {
+      next.helper_audit = { state: state.helperAudit.state, reason: state.helperAudit.reason };
       next.status = classifyActivity(cfg, next, state, fresh);
       if (fresh.spawned && !next.started_at) next.started_at = nowIso();
       // Slice-2 fix: writeRun creates missing directories, so a write racing the removal
@@ -436,15 +451,9 @@ function classifyActivity(cfg, rec, state, facts) {
 
 async function classifyHelpers(map) {
   if (!map.size) return [];
-  const pids = [...map.keys()];
+  const pids = [...new Set([...map.values()].map(p => p.pid))];
   const table = await readProcessTable({ deadlineMs: 5000, pids });
-  const out = [];
-  for (const d of map.values()) {
-    const v = verifyIdentity(d.pid, d.createdAt, table);
-    if (v.verdict === 'match') out.push({ pid: d.pid, name: d.name, state: 'alive' });
-    else if (v.verdict === 'unknown') out.push({ pid: d.pid, name: d.name, state: 'unknown' });
-  }
-  return out;
+  return classifyObservedHelpers(map, table);
 }
 
 function sizeOf(f) {

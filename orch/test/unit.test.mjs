@@ -8,6 +8,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { parseArgs } from '../bin/orch.mjs';
 import { verifyIdentity, normalizeCreationTime, descendantsOf } from '../src/procs.mjs';
+import * as processEvidence from '../src/procs.mjs';
+import {quiescent} from '../src/retention.mjs';
 import { deriveStatus, protocolErrorText, WRONG_DIRECTORY_NOTE, DIRECTORY_UNVERIFIED_NOTE } from '../src/statusrules.mjs';
 import { DirectoryEvidence, parseSessionLine, parseBootstrapLine, stripAnsi, compareDirs, realpathOrNull } from '../src/direvidence.mjs';
 import { Tailer } from '../src/tailer.mjs';
@@ -79,6 +81,39 @@ test('descendantsOf walks a snapshot without touching the OS', () => {
   ];
   assert.deepEqual(descendantsOf(1, table).map((p) => p.pid), [2, 3]);
   assert.deepEqual(descendantsOf(1, null), []);
+});
+
+test('P07h: numeric parent PID reuse cannot attribute older applications or their subtrees',()=>{
+  assert.equal(typeof processEvidence.observeDescendants,'function');
+  const p=(pid,ppid,birth)=>({pid,ppid,name:'process',createdAt:birth}),table=[p(1,0,'ms:100'),p(2,1,'ms:110'),p(3,2,'ms:10'),p(4,3,'ms:20'),p(5,2,'ms:120')];
+  const r=processEvidence.observeDescendants(1,'ms:100',table);assert.equal(r.rootVerified,true);assert.equal(r.state,'observed');assert.deepEqual(r.candidates.map(x=>x.pid),[2,5]);assert.ok(r.candidates.every(x=>x.ancestry==='verified'));
+});
+test('P07h: live roots require the recorded identity and missing birth evidence stays unknown',()=>{
+  assert.equal(typeof processEvidence.observeDescendants,'function');
+  const p=(pid,ppid,birth)=>({pid,ppid,name:'process',createdAt:birth}),table=[p(1,0,'ms:200'),p(2,1,'ms:210')];
+  /** @type {Array<[number,string|null,Array|null]>} */ const requests=[[1,'ms:100',table],[1,null,table],[1,'nonsense',table],[1,'ms:200',null],[1,'ms:200',[]]];
+  for(const args of requests){const r=processEvidence.observeDescendants(...args);assert.equal(r.state,'unknown');assert.equal(r.rootVerified,false);if(args[1]===null||args[1]==='nonsense'){assert.deepEqual(r.candidates.map(x=>x.pid),[2]);assert.ok(r.candidates.every(x=>x.ancestry==='unknown'));}else assert.deepEqual(r.candidates,[]);}
+  const uncertain=processEvidence.observeDescendants(1,'ms:200',[p(1,0,'ms:200'),p(2,1,null),p(3,2,'ms:230')]);assert.equal(uncertain.state,'unknown');assert.equal(uncertain.candidates.length,2);assert.ok(uncertain.candidates.every(x=>x.ancestry==='unknown'));
+});
+test('P07h: terminated worker lifetimes retain genuine detached helpers without borrowing a reused root',()=>{
+  assert.equal(typeof processEvidence.observeDescendants,'function');
+  const p=(pid,ppid,birth)=>({pid,ppid,name:'process',createdAt:birth}),table=[p(1,0,'ms:500'),p(2,1,'ms:120'),p(3,2,'ms:510'),p(4,1,'ms:520'),p(5,1,'ms:90')];
+  const r=processEvidence.observeDescendants(1,'ms:100',table,{exitedAt:'ms:200'});assert.equal(r.rootVerified,true);assert.equal(r.state,'observed');assert.deepEqual(r.candidates.map(x=>x.pid),[2,3]);
+  assert.deepEqual(processEvidence.observeDescendants(1,'ms:100',table.slice(1),{exitedAt:'ms:200'}).candidates.map(x=>x.pid),[2,3]);assert.equal(processEvidence.observeDescendants(1,'ms:100',table,{exitedAt:'ms:50'}).state,'unknown');
+  const delayed=[p(1,0,'ms:150'),p(2,1,'ms:120'),p(4,1,'ms:160')];assert.deepEqual(processEvidence.observeDescendants(1,'ms:100',delayed,{exitedAt:'ms:200'}).candidates.map(x=>x.pid),[2],'replacement birth is a tighter boundary than delayed keeper exit');
+});
+test('P07h: helper identity reuse never replaces captured timestamps or promotes uncertain ancestry',()=>{
+  assert.equal(typeof processEvidence.rememberDescendants,'function');assert.equal(typeof processEvidence.classifyObservedHelpers,'function');const map=new Map(),p=(birth,ancestry='verified')=>({pid:2,ppid:1,name:'helper',createdAt:birth,ancestry});
+  processEvidence.rememberDescendants(map,{candidates:[p('ms:100')]});processEvidence.rememberDescendants(map,{candidates:[p('ms:200')]});assert.equal(map.size,2);
+  let r=processEvidence.classifyObservedHelpers(map,[p('ms:200')]);assert.equal(r.length,1);assert.equal(r[0].created_at,'ms:200');assert.equal(r[0].state,'alive');
+  const unknown=new Map();processEvidence.rememberDescendants(unknown,{candidates:[p(null,'unknown')]});r=processEvidence.classifyObservedHelpers(unknown,[p('ms:200')]);assert.equal(r[0].state,'unknown');assert.equal([...unknown.values()][0].createdAt,null);assert.equal(processEvidence.classifyObservedHelpers(unknown,[]).length,0);
+});
+test('P07h: unknown helper audits protect terminal metadata without a process query',async()=>{
+  const result=await quiescent({stateRoot:TMP,runsDir:TMP},{id:'p07h-audit',status:'completed',helper_audit:{state:'unknown'}},Date.now()+5000);assert.equal(result,'helper ancestry unverified');
+});
+test('P07h: equal-time edges, cycles and unreadable classifications remain bounded and explicit',()=>{
+  const p=(pid,ppid,birth)=>({pid,ppid,name:'process',createdAt:birth}),table=[p(1,3,'ms:100'),p(2,1,'ms:100'),p(3,2,'ms:100')],r=processEvidence.observeDescendants(1,'ms:100',table);assert.deepEqual(r.candidates.map(x=>x.pid),[2,3]);assert.equal(r.state,'observed');const map=new Map();processEvidence.rememberDescendants(map,r);assert.ok(processEvidence.classifyObservedHelpers(map,null).every(x=>x.state==='unknown'));
+  const overlap=processEvidence.observeDescendants(1,'ms:100',[p(1,0,'ms:150'),p(2,1,'ms:150')],{exitedAt:'ms:200'});assert.equal(overlap.state,'unknown');assert.equal(overlap.candidates[0].ancestry,'unknown');
 });
 
 /* ------------------------------------------------------- lane scope ------- */

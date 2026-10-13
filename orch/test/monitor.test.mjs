@@ -54,6 +54,11 @@ function runArgs(c, extra = []) {
   return ['run', '--cli', 'fake', '--dir', c.work, '--handoff', c.handoffPath, '--lane', 'local', '--no-window', ...extra];
 }
 
+test('P07h: unknown helper audit is visible in status and never labelled alive',async t=>{
+  const c=makeCase('p07h-status');t.after(()=>c.cleanup());const cfg=loadConfig(c.stateRoot),id='p07h-diagnostic',record={id,cli:'fake',lane:'cloud',status:'completed',dir:c.work,helper_audit:{state:'unknown',reason:'worker-identity-unknown'},escaped_helpers:[{pid:424242,name:'candidate',created_at:null,ancestry:'unknown',state:'unknown'}]},p=paths(cfg,id);writeRun(cfg,record);fs.writeFileSync(p.keeper,[{event:'worker-exit',code:0,at:new Date().toISOString()},{event:'keeper-exit',write_failures:0}].map(x=>JSON.stringify(x)).join('\n')+'\n');const before=fs.readFileSync(p.record);
+  const json=await orch(['status',id,'--json'],c.env);assert.equal(json.code,0,json.stdout+json.stderr);assert.equal(JSON.parse(json.stdout).runs[0].helper_audit.state,'unknown');const text=await orch(['status',id],c.env);assert.equal(text.code,0,text.stdout+text.stderr);assert.match(text.stdout,/HELPER AUDIT unknown/);assert.match(text.stdout,/HELPER CANDIDATE/);assert.doesNotMatch(text.stdout,/candidate\) is alive/);assert.deepEqual(fs.readFileSync(p.record),before);
+});
+
 async function monitorIdentity(c, id) {
   const spawned = await waitFor(() => spawnedIdentity(c.stateRoot, id), { timeoutMs: 20000, what: 'spawned.json' });
   if (spawned.monitor_created_at) return { pid: spawned.monitor_pid, createdAt: spawned.monitor_created_at };
@@ -308,6 +313,8 @@ test('T-v2-9: an escaped detached helper is REPORTED, never killed, and never bl
 
   const rec = await waitForStatus(c.stateRoot, id, ['completed', 'failed'], { timeoutMs: 60000 });
   assert.equal(rec.status, 'completed');
+  assert.ok(['observed', 'unknown'].includes(rec.helper_audit?.state), 'terminal helper audit must carry its certainty');
+  if (rec.helper_audit.state === 'observed') assert.equal(rec.helper_audit.reason, null, 'a resolved terminal audit cannot retain an uncertainty reason');
   // Reported...
   const reported = (rec.escaped_helpers || []).some((h) => h.pid === helperPid);
   assert.ok(reported, `the escaped helper was not reported: ${JSON.stringify(rec.escaped_helpers)}`);
@@ -317,5 +324,5 @@ test('T-v2-9: an escaped detached helper is REPORTED, never killed, and never bl
   const next = await orch(runArgs(c), c.env);
   assert.equal(next.code, 0, 'a live escaped helper must not block the next run (owner decision)');
   const st = await orch(['status', id], c.env);
-  assert.match(st.stdout, /ESCAPED HELPER pid/, 'the advisory line must be loud');
+  assert.match(st.stdout, /(?:ESCAPED HELPER|HELPER CANDIDATE) pid/, 'the advisory line must be loud, without upgrading uncertain ancestry');
 });
