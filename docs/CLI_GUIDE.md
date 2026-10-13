@@ -211,9 +211,13 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Launches the native executable directly with JSONL, a bounded prompt argument, empty stdin,
   explicit model, no updates/remote export and a per-run usage file. Shell metacharacters remain
   argument data; no command wrapper is used. Extra flags and custom agents are refused.
-- Saved native GitHub authentication is used. BYOK/provider and GitHub-token environment overrides
-  are excluded; orch does not buy credits or change account/overage preferences. Subscription
-  quotas and provider billing remain subject to the selected account's existing plan.
+- Saved native GitHub authentication is used. BYOK/provider and GitHub-token environment overrides,
+  including enterprise tokens and GitHub host/config-directory/API-URL redirects, are excluded
+  from worker and reviewer child environments with case-insensitive name matching. Parent
+  environment and saved authentication files are preserved. A sign-in available only through an
+  excluded redirect may require signing in through the CLI's normal configuration location.
+  Orch does not buy credits or change account/overage preferences. Subscription quotas and
+  provider billing remain subject to the selected account's existing plan.
 - Reviewer tools are restricted to `view`, `glob` and `grep`; implementation also permits file
   edits and shell tools. This is a tool restriction, not a filesystem sandbox. Existing detached
   review containment and cleanup checks remain authoritative.
