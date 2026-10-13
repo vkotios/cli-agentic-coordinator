@@ -36,6 +36,9 @@ Common to all workers:
 | agy | `ORCH_AGY_EXE` or `exe.agy` | `agy.exe` on `PATH` |
 | vibe | `ORCH_VIBE_EXE` or `exe.vibe` | `vibe.exe` on `PATH`; then `%USERPROFILE%\.local\bin\vibe.exe` |
 
+| copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
+| muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
+
 A CLI that cannot be found is a clear `cli-not-found` error naming the override to set. The `.cmd`
 shims npm installs are deliberately **not** accepted (see opencode below).
 
@@ -201,12 +204,45 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 ## copilot (GitHub Copilot CLI)
 
-- No orch adapter yet: the guard denies direct `copilot -p` launches, and `orch run` cannot start it.
+- Worker and reviewer adapter: `orch run --cli copilot --model <selector>` and
+  `orch review --reviewer copilot --model <selector>`. Direct `copilot -p` bypasses orch and is denied.
 - Observed on **1.0.86**: a Microsoft Store install lives under
-  `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` and may need a new shell before it is on `PATH`.
-- Flags seen in `--help` (not run): `-p`, `--no-ask-user`, `--silent`, `--output-format json`, `--model`,
-  `--max-ai-credits`, `--usage-output-file`, `--log-dir`, `--allow-tool`, `--deny-tool`.
+  `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` and is a fallback when it is not yet on `PATH`.
+- Launches the native executable directly with JSONL, a bounded prompt argument, empty stdin,
+  explicit model, no updates/remote export and a per-run usage file. Shell metacharacters remain
+  argument data; no command wrapper is used. Extra flags and custom agents are refused.
+- Saved native GitHub authentication is used. BYOK/provider and GitHub-token environment overrides
+  are excluded; orch does not buy credits or change account/overage preferences. Subscription
+  quotas and provider billing remain subject to the selected account's existing plan.
+- Reviewer tools are restricted to `view`, `glob` and `grep`; implementation also permits file
+  edits and shell tools. This is a tool restriction, not a filesystem sandbox. Existing detached
+  review containment and cleanup checks remain authoritative.
+- A pinned model is never silently replaced. `--model auto` is allowed only when explicitly
+  requested and without `--effort`; Auto is excluded from exact-model task-fit profiles.
+- Actual model attribution uses successful native model-call pairs and main-agent usage counters.
+  A selected/default model or a subagent's model alone is not evidence. Ambiguity stays unknown.
+- `--max-turns` and `--max-price` are refused: autopilot continuations and AI credits do not mean
+  model turns or a dollar budget. Native usage metrics remain metadata until explicit retirement.
 - Never script inline completions (against GitHub's acceptable-use terms).
+
+## muse (Meta Muse Code)
+
+- Worker/reviewer adapter uses `muse exec` with JSONL, prompt file, explicit model and workspace.
+  Select the real `.exe` with `ORCH_MUSE_EXE` / `exe.muse`, or let orch resolve the installed
+  `.muse-version` marker beside `muse.cmd`. The updater/login launcher is never spawned.
+- Saved device-code OAuth provenance at the official Meta endpoint is required. Environment
+  API-key/base-URL overrides and raw transport tracing are excluded. No ordinary API key fallback,
+  account change, subscription upgrade or credential write is performed. The provider verifies
+  current subscription entitlement; local provenance alone does not prove current access.
+- Workspace trust loads existing project rules for both roles. Review additionally disables
+  shell execution and file writes. Web/reminder tools are disabled; native session worktrees and
+  duplicate session logs are disabled. The detached review audit still checks containment.
+- `--max-turns` maps to a positive `--max-model-steps`; `--max-price` is not supported.
+- Model attribution binds the native `run.model.configured` fact to the same completed main run
+  and Meta provider. It reports the runtime model, not independent backend model verification.
+  Unknown or contradictory facts remain unknown. Final output comes only from completed runs.
+- Extra CLI/config flags and custom agents are refused. Native stdout/stderr and compact orch
+  records provide evidence; this adapter does not enable controller or task-capability qualification.
 
 ## Claude escalation reviewers
 
@@ -226,3 +262,5 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - It deletes `MISTRAL_API_KEY` before starting (with it set, vibe bills that API key instead of the CLI
   plan's allowance) and stops the whole queue on a model fallback, a forbidden path, a stall, a task with
   no changes, a failed commit, or two consecutive tasks with failing checks.
+
+Muse installation markers accept `major.minor.patch-Rrevision[.revision]` (case-insensitive R). Other formats require an explicit native executable override; orch does not guess or run the updater.

@@ -17,8 +17,10 @@ import {OrchError} from './errors.mjs';
 import {canonicalId} from './models.mjs';
 import {qualificationStatus} from './setup-qualification.mjs';
 import {controllerQualification} from './setup-controller.mjs';
+import {museBinaryInDirectory} from './adapters/muse.mjs';
+import {copilotStoreCandidates} from './adapters/copilot.mjs';
 
-const MAX=1048576,HARNESSES=['claude','codex','opencode','vibe','agy'];
+const MAX=1048576,HARNESSES=['claude','codex','opencode','vibe','agy','copilot','muse'];
 const fail=()=>{throw new OrchError('Use setup health with a complete session and separate private configuration; no refresh or activation options','setup-health-refused');};
 const equal=isDeepStrictEqual;
 function input(file){const x=readSetupInput(file,{max:MAX}).raw;if(!x||typeof x!=='object'||Array.isArray(x))fail();return x;}
@@ -27,8 +29,8 @@ function existing(file){try{checkedSetupPath(file);return true;}catch{return fal
 // Discovery only inspects executable files, never runs the harness or login commands.
 function discover(config,base){return Object.fromEntries(HARNESSES.map(h=>{
   const override=process.env[`ORCH_${h.toUpperCase()}_EXE`]||config.exe?.[h];
-  const fallback=override?[]:['claude','vibe'].includes(h)?[path.join(process.env.USERPROFILE||os.homedir(),'.local','bin',h+'.exe')]:h==='opencode'?npmPrefixes('opencode').map(p=>path.join(p,...OPENCODE_EXE_IN_PREFIX)):[];
-  const files=override?[typeof override==='string'?path.resolve(process.env[`ORCH_${h.toUpperCase()}_EXE`]?process.cwd():base,override):'']:[...whereAll(h+'.exe'),...fallback];
+  const fallback=override?[]:['claude','vibe'].includes(h)?[path.join(process.env.USERPROFILE||os.homedir(),'.local','bin',h+'.exe')]:h==='opencode'?npmPrefixes('opencode').map(p=>path.join(p,...OPENCODE_EXE_IN_PREFIX)):h==='muse'?whereAll('muse.cmd').map(f=>museBinaryInDirectory(path.dirname(f))).filter(Boolean):h==='copilot'?copilotStoreCandidates():[];
+  const files=override?[typeof override==='string'?path.resolve(process.env[`ORCH_${h.toUpperCase()}_EXE`]?process.cwd():base,override):'']:[...(h==='muse'?[]:whereAll(h+'.exe')),...fallback];
   return [h,files.some(f=>{try{return /\.exe$/i.test(f)&&fs.statSync(f).isFile();}catch{return false;}})];
 }));}
 /** @param {any} options @param {any} seams */

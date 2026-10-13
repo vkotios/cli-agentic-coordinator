@@ -17,7 +17,8 @@ import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId } from './archive.mjs';
 
 const DAY = 86400000;
-const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json']);
+const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json', 'copilot-usage.json']);
+const allowedRunFile = (name, record) => RUN_FILES.has(name) && (name !== 'copilot-usage.json' || record?.cli === 'copilot');
 const sameWp = (a, b) => !!a && !!b && wpKey(a) === wpKey(b);
 const originalPath = (cfg, kind, id) => kind === 'run' ? paths(cfg, id).dir : path.join(cfg.stateRoot, 'reviews', `${id}.json`);
 const journalFile = (cfg, kind, id) => evidencePath(cfg, 'retired', kind, id);
@@ -64,8 +65,9 @@ async function snapshotFiles(cfg, kind, id, deadline) {
   const target = safe(originalPath(cfg, kind, id));
   const names = kind === 'run' ? fs.readdirSync(target) : [`${id}.json`];
   const files = {};
+  const record = kind === 'run' ? readDocument(safe(path.join(target, 'run.json'))) : null;
   for (const name of names) {
-    if (kind === 'run' && !RUN_FILES.has(name)) throw new OrchError(`unexpected original file: ${name}`, 'retirement-unsafe');
+    if (kind === 'run' && !allowedRunFile(name, record)) throw new OrchError(`unexpected original file: ${name}`, 'retirement-unsafe');
     const file = kind === 'run' ? path.join(target, name) : target;
     const s = fs.lstatSync(safe(file));
     if (!s.isFile() || s.isSymbolicLink()) throw new OrchError('unexpected directory or linked metadata', 'retirement-unsafe');
@@ -216,7 +218,7 @@ async function plan(cfg, kind, id, policy, deadline, prospective = null) {
     const seal = prospective || readDocument(sealFile(cfg, kind, id));
     if (!seal) return { ...base, state: 'legacy', reason: 'explicit metadata enrollment required' };
     const { seal_sha256, ...sealedBody } = seal;
-    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || seal.state_identity !== stamp(safe(cfg.stateRoot)) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !RUN_FILES.has(name) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
+    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || seal.state_identity !== stamp(safe(cfg.stateRoot)) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !allowedRunFile(name, seal.data.record) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
     const journal = readDocument(journalFile(cfg, kind, id));
     base.pending_cleanup = !!journal;
     const record = archived ? archived.record : readEvidence(cfg, kind, id)?.record;
