@@ -97,7 +97,7 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
 ## Quick start
 
 For a harness-guided onboarding conversation, use `orch setup start --repo <Git root>
---harness claude|codex|opencode|vibe --session <private directory> --json`.
+--harness claude|codex|opencode|vibe|copilot|muse --session <private directory> --json`.
 It collects resumable choices and returns one question at a time through the CLI or MCP.
 This stage records intent; configuration, adoption and policies remain unchanged.
 Use the separate `setup preview` and exact-approved `setup apply` to prepare private
@@ -129,6 +129,7 @@ See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and re
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo
    # Select only the harnesses you want; repeat --harness to combine them:
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --harness opencode --harness vibe
+   node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --harness copilot --harness muse --dry-run
    ```
 
    Existing UTF-8 instructions (including BOM and line endings) are preserved byte for byte outside

@@ -84,7 +84,7 @@ export async function setupHealth(session,options,seams={}){
   try{const plan=await planAdopt(repo,{harness:[p.harness],update:false});const actions=plan.items.map(i=>i.action);finding('adoption',actions.some(x=>['conflict','refused','stale'].includes(x))?'blocked':actions.some(x=>x==='create')?'pending':'ok',actions.some(x=>x==='create')?'adoption-incomplete':actions.some(x=>['conflict','refused','stale'].includes(x))?'adoption-needs-attention':'adoption-present','Inspect setup preview or adopt dry-run; health never writes instruction files');}catch{finding('adoption','blocked','adoption-unreadable','Inspect repository instruction routing; health attempted no repair');}
   let access={routes:[],status:'unavailable'};
   try{access=await qualificationStatus(session,{configFile:file},seams);}catch{ /* Invalid evidence grants no readiness. */ }
-  let controllers={routes:[],childRoutes:[]};try{controllers=await controllerQualification(session,{configFile:file},seams);access.routes.push(...controllers.childRoutes);}catch{ /* Native controller evidence fails closed. */ }
+  let controllers={routes:[],childRoutes:[]};try{controllers=await (seams.controllerQualification??controllerQualification)(session,{configFile:file},seams);access.routes.push(...controllers.childRoutes);}catch{ /* Native controller evidence fails closed. */ }
   let tasks={routes:[]};try{const {taskQualification}=await import('./setup-task.mjs');tasks=await taskQualification(session,{configFile:file},seams);access.routes.push(...tasks.routes.map(r=>({...r,status:'access-verified',verifiedAt:r.endedAt})));}catch{ /* Measured cases never activate policies or broaden role qualification. */ }
   const roles=['controller','worker','reviewer'].flatMap(role=>(role==='controller'?[a.routes.controller]:a.routes[role==='worker'?'workers':'reviewers']).map(r=>{
     const missing=[],sameModel=models.filter(m=>canonicalId(m.model)===canonicalId(r.model)),own=sameModel.filter(m=>m.cli===r.harness),profiles=routing.doc?.profiles.filter(x=>x.cli===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.role===role&&x.billing===r.billing)??[];
@@ -108,6 +108,7 @@ export async function setupHealth(session,options,seams={}){
     const observations=access.routes.filter(x=>x.harness===r.harness&&canonicalId(x.model)===canonicalId(r.model)&&x.billing===r.billing&&x.status==='access-verified');
     const smoke=controller??observations.find(x=>x.role===role&&!x.evidenceRef?.startsWith('orch-task:')),observed=smoke??observations[0];
     if(controller&&config.controllerProfile===undefined)missing.push('controller-tool-profile-not-selected');
+    if(role==='controller'&&['copilot','muse'].includes(r.harness))missing.push('repository-controller-profile-unqualified');
     if(observed?.accessKind==='automatic-access')missing.push('exact-model-access-not-qualified');
     if(!observed)missing.push('authentication-not-checked','model-access-not-checked');
     if(!smoke)missing.push(role==='controller'?'controller-operation-not-qualified':'role-smoke-needed');

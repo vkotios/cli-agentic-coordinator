@@ -1,6 +1,7 @@
 # Resumable setup conversation
 
-`orch setup` records onboarding choices for Claude Code, Codex, OpenCode or Vibe.
+`orch setup` records onboarding choices for Claude Code, Codex, OpenCode, Vibe,
+Copilot or Muse.
 It returns one structured question at a time. A controlling harness can ask the
 user the question and submit their answer, or a terminal user can edit an answer
 file. MCP tools never prompt on stdin.
@@ -309,6 +310,45 @@ adoption and usage requirements separate. `runtime-ready` requires those
 requirements too, and still grants no launch permission. A read-only access smoke
 does not qualify a model for coding tasks or prove controller orchestration.
 
+## Copilot and Muse repository adoption
+
+For either harness, optional setup adoption uses the same exact preview/apply
+approval as other controllers. Direct adoption can be previewed first:
+
+```powershell
+orch adopt --repo C:\path\to\your-repo --harness copilot --harness muse --dry-run --json
+```
+
+Adoption appends a managed instruction region and installs the role payload. It
+merges only the owned `mcpServers.orch` entry in project `.mcp.json`, preserving
+other servers. Conflicting owner entries, linked targets, incompatible Muse
+project documents and concurrent changes refuse writes. Existing owned entries
+whose kit path or harness requirements changed need an explicit `--update`
+preview. Repeating the same completed selection leaves file bytes and mtimes
+unchanged; adding a harness can refresh only ownership metadata.
+
+Copilot uses root `AGENTS.md`. Custom agents must explicitly opt into repository
+instructions. Muse selects the first existing `AGENTS.md`, `CLAUDE.md`,
+`.agents/AGENTS.md` or `.claude/CLAUDE.md` at each directory from the repository
+root to the supplied working directory. A shared `AGENTS.md` keeps a previously
+selected Muse fallback as an explicit owner-source reference. Owner instruction
+bytes outside the managed region remain unchanged, including BOM and line endings.
+
+Muse's MCP child environment needs explicit home-location metadata for orch to
+locate the normal saved subscription profiles. The preview includes `HOME`,
+Windows `USERPROFILE`, `VIBE_HOME` and `XDG_CONFIG_HOME` locations; it copies
+no credentials or other environment variables. These machine paths, merged MCP
+settings and the ownership manifest should stay outside public commits. Previously
+adopted Muse requirements remain in the shared server when another harness is added.
+
+The adopter does not grant native workspace trust, inspect global MCP settings,
+resolve every nested/native configuration override, register a global server or
+install Copilot/Muse hooks. Inspect effective native discovery and trust before
+use. MCP readiness is `configured-unqualified` after installation. Health keeps
+`repository-controller-profile-unqualified` visible even with a successful
+fixed-step lifecycle receipt: that receipt covers only its observed trial tool
+profile. Adoption makes no model call and grants no task-launch permission.
+
 ## Native controller lifecycle trial
 
 Controller qualification is separate from child access. `setup controller-smoke`
@@ -371,8 +411,8 @@ native evidence path is supported and observed. This is a coverage boundary,
 not a judgment about a harness or models with different context/tool profiles.
 
 Copilot/Muse onboarding can record controller intent and apply private configuration
-without `--adopt`; generic repository adoption for these harnesses is not installed
-by this scoped qualification flow. Prepared instructions and MCP configuration live
+with or without `--adopt`. Repository adoption is described below; it remains
+separate from this scoped qualification flow. Prepared instructions and MCP configuration live
 in the owned controller workspace, separately from the child source. Inherited MCP,
 hooks or custom-provider configuration refuses this trial rather than changing the
 owner's setup. Muse uses the CLI's native saved device sign-in location; an alternate
