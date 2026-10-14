@@ -307,6 +307,7 @@ export async function planAdopt(repoArg, opts = {}) {
   const mcpHarnesses = [...new Set([...(manifest.mcp_harnesses || []), ...harnesses.filter(h => ['claude', 'copilot', 'muse'].includes(h))])].sort();
   const home = os.homedir(), metadata = mcpHarnesses.includes('muse') ? { HOME: home, ...(process.platform === 'win32' ? { USERPROFILE: home } : {}), VIBE_HOME: process.env.VIBE_HOME || path.join(home, '.vibe'), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || path.join(home, '.config') } : null;
   const server = { command: 'node', args: [fwd(ORCH_BIN_PATH), 'mcp'], ...(metadata ? { env: metadata } : {}) };
+  const homeLocations = metadata ? `; home locations ${JSON.stringify(metadata)}` : '';
   let mcpRecord = manifest.mcp_entry;
   const installMcp = harnesses.some(h => ['claude', 'copilot', 'muse'].includes(h));
   const mcpItem = installMcp ? planJson(repo, '.mcp.json', (obj) => {
@@ -319,17 +320,17 @@ export async function planAdopt(repoArg, opts = {}) {
     if (cur === undefined) {
       obj.mcpServers.orch = server;
       mcpRecord = server;
-      return { changed: true, detail: `mcpServers.orch -> node ${server.args.join(' ')}` };
+      return { changed: true, detail: `mcpServers.orch -> node ${server.args.join(' ')}${homeLocations}` };
     }
     if (JSON.stringify(cur) === JSON.stringify(server)) {
       mcpRecord = server;
-      return { changed: false, detail: 'mcpServers.orch already present' };
+      return { changed: false, detail: `mcpServers.orch already present${homeLocations}` };
     }
     if (manifest.mcp_entry && JSON.stringify(cur) === JSON.stringify(manifest.mcp_entry)) {
-      if (!update) return { stale: 'mcpServers.orch was written by adopt and its kit path or harness requirements changed; run with --update' };
+      if (!update) return { stale: `mcpServers.orch was written by adopt and its kit path or harness requirements changed; run with --update${homeLocations}` };
       obj.mcpServers.orch = server;
       mcpRecord = server;
-      return { changed: true, detail: 'mcpServers.orch (written by adopt) updated to the current kit' };
+      return { changed: true, detail: `mcpServers.orch (written by adopt) updated to the current kit${homeLocations}` };
     }
     return { conflict: 'mcpServers.orch exists with different settings; left untouched' };
   }) : null;

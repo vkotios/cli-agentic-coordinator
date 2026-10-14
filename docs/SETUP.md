@@ -327,6 +327,10 @@ whose kit path or harness requirements changed need an explicit `--update`
 preview. Repeating the same completed selection leaves file bytes and mtimes
 unchanged; adding a harness can refresh only ownership metadata.
 
+Copilot-only adoption merges the `mcpServers` wrapper and preserves other
+top-level owner fields without interpreting them. Muse's stricter whole-document
+schema applies whenever Muse shares ownership of that server.
+
 Copilot uses root `AGENTS.md`. Custom agents must explicitly opt into repository
 instructions. Muse selects the first existing `AGENTS.md`, `CLAUDE.md`,
 `.agents/AGENTS.md` or `.claude/CLAUDE.md` at each directory from the repository
