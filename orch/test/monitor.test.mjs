@@ -16,7 +16,7 @@ import {
   killOwnedChecked,
   identityOf,
   suspendProcess,
-  resumeProcess,
+  prepareProcessControl, releaseSuspendedProcess,
   spawnedIdentity, testReps } from './helpers.mjs';
 import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
 import {appendMonitorEvent,paths,writeRun} from '../src/store.mjs';
@@ -146,11 +146,16 @@ test(`G3: the monitor is killed mid-run, ${REPS}x -> the worker still finishes a
 test('TF: status answers within its budget with the monitor absent, frozen and alive - and never writes', { timeout: 240000 }, async (t) => {
   const c = makeCase('tf-status');
   let frozen = null;
+  let assemblyPath;
   t.after(async () => {
-    if (frozen) await resumeProcess(frozen.pid, frozen.createdAt);
+    if (frozen) {
+      const cleanup = await releaseSuspendedProcess(frozen.pid, frozen.createdAt, {assemblyPath});
+      assert.ok(cleanup.ok, `preserved uncertain suspended fixture: ${JSON.stringify(cleanup)}`);
+    }
     c.cleanup();
   });
 
+  assemblyPath = await prepareProcessControl(c.base);
   const r = await orch(runArgs(c, ['--flag', '--emit', '--flag', '40', '--flag', '--interval', '--flag', '500']), c.env);
   const id = idFrom(r.stdout);
   await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'spawned'), { timeoutMs: 20000, what: 'spawn' });
@@ -167,9 +172,9 @@ test('TF: status answers within its budget with the monitor absent, frozen and a
 
   // (2) monitor FROZEN (OS-suspended): the design's wording is `not running (pipe held, no hello)`
   const mon = await monitorIdentity(c, id);
-  const s = await suspendProcess(mon.pid, mon.createdAt);
-  assert.ok(s.ok, `could not suspend the monitor: ${s.output}`);
   frozen = mon;
+  const s = await suspendProcess(mon.pid, mon.createdAt, false, {assemblyPath});
+  assert.ok(s.ok, `could not suspend the monitor: ${s.output}`);
   const frozenCase = await timedStatus(c, id, 'monitor frozen');
   cases.push(frozenCase);
   assert.match(frozenCase.row.monitor, /pipe held, no hello/, `a frozen monitor was misreported: ${frozenCase.row.monitor}`);

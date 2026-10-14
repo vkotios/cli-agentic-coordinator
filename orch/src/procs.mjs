@@ -53,11 +53,12 @@ function runPs(command, deadlineMs) {
               /* ignore */
             }
           }
-          done(err && !stdout ? null : String(stdout || ''));
+          done({ raw: err && !stdout ? null : String(stdout || ''), failure: err
+            ? { reason: err.killed ? 'query-timeout' : 'query-error', code: err.code ?? null, signal: err.signal ?? null } : null });
         },
       );
-    } catch {
-      done(null);
+    } catch (e) {
+      done({ raw: null, failure: { reason: 'query-error', code: e?.code ?? null, signal: null } });
       return;
     }
     const timer = setTimeout(() => {
@@ -66,7 +67,7 @@ function runPs(command, deadlineMs) {
       } catch {
         /* already gone */
       }
-      done(null);
+      done({ raw: null, failure: { reason: 'query-timeout', code: null, signal: null } });
     }, deadlineMs + 250);
     timer.unref?.();
     child.on('close', () => clearTimeout(timer));
@@ -98,7 +99,9 @@ function parseTable(raw) {
  * @returns {Promise<Array<{pid:number,ppid:number,name:string,createdAt:string|null}>|null>}
  *          `null` means UNKNOWN (not "nothing is alive").
  */
-export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2 } = {}) {
+/** @param {{deadlineMs?:number,pids?:Array|null,attempts?:number,onFailure?:(failure:any)=>void}} [options]
+ * @param {{query?:(command:string,deadlineMs:number)=>Promise<any>}} [seams] */
+export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2, onFailure = null } = {}, seams = {}) {
   const list = Array.isArray(pids) ? [...new Set(pids.map(Number).filter((n) => Number.isFinite(n) && n > 0))] : null;
   if (list && list.length === 0) return [];
   const filter = list && list.length <= 60 ? ` -Filter "${list.map((p) => `ProcessId=${p}`).join(' or ')}"` : '';
@@ -114,7 +117,12 @@ export async function readProcessTable({ deadlineMs = 5000, pids = null, attempt
   for (let i = 0; i < Math.max(1, attempts); i++) {
     const left = deadlineMs - (Date.now() - started);
     if (left <= 50) break;
-    const parsed = parseTable(await runPs(cmd, left));
+    const result = await (seams.query ?? runPs)(cmd, left), parsed = parseTable(result.raw);
+    if (result.failure || parsed === null) {
+      // Error category and timing only: no command, environment, table or stderr.
+      // Diagnostics must not change the three-valued answer or its time budget.
+      try { onFailure?.({ ...(result.failure ?? { reason: 'invalid-json' }), attempt: i + 1, elapsed_ms: Date.now() - started }); } catch { /* bookkeeping cannot cost a read */ }
+    }
     if (parsed !== null) return parsed;
   }
   return null;

@@ -205,7 +205,8 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 ## copilot (GitHub Copilot CLI)
 
 - Worker and reviewer adapter: `orch run --cli copilot --model <selector>` and
-  `orch review --reviewer copilot --model <selector>`. Direct `copilot -p` bypasses orch and is denied.
+  `orch review --reviewer copilot --model <selector>`. Direct worker `copilot -p`
+  bypasses orch and is denied; an exact-approved scoped controller trial uses its own native runner.
 - Observed on **1.0.86**: a Microsoft Store install lives under
   `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` and is a fallback when it is not yet on `PATH`.
 - Launches the native executable directly with JSONL, a bounded prompt argument, empty stdin,
@@ -228,6 +229,10 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - `--max-turns` and `--max-price` are refused: autopilot continuations and AI credits do not mean
   model turns or a dollar budget. Native usage metrics remain metadata until explicit retirement.
 - Never script inline completions (against GitHub's acceptable-use terms).
+- Scoped controller qualification uses only the owned `orch-controller_step` MCP
+  tool, an explicit subscription selector, and native call/result evidence. Auto
+  preserves the observed model separately from its selector. This profile does not
+  grant general controller admission or install repository adoption.
 
 ## muse (Meta Muse Code)
 
@@ -246,7 +251,11 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   and Meta provider. It reports the runtime model, not independent backend model verification.
   Unknown or contradictory facts remain unknown. Final output comes only from completed runs.
 - Extra CLI/config flags and custom agents are refused. Native stdout/stderr and compact orch
-  records provide evidence; this adapter does not enable controller or task-capability qualification.
+  records provide evidence; this worker adapter does not itself qualify a controller
+  or task capability. A separately approved scoped controller trial uses the native
+  `mcp__orch__controller_step` tool, the CLI's saved device sign-in location and
+  bound runtime/tool evidence. Shell/writes and foreign personal context are disabled;
+  other tool profiles and general repository adoption remain unqualified.
 
 ## Claude escalation reviewers
 

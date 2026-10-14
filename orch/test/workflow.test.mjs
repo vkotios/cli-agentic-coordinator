@@ -25,7 +25,7 @@ const CLAIM_REPS = testReps(20);
 test(`S2: 10 separate processes claim one WP at once, ${CLAIM_REPS} repetition(s) -> exactly one holder each time`, { timeout: 600000 }, async (t) => {
   const c = makeCase('s2-race');
   t.after(() => c.cleanup());
-  const BY = ['claude-code', 'codex', 'opencode', 'vibe', 'owner'];
+    const BY = ['claude-code', 'codex', 'opencode', 'vibe', 'copilot', 'muse', 'owner'];
   const winnersPerRep = [];
   const latencies = [];
   for (let rep = 0; rep < CLAIM_REPS; rep++) {
@@ -114,7 +114,7 @@ test('S2: a stale claim is SHOWN with its age and never reclaimed automatically'
 
 /* ---------------------------------------------------------- worktrees ----- */
 
-for (const by of ['opencode', 'vibe']) {
+for (const by of ['opencode', 'vibe', 'copilot', 'muse']) {
   test(`P04: ${by} claims, delegates, records and finishes without cross-harness takeover`, { timeout: 180000 }, async (t) => {
     const c = makeCase(`p04-${by}`);
     let runId;
