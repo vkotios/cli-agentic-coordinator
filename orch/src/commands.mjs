@@ -41,9 +41,11 @@ const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
 // observed to exceed 3 s under load; a timed-out read refuses the kill (safe, but the
 // operator must cancel again). The same budget as cancel --keeper's re-check.
 const CANCEL_IDENTITY_MS = 10000;
-// A concurrent cancel waits for the holder's whole attempt: identity read and kill
-// (CANCEL_IDENTITY_MS each), 15 s reap wait and the final identity read, plus margin.
-const CANCEL_LOCK_WAIT_MS = 50000;
+// A concurrent cancel waits for the holder's whole attempt, which keeps the lock until
+// the viewer is closed: identity read, tree kill and final read (CANCEL_IDENTITY_MS
+// each), the 15 s reap wait, the viewer's 3 s read and 3 s kill, plus 10 s margin for
+// process start-up and timer slack.
+const CANCEL_LOCK_WAIT_MS = 3 * CANCEL_IDENTITY_MS + 15000 + 2 * 3000 + 10000;
 
 /* ------------------------------------------------------------------ run ---- */
 
@@ -1052,7 +1054,7 @@ async function acquireCancelLock(P, waitMs) {
     waited = true;
     const holder = readJson(P.cancelLock, null);
     if (holder && holder.pid) {
-      const t = await readProcessTable({ deadlineMs: 3000, pids: [holder.pid] });
+      const t = await readProcessTable({ deadlineMs: CANCEL_IDENTITY_MS, pids: [holder.pid] });
       const v = holder.created_at ? verifyIdentity(holder.pid, holder.created_at, t).verdict : 'unknown';
       if (v === 'gone' || v === 'mismatch') {
         // Stale: its holder is verifiably not running. Move it aside atomically; if a
