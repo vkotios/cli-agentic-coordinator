@@ -19,7 +19,7 @@ import {
   spawnedIdentity,
   suspendProcess,
   prepareProcessControl,
-  resumeProcess, testReps } from './helpers.mjs';
+  releaseSuspendedProcess, testReps } from './helpers.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { connectHello, probeFree } from '../src/lanepipe.mjs';
@@ -134,7 +134,10 @@ test('G4: a SUSPENDED keeper reports `held, unresponsive`, nothing is auto-relea
   let assemblyPath;
   t.after(async () => {
     // Never leave a suspended process behind, whatever the assertions did.
-    if (suspended) await resumeProcess(suspended.pid, suspended.createdAt, {assemblyPath});
+    if (suspended) {
+      const cleanup = await releaseSuspendedProcess(suspended.pid, suspended.createdAt, {assemblyPath});
+      assert.ok(cleanup.ok, `preserved uncertain suspended fixture: ${JSON.stringify(cleanup)}`);
+    }
     c.cleanup();
   });
 

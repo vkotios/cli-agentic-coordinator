@@ -69,3 +69,71 @@ test('keeper fixture: preparation has a separate bounded compilation budget', as
   await assert.rejects(helpers.prepareProcessControl(c.base), /already exists/);
   assert.equal(preparations, 1);
 });
+
+test('keeper fixture: native mismatch and nonzero NTSTATUS never report success', async t => {
+  const c = helpers.makeCase('keeper-control-native-refusal');t.after(() => c.cleanup());
+  const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath, 'fixture');
+  let code = 4;
+  mockedControl(t, (_script, _options, done) => done(Object.assign(Error('native refusal'), {code}), code === 4 ? 'identity=mismatch\r\n' : 'rc=-1\r\n', ''));
+  for (code of [4,5]) {
+    const out = await helpers.suspendProcess(77, 'ms:2000', false, {assemblyPath});
+    assert.equal(out.ok, false);assert.equal(out.failure, code === 4 ? 'identity-mismatch' : 'control-error');
+    assert.equal(out.verdict, code === 4 ? 'mismatch' : 'match');
+    assert.match(out.output, code === 4 ? /identity=mismatch/ : /rc=-1/);
+  }
+});
+
+test('keeper fixture: absent preparation refuses without a native control command', async t => {
+  let controls = 0;mockedControl(t, () => {controls++;throw Error('must not execute');});
+  for (const options of [{}, {assemblyPath:'missing-fixture.dll'}]) {
+    const out = await helpers.suspendProcess(77, 'ms:2000', false, options);
+    assert.equal(out.ok, false);assert.equal(out.failure, 'fixture-refused');
+  }
+  assert.equal(controls, 0);
+});
+
+test('keeper fixture: failed resume falls back to checked kill and verifies disappearance', async () => {
+  const calls = [];
+  const out = await helpers.releaseSuspendedProcess(77, 'ms:2000', {}, {
+    resume:async () => {calls.push('resume');return {ok:false};},
+    kill:async (pid, createdAt) => {assert.equal(pid,77);assert.equal(createdAt,'ms:2000');calls.push('kill');return {killed:false,verdict:'match'};},
+    identity:async () => {calls.push('identity');return 'gone';},
+  });
+  assert.equal(out.ok, true);assert.equal(out.identityAfter,'gone');assert.deepEqual(calls,['resume','kill','identity']);
+});
+
+test('keeper fixture: unknown cleanup remains uncertain; successful resume never kills', async () => {
+  const unknown = await helpers.releaseSuspendedProcess(77, 'ms:2000', {}, {resume:async()=>({ok:false}),kill:async()=>({verdict:'unknown'}),identity:async()=> 'unknown'});
+  assert.equal(unknown.ok,false);assert.equal(unknown.identityAfter,'unknown');
+  const resumed = await helpers.releaseSuspendedProcess(77, 'ms:2000', {}, {resume:async()=>({ok:true}),kill:async()=>{throw Error('unnecessary kill');}});
+  assert.equal(resumed.ok,true);assert.equal(resumed.method,'resumed');
+});
+
+test('keeper fixture: timeout recovery uses the prepared resume and missing confirmation stays unknown', async t => {
+  const c = helpers.makeCase('keeper-control-recovery');t.after(() => c.cleanup());
+  const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath,'fixture');
+  let unconfirmed = false, resumed = 0;
+  mockedControl(t, (script, _options, done) => {
+    if (unconfirmed) return done(null, '', '');
+    if (script.includes('NtResumeProcess')) {resumed++;return done(null, 'rc=0\n', '');}
+    done(Object.assign(Error('timeout after uncertain action'),{killed:true}), '', '');
+  });
+  assert.equal((await helpers.suspendProcess(77,'ms:2000',false,{assemblyPath})).failure,'control-timeout');
+  const cleanup = await helpers.releaseSuspendedProcess(77,'ms:2000',{assemblyPath});
+  assert.equal(cleanup.ok,true);assert.equal(cleanup.method,'resumed');assert.equal(resumed,1);
+  unconfirmed = true;
+  const out = await helpers.suspendProcess(77,'ms:2000',false,{assemblyPath});
+  assert.equal(out.ok,false);assert.equal(out.failure,'control-unconfirmed');
+});
+
+test('keeper fixture: compilation failure reports its cause and never retries a partial assembly', async t => {
+  const c = helpers.makeCase('keeper-control-preparation-failure');t.after(() => c.cleanup());
+  let calls = 0;
+  mockedControl(t, (_script, _options, done) => {
+    calls++;fs.writeFileSync(path.join(c.base,'orch-test-process-control.dll'),'partial');
+    done(Object.assign(Error('compile timeout'),{killed:true,signal:'SIGTERM'}),'','compiler diagnostic');
+  });
+  await assert.rejects(helpers.prepareProcessControl(c.base),/timeout.*SIGTERM.*compiler diagnostic/);
+  await assert.rejects(helpers.prepareProcessControl(c.base),/already exists/);
+  assert.equal(calls,1);
+});
