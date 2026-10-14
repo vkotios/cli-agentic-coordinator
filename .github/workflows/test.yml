@@ -26,7 +26,6 @@ jobs:
       run:
         working-directory: source/orch
     env:
-      DIAGNOSTIC_OUTPUT_DIR: ${{ runner.temp }}/orch-ci-diagnostics
       SOURCE_SHA: ${{ inputs.source_ref }}
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +40,8 @@ jobs:
       - name: Verify exact source
         shell: pwsh
         run: |
+          $env:DIAGNOSTIC_OUTPUT_DIR = Join-Path $env:RUNNER_TEMP 'orch-ci-diagnostics'
+          "DIAGNOSTIC_OUTPUT_DIR=$env:DIAGNOSTIC_OUTPUT_DIR" | Add-Content $env:GITHUB_ENV
           if ($env:SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact source SHA required' }
           $actual = git rev-parse HEAD
           if ($LASTEXITCODE -ne 0 -or $actual -cne $env:SOURCE_SHA) { throw 'Source SHA mismatch' }
@@ -63,6 +64,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $env:DIAGNOSTIC_OUTPUT_DIR = Join-Path $env:RUNNER_TEMP 'orch-ci-diagnostics'
           New-Item -ItemType Directory -Force $env:DIAGNOSTIC_OUTPUT_DIR | Out-Null
           $head = git rev-parse HEAD
           $changes = @(git status --porcelain)
