@@ -138,13 +138,13 @@ export function discoverEntrypoints(repo, given, harnesses, args = {}, priorBloc
   const settings = harnesses.includes('codex') ? codexSettings(config, !!args['codex-config']) : { fallbacks: [], maxBytes: 32768, rootUnknown: false, warnings: [] };
   const explicit = new Map();
   for (const value of args['instruction-file'] || []) {
-    const match = /^(claude|codex|opencode|vibe)=(.+)$/.exec(value);
+    const match = /^(claude|codex|opencode|vibe|copilot|muse)=(.+)$/.exec(value);
     if (!match || !harnesses.includes(match[1]) || explicit.has(match[1])) throw new Error('--instruction-file requires one selected harness=<repository-relative path>');
     if (targetProblem(repo, match[2])?.startsWith('target must')) throw new Error('invalid --instruction-file path');
     explicit.set(match[1], match[2].replace(/\\/g, '/'));
   }
   const routes = harnesses.map((harness) => {
-    const names = harness === 'claude' ? ['CLAUDE.md', '.claude/CLAUDE.md'] : harness === 'codex' ? ['AGENTS.override.md', 'AGENTS.md', ...settings.fallbacks] : harness === 'opencode' ? ['AGENTS.md', 'CLAUDE.md'] : ['AGENTS.md'];
+    const names = harness === 'claude' ? ['CLAUDE.md', '.claude/CLAUDE.md'] : harness === 'codex' ? ['AGENTS.override.md', 'AGENTS.md', ...settings.fallbacks] : harness === 'opencode' ? ['AGENTS.md', 'CLAUDE.md'] : harness === 'muse' ? ['AGENTS.md', 'CLAUDE.md', '.agents/AGENTS.md', '.claude/CLAUDE.md'] : ['AGENTS.md'];
     let native = firstFile(repo, names) || names[harness === 'codex' ? 1 : 0];
     const parts = path.relative(repo, given).split(path.sep).filter(Boolean);
     if (harness === 'opencode' || harness === 'vibe') {
@@ -161,8 +161,10 @@ export function discoverEntrypoints(repo, given, harnesses, args = {}, priorBloc
     if (harness === 'opencode' && ['1', 'true'].includes(process.env.OPENCODE_DISABLE_PROJECT_CONFIG)) warnings.push('project configuration is disabled; native discovery must be confirmed');
     if (harness === 'opencode' && ['1', 'true'].includes(process.env.OPENCODE_DISABLE_CLAUDE_CODE) && native.endsWith('CLAUDE.md')) warnings.push('Claude fallback discovery is disabled; use --instruction-file opencode=AGENTS.md');
     if (harness === 'vibe') warnings.push('project instruction discovery requires the selected folder to be trusted by Vibe');
+    if (harness === 'copilot' || harness === 'muse') warnings.push('project instructions and MCP require native workspace trust; repository tool-profile qualification has not run');
+    if (harness === 'copilot') warnings.push('custom Copilot agents must opt into repository instructions; effective instruction discovery remains unverified');
     const discovery = [rel];
-    if (harness === 'codex') {
+    if (harness === 'codex' || harness === 'muse') {
       for (let i = 1; i <= parts.length; i++) {
         const dir = path.join(repo, ...parts.slice(0, i));
         const found = firstFile(dir, names);
@@ -176,6 +178,22 @@ export function discoverEntrypoints(repo, given, harnesses, args = {}, priorBloc
       instructions: 'prepared', hooks: harness === 'claude' || harness === 'codex' ? 'configured-unqualified' : 'not-installed',
       qualification: 'not-run' };
   });
+  // A shared AGENTS.md must keep Muse's original fallback owner rules explicit.
+  const museFallbacks = ['CLAUDE.md', '.agents/AGENTS.md', '.claude/CLAUDE.md'];
+  for (const route of routes.filter(r => r.harness === 'muse' && !explicit.has('muse') && museFallbacks.includes(r.path))) {
+    if (routes.some(r => r.path === 'AGENTS.md')) {
+      const previous = route.path;
+      route.path = 'AGENTS.md'; route.discovery.unshift('AGENTS.md'); route.ownerSources.push(previous);
+      route.warnings.push('read the existing Muse fallback owner source after shared AGENTS.md provisioning');
+    }
+  }
+  for (const [rel, entry] of Object.entries(priorBlocks)) {
+    if (!entry?.harnesses?.includes('muse') || !museFallbacks.includes(rel)) continue;
+    for (const route of routes.filter(r => r.path === 'AGENTS.md')) {
+      if (!route.ownerSources.includes(rel)) route.ownerSources.push(rel);
+      route.warnings.push('preserve the previously adopted Muse fallback owner instructions');
+    }
+  }
   // Another selected harness can provision AGENTS.md and change OpenCode's fallback.
   // Keep the original owner source explicit instead of silently hiding its rules.
   for (const route of routes.filter((r) => r.harness === 'opencode' && r.path.endsWith('CLAUDE.md'))) {

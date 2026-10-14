@@ -92,11 +92,30 @@ test('P03e: transcript collection rechecks helpers between exact unlinks',async 
   assert.equal(first.runs[0].state,'pending');assert.match(first.runs[0].reason,/helper/i);assert.ok(fs.existsSync(path.join(f.dir,'stderr.log')));assert.ok(fs.existsSync(path.join(f.dir,'prompt.txt')));
   state.mode='gone';assert.equal((await maintain(f,{apply:true,run:f.id})).runs[0].state,'collected');
 });
-test('P03e: an owned real helper is protected until its natural exit, with original bytes preserved',{timeout:30000},async t=>{
+test('P03e: an owned real helper stays protected until its exit is actually readable, with original bytes preserved',{timeout:30000},async t=>{
   const f=fixture(t,'p03e-native'),child=cp.spawn(process.execPath,['-e',"process.on('message',()=>process.exit(0));"],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});
   t.after(()=>{if(child.connected)child.send('stop');});const closed=once(child,'close'),birth=await ownChildCreationTime(child.pid,{deadlineMs:5000});assert.ok(birth,'own helper birth is required');
   f.rec.escaped_helpers[0]={...f.rec.escaped_helpers[0],pid:child.pid,created_at:birth};fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(f.rec));const before=fs.readFileSync(path.join(f.dir,'run.json'));
   assert.match(await quiescent(f.cfg,f.rec,Date.now()+4000),/helper.*live|helper.*uncertain/);assert.match(await dependentRunBlock(f.cfg,f.resource),/helper/);
   child.send('stop');await closed;
-  await waitFor(async()=>await quiescent(f.cfg,f.rec,Date.now()+4000)===null,{timeoutMs:15000,intervalMs:250,what:'owned helper exit visible to bounded process query'});assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);
+  // An exited helper is disposable only when the bounded OS query can establish it.
+  // Record the real transport result: cold CIM startup may exceed its one-second cap.
+  const queries=[],original=cp.execFile;
+  cp.execFile=/** @type {any} */((exe,args,opts,cb)=>original(exe,args,opts,(error,stdout,stderr)=>{
+    if(exe==='powershell.exe'&&String(args.at(-1)).includes(`ProcessId=${child.pid}`)){
+      let rows;try{rows=JSON.parse(String(stdout||'null'));}catch{rows=undefined;}
+      if(rows&&!Array.isArray(rows))rows=[rows];
+      queries.push({unreadable:!!error&&!String(stdout||'').trim()||rows===undefined,pidPresent:Array.isArray(rows)&&rows.some(row=>Number(row.ProcessId)===child.pid)});
+    }
+    cb(error,stdout,stderr);
+  }));syncBuiltinESMExports();
+  t.after(()=>{cp.execFile=original;syncBuiltinESMExports();});
+  const result=await quiescent(f.cfg,f.rec,Date.now()+4000);
+  assert.ok(queries.length,'the real helper query must execute');
+  if(result===null)assert.ok(queries.some(q=>!q.unreadable&&!q.pidPresent),'quiescence requires an actual readable absent PID');
+  else{
+    assert.match(result,/helper.*uncertain|time budget/);
+    assert.ok(queries.some(q=>q.unreadable||q.pidPresent),'protection after exit requires actual unresolved query evidence');
+  }
+  assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);
 });

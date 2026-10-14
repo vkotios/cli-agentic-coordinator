@@ -232,7 +232,9 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Scoped controller qualification uses only the owned `orch-controller_step` MCP
   tool, an explicit subscription selector, and native call/result evidence. Auto
   preserves the observed model separately from its selector. This profile does not
-  grant general controller admission or install repository adoption.
+  grant general controller admission. Separate `orch adopt --harness copilot`
+  wiring uses root `AGENTS.md` and project `.mcp.json`; native trust and custom-agent
+  instruction opt-in remain owner checks. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
 
 ## muse (Meta Muse Code)
 
@@ -255,7 +257,9 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   or task capability. A separately approved scoped controller trial uses the native
   `mcp__orch__controller_step` tool, the CLI's saved device sign-in location and
   bound runtime/tool evidence. Shell/writes and foreign personal context are disabled;
-  other tool profiles and general repository adoption remain unqualified.
+  other tool profiles remain unqualified. Separate `orch adopt --harness muse`
+  preserves native fallback instructions and merges owned project MCP wiring,
+  without trust grants or native launches. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
 
 ## Claude escalation reviewers
 
