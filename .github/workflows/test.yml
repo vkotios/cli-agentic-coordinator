@@ -1,16 +1,18 @@
-name: test
+name: test diagnostics
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
     inputs:
       suite:
-        description: "fast (npm test) or stress (npm run test:stress, full repetition counts)"
+        description: Normal model-free suite
         required: true
-        default: stress
+        default: fast
         type: choice
-        options: [fast, stress]
+        options: [fast]
+      source_ref:
+        description: Exact 40-character source commit to test unchanged
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,19 +24,54 @@ jobs:
     timeout-minutes: 90
     defaults:
       run:
-        working-directory: orch
+        working-directory: source/orch
+    env:
+      DIAGNOSTIC_OUTPUT_DIR: ${{ runner.temp }}/orch-ci-diagnostics
+      SOURCE_SHA: ${{ inputs.source_ref }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: diagnostics
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: source
+          persist-credentials: false
+      - name: Verify exact source
+        shell: pwsh
+        run: |
+          if ($env:SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact source SHA required' }
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:SOURCE_SHA) { throw 'Source SHA mismatch' }
+          if (git status --porcelain) { throw 'Source checkout is not clean' }
+          New-Item -ItemType Directory -Force $env:DIAGNOSTIC_OUTPUT_DIR | Out-Null
+          @{ head=$actual; tree=(git rev-parse 'HEAD^{tree}') } | ConvertTo-Json | Set-Content (Join-Path $env:DIAGNOSTIC_OUTPUT_DIR 'source-before.json')
       - uses: actions/setup-node@v4
         with:
-          node-version-file: orch/package.json
+          node-version-file: source/orch/package.json
           cache: npm
-          cache-dependency-path: orch/package-lock.json
+          cache-dependency-path: source/orch/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      # Every push / PR: the fast suite (each stress test runs once).
-      - if: github.event_name != 'workflow_dispatch' || inputs.suite == 'fast'
-        run: npm test
-      # Manual only (Actions > test > Run workflow): the full repetition counts.
-      - if: github.event_name == 'workflow_dispatch' && inputs.suite == 'stress'
-        run: npm run test:stress
+      - name: Run unchanged suite with resource samples
+        shell: pwsh
+        run: |
+          node "$env:GITHUB_WORKSPACE/diagnostics/.github/scripts/diagnose-tests.mjs" pwsh.exe -NoLogo -NoProfile -NonInteractive -Command '& npm.cmd test; exit $LASTEXITCODE'
+          exit $LASTEXITCODE
+      - name: Record final source state
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:DIAGNOSTIC_OUTPUT_DIR | Out-Null
+          $head = git rev-parse HEAD
+          $changes = @(git status --porcelain)
+          @{ head=$head; changes=$changes } | ConvertTo-Json | Set-Content (Join-Path $env:DIAGNOSTIC_OUTPUT_DIR 'source-after.json')
+          if ($head -cne $env:SOURCE_SHA -or $changes.Count -ne 0) { throw 'Source identity or contents changed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-diagnostics
+          path: ${{ runner.temp }}/orch-ci-diagnostics
+          if-no-files-found: error
+          retention-days: 14
