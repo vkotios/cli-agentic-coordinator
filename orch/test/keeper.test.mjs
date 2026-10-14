@@ -18,6 +18,7 @@ import {
   identityOf,
   spawnedIdentity,
   suspendProcess,
+  prepareProcessControl,
   resumeProcess, testReps } from './helpers.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -130,12 +131,14 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
 test('G4: a SUSPENDED keeper reports `held, unresponsive`, nothing is auto-released, and cancel --keeper clears it', { timeout: 180000 }, async (t) => {
   const c = makeCase('g4-frozen');
   let suspended = null;
+  let assemblyPath;
   t.after(async () => {
     // Never leave a suspended process behind, whatever the assertions did.
-    if (suspended) await resumeProcess(suspended.pid, suspended.createdAt);
+    if (suspended) await resumeProcess(suspended.pid, suspended.createdAt, {assemblyPath});
     c.cleanup();
   });
 
+  assemblyPath = await prepareProcessControl(c.base);
   const { id, spawned, workerPid } = await launchHeld(c, 60);
 
   // A healthy keeper answers the hello (A5).
@@ -143,9 +146,10 @@ test('G4: a SUSPENDED keeper reports `held, unresponsive`, nothing is auto-relea
   assert.equal(healthy.state, 'held', `a healthy keeper did not answer: ${JSON.stringify(healthy)}`);
   assert.match(String(healthy.hello), new RegExp(id));
 
-  const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at);
-  assert.ok(s.ok, `could not suspend the keeper: ${s.output}`);
+  // A timeout after the native call may still have suspended it: cleanup must resume it.
   suspended = { pid: spawned.keeper_pid, createdAt: spawned.keeper_created_at };
+  const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at, false, {assemblyPath});
+  assert.ok(s.ok, `could not suspend the keeper: ${s.output}`);
 
   // X5: connect still succeeds; only the reply is missing. That is the third state.
   const frozen = await connectHello(c.lanePipe, { deadlineMs: 2000 });

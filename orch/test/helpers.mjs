@@ -295,31 +295,56 @@ export async function identityOf(pid, recordedCreatedAt) {
  *
  * A suspended process is ALWAYS resumed or killed by the test that suspended it.
  */
-export async function suspendProcess(pid, recordedCreatedAt, resume = false) {
-  const verdict = await identityOf(pid, recordedCreatedAt);
-  if (verdict !== 'match') return { ok: false, verdict, output: 'refused: identity is not a match' };
-  const fn = resume ? 'NtResumeProcess' : 'NtSuspendProcess';
+/** Compile before starting a keeper: cold Add-Type compilation is not a control action. */
+export async function prepareProcessControl(dir) {
+  const assemblyPath = path.join(dir, 'orch-test-process-control.dll');
+  if (fs.existsSync(assemblyPath)) throw new Error('process-control fixture assembly already exists');
   const script = [
+    "$ErrorActionPreference = 'Stop'",
     '$sig = @"',
     '[DllImport("ntdll.dll")] public static extern int NtSuspendProcess(IntPtr h);',
     '[DllImport("ntdll.dll")] public static extern int NtResumeProcess(IntPtr h);',
     '"@',
-    'Add-Type -MemberDefinition $sig -Name NtSusp -Namespace OrchTest | Out-Null',
+    `Add-Type -MemberDefinition $sig -Name NtSusp -Namespace OrchTest -OutputAssembly '${assemblyPath.replace(/'/g, "''")}'`,
+  ].join('\n');
+  await new Promise((resolve, reject) => execFile('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    { encoding: 'utf8', windowsHide: true, timeout: 60000 },
+    (err, stdout, stderr) => err ? reject(new Error(`process-control preparation failed (${err.killed ? 'timeout' : err.code}; ${err.signal}): ${stdout}${stderr}`)) : resolve(null)));
+  if (!fs.existsSync(assemblyPath)) throw new Error('process-control preparation produced no assembly');
+  return assemblyPath;
+}
+
+/** @param {number} pid @param {string} recordedCreatedAt @param {boolean} [resume] @param {{assemblyPath?:string}} [options] */
+export async function suspendProcess(pid, recordedCreatedAt, resume = false, {assemblyPath} = {}) {
+  const verdict = await identityOf(pid, recordedCreatedAt);
+  if (verdict !== 'match') return { ok: false, verdict, output: 'refused: identity is not a match' };
+  if (!assemblyPath || !fs.existsSync(assemblyPath) || !/^ms:\d+$/.test(recordedCreatedAt)) return { ok: false, verdict, output: 'refused: prepared fixture assembly or creation time missing' };
+  const fn = resume ? 'NtResumeProcess' : 'NtSuspendProcess';
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `Add-Type -Path '${assemblyPath.replace(/'/g, "''")}'`,
     `$p = Get-Process -Id ${Number(pid)} -ErrorAction Stop`,
-    `$rc = [OrchTest.NtSusp]::${fn}($p.Handle)`,
+    '$handle = $p.Handle',
+    '$created = ([DateTimeOffset]($p.StartTime.ToUniversalTime())).ToUnixTimeMilliseconds()',
+    `if ($created -ne ${recordedCreatedAt.slice(3)}) { Write-Output 'identity=mismatch'; exit 4 }`,
+    `$rc = [OrchTest.NtSusp]::${fn}($handle)`,
     'Write-Output "rc=$rc"',
+    'if ($rc -ne 0) { exit 5 }',
   ].join('\n');
   return new Promise((resolve) => {
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
       { encoding: 'utf8', windowsHide: true, timeout: 15000 },
-      (err, stdout, stderr) => resolve({ ok: !err && /rc=0/.test(String(stdout)), verdict, output: String(stdout || stderr || err) }),
+      (err, stdout, stderr) => resolve({ ok: !err && /^rc=0\r?$/m.test(String(stdout)), verdict,
+        failure: err ? err.killed ? 'control-timeout' : 'control-error' : null,
+        output: [stdout, stderr, err ? `code=${err.code ?? ''} signal=${err.signal ?? ''} killed=${err.killed ?? false}` : ''].filter(Boolean).join('\n') }),
     );
   });
 }
 
-export const resumeProcess = (pid, createdAt) => suspendProcess(pid, createdAt, true);
+export const resumeProcess = (pid, createdAt, options = {}) => suspendProcess(pid, createdAt, true, options);
 
 /** The pids `orch run` captured for one run, with their OS creation times (A2). */
 export function spawnedIdentity(stateRoot, id) {
