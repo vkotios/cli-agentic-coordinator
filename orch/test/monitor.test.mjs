@@ -145,19 +145,24 @@ test(`G3: the monitor is killed mid-run, ${REPS}x -> the worker still finishes a
 
 test('TF: status answers within its budget with the monitor absent, frozen and alive - and never writes', { timeout: 240000 }, async (t) => {
   const c = makeCase('tf-status');
+  const releaseWorker = path.join(c.base, 'release-worker');
+  let runId;
   let frozen = null;
   let assemblyPath;
   t.after(async () => {
+    fs.writeFileSync(releaseWorker, 'release\n');
     if (frozen) {
       const cleanup = await releaseSuspendedProcess(frozen.pid, frozen.createdAt, {assemblyPath});
       assert.ok(cleanup.ok, `preserved uncertain suspended fixture: ${JSON.stringify(cleanup)}`);
     }
+    if (runId) await waitFor(() => keeperLines(c.stateRoot, runId).some(l => l.event === 'keeper-exit'), { timeoutMs: 120000, what: 'TF keeper exit before cleanup' });
     c.cleanup();
   });
 
   assemblyPath = await prepareProcessControl(c.base);
-  const r = await orch(runArgs(c, ['--flag', '--emit', '--flag', '40', '--flag', '--interval', '--flag', '500']), c.env);
-  const id = idFrom(r.stdout);
+  // The worker must remain alive for all three status checks, regardless of host speed.
+  const r = await orch(runArgs(c, ['--flag', '--wait-for-file', '--flag', releaseWorker]), c.env);
+  const id = runId = idFrom(r.stdout);
   await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'spawned'), { timeoutMs: 20000, what: 'spawn' });
   const recPath = path.join(c.stateRoot, 'runs', id, 'run.json');
 
