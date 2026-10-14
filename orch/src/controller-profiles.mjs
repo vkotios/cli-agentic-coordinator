@@ -4,12 +4,20 @@ import {canonicalId} from './models.mjs';
 import {samePath} from './git.mjs';
 import {OrchError} from './errors.mjs';
 import path from 'node:path';
+import os from 'node:os';
 import {isIP} from 'node:net';
 import {aliasFor,mergeVibeConfig} from './adapters/vibe.mjs';
 const fail=m=>{throw new OrchError(m,'controller-qualification-refused');};
-export const controllerWorkdir=(p,dir)=>['vibe','opencode'].includes(p.controller.harness)?path.join(dir,'workspace'):p.smoke.workdir;
+export const MCP_CONTROLLERS=['vibe','opencode','copilot','muse'];
+export const controllerWorkdir=(p,dir)=>MCP_CONTROLLERS.includes(p.controller.harness)?path.join(dir,'workspace'):p.smoke.workdir;
 export function additionalProfileFiles(p,dir,commands,node,guard,server){
   const workdir=controllerWorkdir(p,dir),q=JSON.stringify,args=[server,p.session,p.offerHash],env={ORCH_CONFIG:p.smoke.configFile,...Object.fromEntries([...p.smoke.bindings,p.binding].map(b=>['ORCH_'+b.harness.toUpperCase()+'_EXE',b.exe])),...(p.smoke.roster.sha256?{ORCH_ROSTER:p.smoke.roster.file}:{})};
+  if(['copilot','muse'].includes(p.controller.harness)){
+    // Muse's MCP environment is explicit: child Python CLIs need home metadata.
+    // Forward locations only; credentials and provider overrides stay excluded.
+    const home=os.homedir(),locations={HOME:home,...(process.platform==='win32'?{USERPROFILE:home}:{}),VIBE_HOME:process.env.VIBE_HOME||path.join(home,'.vibe'),XDG_CONFIG_HOME:process.env.XDG_CONFIG_HOME||path.join(home,'.config')};
+    return [{file:p.controller.harness==='copilot'?path.join(dir,'native-copilot.json'):path.join(workdir,'.mcp.json'),text:q({mcpServers:{orch:{type:'stdio',command:node,args,cwd:workdir,env:{...env,...locations},...(p.controller.harness==='copilot'?{tools:['controller_step']}:{required:true})}}})+'\n'}];
+  }
   if(p.controller.harness==='vibe')return [
     {file:path.join(workdir,'.vibe','config.toml'),text:mergeVibeConfig('',{alias:aliasFor(p.controller.model),name:p.controller.model.split('/').pop(),provider:'mistral'})+`\n[[mcp_servers]]\nname = "orch"\ntransport = "stdio"\ncommand = ${q([node])}\nargs = ${q(args)}\ncwd = ${q(workdir)}\n[mcp_servers.env]\n${Object.entries(env).map(([k,v])=>k+' = '+q(v)).join('\n')}\n`},
     {file:path.join(workdir,'.vibe','agents','orch-controller.toml'),text:`description = "Owned controller qualification steps only"\nbypass_tool_permissions = false\nenabled_tools = ["orch_controller_step"]\n[tools.orch_controller_step]\npermission = "always"\n`}
@@ -21,8 +29,8 @@ export function additionalProfileFiles(p,dir,commands,node,guard,server){
   return [];
 }
 export function additionalControllerProfile(r){
-  if(!(r.harness==='vibe'&&r.billing==='subscription'||r.harness==='opencode'&&r.billing==='local'))fail('Additional controller profiles support Vibe subscription or explicitly configured OpenCode local routes');
-  return {version:4,mode:'native-cli',tools:['orch_controller_step'],effort:'provider-default',commandPolicy:'fixed-owned-step-tool'};
+  if(!(['vibe','copilot','muse'].includes(r.harness)&&r.billing==='subscription'||r.harness==='opencode'&&r.billing==='local'))fail('Additional controllers require saved subscriptions or an explicit OpenCode local route');
+  return {version:4,mode:'native-cli',tools:[r.harness==='copilot'?'orch-controller_step':r.harness==='muse'?'mcp__orch__controller_step':'orch_controller_step'],effort:r.harness==='muse'?'medium':'provider-default',commandPolicy:'fixed-owned-step-tool'};
 }
 export function validateControllerLocalProvider(r,p){
   if(!p||Object.keys(p).sort().join(',')!=='baseURL,context,id,output'||p.id!==r.model.split('/')[0]||!r.model.includes('/')||!Number.isInteger(p.context)||p.context<4096||p.context>1048576||!Number.isInteger(p.output)||p.output<1024||p.output>p.context)fail('Use an explicit credential-free local controller provider');

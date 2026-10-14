@@ -69,10 +69,10 @@ test('P04b native Muse model facts are bound to the same completed main run',t=>
   for(const changed of [{run_stream:{kind:'run',id:'other-run'}},{provider_id:'echo'}]){fs.writeFileSync(stdoutPath,jsonl([{schema_version:1,stream,payload_type:'run.model.configured',payload:{run_stream,provider_id:'meta',model_id:'example-served',...changed}},final]));assert.equal(muse.postExit({...ctx,stdoutPath}).actual_model,null);}
   const quoted={schema_version:1,payload_type:'task.lifecycle.failed',payload:{reason:'quota exceeded'}};assert.ok(!muse.parseProtocol(jsonl([quoted])).some(e=>e.type==='error'));
 });
-test('P04b onboarding selects both worker/reviewer routes, never controller or API billing',async t=>{
+test('P04b onboarding selects subscription worker/reviewer routes and scoped controller intent, never API billing',async t=>{
   const ctx=context(t);const repo=path.join(ctx.dir,'repo');makeRepo(repo,{'AGENTS.md':'Owner instructions\n'});const api=await import('../src/setup.mjs'),session=path.join(ctx.dir,'session'),s=await api.startSetup({repo,harness:'codex',session,catalog:undefined,roster:undefined});
   const route=harness=>({harness,model:'example-model',billing:'subscription',permission:'ask'});const answer={controller:route('codex'),workers:[route('copilot'),route('muse')],reviewers:[route('muse'),route('copilot')]};
-  assert.ok(s.nextQuestion.schema.properties.workers.items.properties.harness.enum.includes('muse'));for(const harness of ['muse','copilot'])assert.ok(!s.nextQuestion.schema.properties.controller.properties.harness.enum.includes(harness));
+  assert.ok(s.nextQuestion.schema.properties.workers.items.properties.harness.enum.includes('muse'));for(const harness of ['muse','copilot'])assert.ok(s.nextQuestion.schema.properties.controller.properties.harness.enum.includes(harness));
   await assert.rejects(api.answerSetup(session,{expectedRevision:s.revision,questionId:'routes',answer:{...answer,workers:[{...route('muse'),billing:'api'}]}}),/subscription/);
   const next=await api.answerSetup(session,{expectedRevision:s.revision,questionId:'routes',answer});assert.deepEqual(next.answers.routes,answer);
 });

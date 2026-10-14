@@ -9,6 +9,9 @@ import {fileURLToPath} from 'node:url';
 import {controllerWorkdir} from './controller-profiles.mjs';
 import {aliasFor} from './adapters/vibe.mjs';
 import os from 'node:os';
+import {subscriptionControllerSpec} from './controller-subscriptions.mjs';
+import {validateMuseSubscription} from './adapters/muse.mjs';
+import {readBounded} from './adapters/subscription-cli.mjs';
 
 export async function nativeControllerIdentity(){const observed=await creationTimesOf([process.pid]);return observed.times[process.pid]??null;}
 export function controllerFailureState(stage){const attempted=['spawn','controller-identity','completion','native-export'].includes(stage);return {state:attempted?'uncertain':'preflight-refused',controllerLaunchAttempted:attempted};}
@@ -18,10 +21,10 @@ let directory,stage='approval';
 const write=(name,value)=>fs.writeFileSync(path.join(directory,name),JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
 try{
   const spec=controllerExecutionSpec(session,id),p=spec.plan,f=spec.files;directory=f.dir;const workdir=controllerWorkdir(p,directory);
-  const env=subscriptionEnvironment();env.ORCH_CONFIG=p.smoke.configFile;
+  let env=subscriptionEnvironment();env.ORCH_CONFIG=p.smoke.configFile;
   for(const b of [...p.smoke.bindings,p.binding])env[`ORCH_${b.harness.toUpperCase()}_EXE`]=b.exe;
   if(p.smoke.roster.sha256)env.ORCH_ROSTER=p.smoke.roster.file;
-  stage='subscription-auth';let authSource,args;
+  stage='subscription-auth';let authSource,args,stdinFile=f.instructions;
   if(p.controller.harness==='claude'){
     const auth=JSON.parse(execFileSync(p.binding.exe,['auth','status','--json'],{env,cwd:p.smoke.workdir,encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:65536}));
     if(!auth.loggedIn||auth.authMethod!=='claude.ai'||auth.apiKeySource)throw Error('subscription-auth-refused');authSource='claude.ai';
@@ -31,6 +34,11 @@ try{
     const result=spawnSync(p.binding.exe,['login','status'],{env,cwd:p.smoke.workdir,encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:65536,stdio:['ignore','pipe','pipe']});
     if(result.status!==0||!/(?:^|\r?\n)Logged in using ChatGPT(?:\r?\n|$)/.test((result.stderr??'')+(result.stdout??'')))throw Error('subscription-auth-refused');authSource='ChatGPT';
     args=['exec','-m',p.controller.model,'-c','model_reasoning_effort=medium','-c','model_provider="openai"','-c','sandbox_workspace_write.writable_roots='+JSON.stringify([p.smoke.trialRoot]),'--sandbox','workspace-write','--json','--cd',p.smoke.workdir,'-'];
+  }else if(['copilot','muse'].includes(p.controller.harness)){
+    const subscriptionSpec=subscriptionControllerSpec(p.controller,{dir:directory,workdir,instructions:f.instructions},env);
+    if(p.controller.harness==='muse')validateMuseSubscription(JSON.parse(readBounded(subscriptionSpec.authFile,1048576).replace(/^\uFEFF/,'')));
+    // MCP child bindings come from the sealed profile file, not inherited process env.
+    env=subscriptionSpec.env;args=subscriptionSpec.args;authSource=subscriptionSpec.authSource;stdinFile=subscriptionSpec.stdinFile;
   }else{
     for(const key of Object.keys(env))if(key.startsWith('VIBE_')&&key!=='VIBE_HOME'||key.startsWith('OPENCODE_'))delete env[key];
     env.ORCH_CONTROLLER_COMMAND_POLICY=path.join(directory,'command-policy.json');env.ORCH_CONTROLLER_COMMAND_POLICY_SHA=JSON.parse(fs.readFileSync(f.prepared,'utf8')).policyHash;env.ORCH_CONTROLLER_OFFER_HASH=id;
@@ -45,7 +53,7 @@ try{
     }
   }
   stage='runner-identity';const runnerCreatedAt=await nativeControllerIdentity();if(!runnerCreatedAt)throw Error('native-runner-identity-unknown');
-  const handles=[fs.openSync(f.instructions,'r'),fs.openSync(path.join(directory,'stdout.jsonl'),'wx'),fs.openSync(path.join(directory,'stderr.txt'),'wx')];
+  const handles=[fs.openSync(stdinFile,'r'),fs.openSync(path.join(directory,'stdout.jsonl'),'wx'),fs.openSync(path.join(directory,'stderr.txt'),'wx')];
   stage='spawn';const startedAt=new Date().toISOString(),child=spawn(p.binding.exe,args,{cwd:workdir,env,windowsHide:true,shell:false,stdio:handles});handles.forEach(fd=>fs.closeSync(fd));
   const closed=new Promise(resolve=>{child.once('close',(code,signal)=>resolve({code,signal}));child.once('error',()=>resolve({code:null,signal:null}));});
   stage='controller-identity';const createdAt=await ownChildCreationTime(child.pid);

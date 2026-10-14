@@ -349,15 +349,17 @@ qualification. No process is automatically killed; inspect retained launch evide
 if the runner or controller stops unexpectedly.
 
 The native subscription profiles are Claude with its Bash tool, Codex with command
-execution, and Vibe with its scoped native MCP tool. Claude/Codex use medium effort;
-Vibe records the provider default. Codex retains its workspace-write sandbox and
+execution, and Vibe, Copilot and Muse with scoped native MCP tools. Claude/Codex/Muse
+use medium effort; Vibe and Copilot record the provider default. Codex retains its workspace-write sandbox and
 grants model-driven writes only to the owned trial directory. Coordination locks
 and the child-access proof for this lifecycle remain inside that trial. Claude's
 session-local PreToolUse hook permits only the eight exact prepared commands;
 general Node-prefix approval is absent, and missing guard evidence refuses proof.
-Vibe and OpenCode use an owned MCP server exposing only `controller_step` with
+Vibe, OpenCode, Copilot and Muse use an owned MCP server exposing only `controller_step` with
 one fixed `step` enum. The server binds the approved offer; the model cannot
-supply commands, paths, approval or another session. Shell/file tools are disabled.
+supply commands, paths, approval or another session. Copilot exposes only this tool;
+Muse disables shell and writes, and its proof refuses other observed tool calls.
+The existing Vibe/OpenCode profiles disable shell/file tools.
 Native tool results, server audit and stopped server process must match the eight
 lifecycle steps. Vibe also binds native session/runtime model evidence. An
 inherited user hooks file refuses this scoped Vibe profile; normal hooks are never
@@ -367,6 +369,26 @@ normal approval rules; environments needing interactive host approval can remain
 unqualified. Other harness/model/tool profiles remain unqualified until their
 native evidence path is supported and observed. This is a coverage boundary,
 not a judgment about a harness or models with different context/tool profiles.
+
+Copilot/Muse onboarding can record controller intent and apply private configuration
+without `--adopt`; generic repository adoption for these harnesses is not installed
+by this scoped qualification flow. Prepared instructions and MCP configuration live
+in the owned controller workspace, separately from the child source. Inherited MCP,
+hooks or custom-provider configuration refuses this trial rather than changing the
+owner's setup. Muse uses the CLI's native saved device sign-in location; an alternate
+adapter auth-path override cannot redirect the controller. No credentials are copied.
+Copilot saved sign-in is established by successful native call/exit evidence rather
+than a separate login-status probe. Missing sign-in can consume the one-shot attempt;
+inspect its retained refusal and do not retry automatically.
+
+Copilot controller Auto receipts retain `model: "auto"` and separately record the
+observed native model. They prove only the completed automatic-selector lifecycle,
+not exact-model access or task-fit capability. Explicit Copilot selectors require
+matching native model-call evidence. Muse requires one completed session/run and
+matching Meta runtime-model evidence; this is not independent backend attestation.
+Both profiles require ordered native tool results, the matching server execution
+audit and stopped controller/runner/registered MCP server incarnations. Receipts
+remain immutable and expire; reuse makes no model calls and never permits a launch.
 
 OpenCode's initial profile supports explicitly configured local inference. Set
 the controller route to `billing: "local"` and supply `controllerLocalProvider`
@@ -461,7 +483,8 @@ runtime configuration or uncertain cleanup requires inspection through existing
 status, cleanup and finish commands; closure cannot create a successful receipt.
 
 Copilot and Muse worker/reviewer choices currently require subscription billing.
-They are not controller profiles. The access smoke/probe/qualify flow supports
+Their scoped controller trials are separate from these role-access receipts.
+The access smoke/probe/qualify flow supports
 either role for both harnesses and checks their native model evidence. Copilot
 Auto may be requested explicitly without a reasoning effort; its receipt reports
 automatic subscription access and the observed serving model. Health labels this

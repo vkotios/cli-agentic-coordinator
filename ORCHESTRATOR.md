@@ -34,8 +34,12 @@ fixed lifecycle steps; do not perform them on its behalf. Inspect process/log
 evidence before `controller-qualify`. Reuse only fresh matching receipts through
 `controller-qualification` and health. This proves the observed lifecycle in that
 profile, with task capability and future launch authority remaining separate.
-The supported trial profiles are Claude/Codex/Vibe subscriptions and explicitly
-configured local OpenCode; inspect billing and tool-profile coverage in `docs/SETUP.md`.
+The supported trial profiles are Claude/Codex/Vibe/Copilot/Muse subscriptions and
+explicitly configured local OpenCode; inspect billing and tool-profile coverage in
+`docs/SETUP.md`. Copilot Auto records the observed model separately from its selector;
+Muse reports native runtime-model evidence. Neither expands task capability or
+future launch authority. Copilot/Muse use only the approved scoped step-tool profile;
+generic repository adoption and other controller tool configurations remain separate.
 For measured coding/review cases, use `setup task-smoke`, approve its exact offer,
 then `task-start` and the supplied fixed `task-step` sequence. Capture with
 `task-qualify` only after independent checks, review cleanup and claim release.

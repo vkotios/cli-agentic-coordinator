@@ -54,6 +54,11 @@ function guard(fn, label) {
   }
 }
 
+function auditProcessTable() {
+  return readProcessTable({ deadlineMs: 5000, onFailure: failure =>
+    appendMonitorEvent(cfg, ID, { type: 'process-query-failed', ...failure }) });
+}
+
 // CODE-REVIEW FIX (agy g7): no stray rejection may crash the monitor. A crash is harmless
 // to the run (K2) but it abandons the viewer and the record; record and carry on.
 process.on('unhandledRejection', (e) => {
@@ -250,7 +255,7 @@ async function main() {
     // and every kill path refuses.
     if (workerPid && (Date.now() - state.lastProcScan > cfg.procScanMs || finished)) {
       state.lastProcScan = Date.now();
-      processSnapshot = await readProcessTable({ deadlineMs: 5000 });
+      processSnapshot = await auditProcessTable();
       processScanned = true;
       workerVerdict = verifyIdentity(workerPid, workerCreatedAt, processSnapshot).verdict;
     }
@@ -279,7 +284,7 @@ async function main() {
     // The worker may have exited while CIM was reading. Its keeper-recorded birth
     // and exit bind a historical root; never borrow the current PID holder's birth.
     if (finishedNow && fresh.workerPid && (!processScanned || fresh.workerPid !== workerPid || !finished)) {
-      processSnapshot = await readProcessTable({ deadlineMs: 5000 });
+      processSnapshot = await auditProcessTable();
       processScanned = true;
     }
     if (processScanned) {
