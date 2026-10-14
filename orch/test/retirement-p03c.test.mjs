@@ -397,7 +397,7 @@ async function ownedFixture(t, name) {
 test('P03c fixture: owned artifacts are created without moving a populated run directory', async (t) => {
   const rename = fs.renameSync;
   fs.renameSync = (from, to) => {
-    if (fs.statSync(from).isDirectory()) throw Object.assign(new Error('fixture directory move refused'), { code: 'EPERM' });
+    if (fs.statSync(from, { throwIfNoEntry: false })?.isDirectory()) throw Object.assign(new Error('fixture directory move refused'), { code: 'EPERM' });
     return rename(from, to);
   };
   let f;
