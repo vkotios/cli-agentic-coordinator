@@ -18,7 +18,7 @@ import {
   identityOf,
   killOwnedChecked, testReps } from './helpers.mjs';
 import { probeFree } from '../src/lanepipe.mjs';
-import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
+import { readProcessTable, verifyIdentity, observeDescendants } from '../src/procs.mjs';
 
 const REPS = testReps(20, 'ORCH_G5_REPS');
 
@@ -163,12 +163,27 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
     c.cleanup();
   });
   const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild']);
-  // Record the descendants BEFORE the kill, so cleanup can verify them by identity.
-  await new Promise((r) => setTimeout(r, 1500));
+  // Require the fixture's own spawn receipts, not every PPID neighbour (which also
+  // includes OS console helpers and can refer to an older process incarnation).
+  const childPid = await waitFor(() => {
+    const file = path.join(c.work, `fake-child-${workerPid}.json`);
+    return fs.existsSync(file) && JSON.parse(fs.readFileSync(file, 'utf8')).child_pid;
+  }, { timeoutMs: 5000, what: 'the fake worker child spawn receipt' });
+  const grandchildPid = await waitFor(() => {
+    const file = path.join(c.work, `fake-child-${childPid}.json`);
+    return fs.existsSync(file) && JSON.parse(fs.readFileSync(file, 'utf8')).child_pid;
+  }, { timeoutMs: 5000, what: 'the fake worker grandchild spawn receipt' });
   const full = await readProcessTable({ deadlineMs: 6000 });
-  const before = full ? full.filter((p) => p.ppid === workerPid) : [];
+  const observed = observeDescendants(workerPid, workerCreatedAt, full);
+  assert.equal(observed.rootVerified, true, JSON.stringify(observed));
+  const before = [childPid, grandchildPid].map(pid => {
+    const entry = observed.candidates.find(p => p.pid === pid && p.ancestry === 'verified');
+    assert.ok(entry, `spawned fixture descendant ${pid} has no verified process ancestry: ${JSON.stringify(observed)}`);
+    return entry;
+  });
   for (const d of before) strays.push({ pid: d.pid, createdAt: d.createdAt });
-  assert.ok(before.length >= 1, 'the fake worker did not produce a descendant to test against');
+  assert.equal(before[0].ppid, workerPid);
+  assert.equal(before[1].ppid, childPid);
 
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
@@ -180,7 +195,7 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
   const after = await readProcessTable({ deadlineMs: 6000, pids: before.map((d) => d.pid) });
   for (const d of before) {
     const v = verifyIdentity(d.pid, d.createdAt, after).verdict;
-    assert.ok(['gone', 'mismatch'].includes(v), `a non-detached descendant survived the tree kill (${d.pid}: ${v})`);
+    assert.ok(['gone', 'mismatch'].includes(v), `a non-detached descendant survived the tree kill: ${JSON.stringify({ workerPid, workerCreatedAt, before, after, cancel: out })}`);
   }
 });
 

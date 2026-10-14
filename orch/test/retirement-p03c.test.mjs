@@ -17,17 +17,20 @@ import { withOperationLock } from '../src/resources.mjs';
 
 const old = '2026-01-01T00:00:00.000Z';
 const json = (r) => JSON.parse(r.stdout);
-/** @param {any} t @param {string} name @param {any} [metadata] */
-function fixture(t, name, metadata = { enabled: true, successDays: 0, otherDays: 0 }) {
+/** @param {any} t @param {string} name @param {any} [metadata] @param {boolean} [owned] */
+function fixture(t, name, metadata = { enabled: true, successDays: 0, otherDays: 0 }, owned = false) {
   const c = makeCase(name, { config: { retention: { mode: 'manual', successDays: 0, otherDays: 0, maxMs: 10000, metadata } } });
   t.after(() => c.cleanup());
   const id = '20260101-000000-abc123';
   const dir = path.join(c.stateRoot, 'runs', id);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  if (owned) beginRunArtifacts(loadConfig(c.stateRoot), id);
   fs.mkdirSync(dir, { recursive: true });
   const rec = { id, cli: 'fake', lane: 'cloud', status: 'completed', ended_at: old, created_at: old, exit_code: 0, dir: c.work, model_requested: 'fixture-model', model_canonical: 'fixture-model', model_actual: null };
   fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(rec));
   const files = { 'stdout.log': 'original final answer\n', 'stderr.log': '', 'prompt.txt': 'private test handoff', 'keeper.ndjson': [{ event: 'worker-exit', at: old, code: 0 }, { event: 'streams-closed', at: old }, { event: 'keeper-exit', at: old, write_failures: 0 }].map((r) => JSON.stringify(r)).join('\n') + '\n', 'events.monitor.ndjson': '{"event":"finished"}\n' };
   for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), text);
+  if (owned) confirmRunArtifacts(loadConfig(c.stateRoot), id);
   fs.writeFileSync(path.join(c.stateRoot, 'ledger.jsonl'), JSON.stringify({ run_id: id, disposition: 'blocked', model_canonical: 'fixture-model', recorded_at: old }) + '\n');
   return { c, id, dir, rec };
 }
@@ -388,16 +391,22 @@ test('P03c: changed collector receipts and concurrent run guards prevent origina
 });
 
 async function ownedFixture(t, name) {
-  const f = fixture(t, name);
-  const backup = path.join(f.c.work, 'original-fixture');
-  fs.renameSync(f.dir, backup);
-  const cfg = loadConfig(f.c.stateRoot);
-  beginRunArtifacts(cfg, f.id);
-  fs.mkdirSync(f.dir);
-  for (const file of fs.readdirSync(backup)) fs.copyFileSync(path.join(backup, file), path.join(f.dir, file));
-  confirmRunArtifacts(cfg, f.id);
-  return f;
+  return fixture(t, name, undefined, true);
 }
+
+test('P03c fixture: owned artifacts are created without moving a populated run directory', async (t) => {
+  const rename = fs.renameSync;
+  fs.renameSync = (from, to) => {
+    if (fs.statSync(from).isDirectory()) throw Object.assign(new Error('fixture directory move refused'), { code: 'EPERM' });
+    return rename(from, to);
+  };
+  let f;
+  try { f = await ownedFixture(t, 'p03c-owned-no-move'); } finally { fs.renameSync = rename; }
+  await transcripts(f);
+  const result = await collect(f);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).runs[0].state, 'collected');
+});
 
 test('P03c: future owned runs seal automatically only after explicit finalization and opt-in', async (t) => {
   const f = await ownedFixture(t, 'p03c-owned'); await transcripts(f);

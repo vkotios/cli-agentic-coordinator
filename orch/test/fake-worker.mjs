@@ -92,6 +92,7 @@ if (has('--grandchild')) {
     shell: false,
     windowsHide: true,
   });
+  fs.writeFileSync(path.join(process.cwd(), `fake-child-${process.pid}.json`), JSON.stringify({ parent_pid: process.pid, child_pid: child.pid }));
   child.unref?.();
 }
 if (has('--spawn-child')) {
@@ -100,6 +101,7 @@ if (has('--spawn-child')) {
     shell: false,
     windowsHide: true,
   });
+  fs.writeFileSync(path.join(process.cwd(), `fake-child-${process.pid}.json`), JSON.stringify({ parent_pid: process.pid, child_pid: child.pid }));
   child.unref?.();
 }
 if (has('--detached-helper')) {
