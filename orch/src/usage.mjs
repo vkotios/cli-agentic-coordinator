@@ -40,10 +40,13 @@ function readCache(p,pool) {
     return {version:1,configFingerprint:hash(pool),lastAttemptAt:null,observation:null,error:{code:'cache-unreadable'},protected:true};
   }
 }
+// Collector and orch clocks can disagree by milliseconds; an observation stamped up to this
+// far ahead is accepted on refresh and rendered as just observed, not as unknown.
+const CLOCK_SKEW_MS=5000;
 function render(pool,cache,config,now,refreshState) {
   const observation=cache.observation?structuredClone(cache.observation):null;
   const age=observation?now-Date.parse(observation.observedAt):null;
-  const freshness=age==null || age<0?'unknown':age>config.staleAfterSeconds*1000?'stale':'fresh';
+  const freshness=age==null || !(age>=-CLOCK_SKEW_MS)?'unknown':age>config.staleAfterSeconds*1000?'stale':'fresh';
   if(observation) for(const w of observation.windows) w.freshness=w.resetsAt && Date.parse(w.resetsAt)<=now?'reset-stale':(w.used==null && w.remaining==null)?'unknown':freshness;
   return {id:pool.id,provider:pool.provider,account:pool.account,workspace:pool.workspace,billing:'subscription',freshness,observation,lastAttemptAt:cache.lastAttemptAt,nextRefreshAt:cache.lastAttemptAt?new Date(Date.parse(cache.lastAttemptAt)+config.minRefreshSeconds*1000).toISOString():null,error:cache.error,refreshState};
 }
@@ -72,7 +75,7 @@ async function onePool(stateRoot,pool,config,refresh,now,clock) {
     else {
       try {
         const o=pool.collector.kind==='codexbar'?normalizeCodexBar(result.data,pool,result.verifiedVersion):normalizeExternal(result.data,pool);
-        if(Date.parse(o.observedAt)>finishedNow+5000) throw new Error('future observation');
+        if(Date.parse(o.observedAt)>finishedNow+CLOCK_SKEW_MS) throw new Error('future observation');
         cache.observation=o;cache.error=null;
       } catch {cache.error={code:'collector-invalid'};}
     }

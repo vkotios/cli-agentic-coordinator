@@ -37,6 +37,13 @@ export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', impor
 
 const ADMISSION_TIMEOUT_MS = Number(process.env.ORCH_ADMISSION_TIMEOUT_MS || 5000);
 const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
+// Identity reads that decide a cancel. A filtered process query costs ~0.5 s idle but was
+// observed to exceed 3 s under load; a timed-out read refuses the kill (safe, but the
+// operator must cancel again). The same budget as cancel --keeper's re-check.
+const CANCEL_IDENTITY_MS = 10000;
+// A concurrent cancel waits for the holder's whole attempt: identity read and kill
+// (CANCEL_IDENTITY_MS each), 15 s reap wait and the final identity read, plus margin.
+const CANCEL_LOCK_WAIT_MS = 50000;
 
 /* ------------------------------------------------------------------ run ---- */
 
@@ -927,7 +934,7 @@ export async function cmdCancel(args, io = console) {
   // process kills and writes `cancel-result.json`; a concurrent caller waits and serves
   // that result without killing anything. A lock whose holder is verifiably gone is
   // taken over, so a crashed canceller never blocks a retry.
-  const lock = await acquireCancelLock(P, 25000);
+  const lock = await acquireCancelLock(P, CANCEL_LOCK_WAIT_MS);
   if (!lock.acquired) {
     if (lock.served) {
       const out = { ...lock.served, first_requester: firstRequester, served_from: 'concurrent-cancel', kill_performed: false };
@@ -953,7 +960,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
     return { ...out, exitCode: 3 };
   }
 
-  const kill = await treeKillChecked(workerPid, workerCreatedAt, { deadlineMs: 3000 });
+  const kill = await treeKillChecked(workerPid, workerCreatedAt, { deadlineMs: CANCEL_IDENTITY_MS });
 
   // Give the keeper up to 15 s to reap and record the exit.
   const reapDeadline = new Deadline(15000, 'reap wait');
@@ -964,7 +971,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
   }
 
   // Final, bounded identity read. Nothing is claimed before this.
-  const finalTable = await readProcessTable({ deadlineMs: 3000, pids: [workerPid] });
+  const finalTable = await readProcessTable({ deadlineMs: CANCEL_IDENTITY_MS, pids: [workerPid] });
   const finalId = verifyIdentity(workerPid, workerCreatedAt, finalTable);
   const exitRecorded = !!keeperFacts(readTailLines(P.keeper, 16384)).workerExit;
   // Success needs POSITIVE evidence of death: the keeper recorded the exit, or the pid
@@ -1117,7 +1124,7 @@ async function cancelKeeper(cfg, rec, args, io) {
     return { ...out, exitCode: 3 };
   }
 
-  const kill = await killChecked(keeperPid, keeperCreatedAt, { deadlineMs: 3000 });
+  const kill = await killChecked(keeperPid, keeperCreatedAt, { deadlineMs: CANCEL_IDENTITY_MS });
   await sleep(500);
 
   const workerPid = facts.workerPid ?? rec.worker_pid ?? null;
