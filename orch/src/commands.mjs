@@ -1030,7 +1030,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
  * told apart from a live one without guessing.
  */
 async function acquireCancelLock(P, waitMs) {
-  const { times } = await creationTimesOf([process.pid], { deadlineMs: 4000 });
+  const { times } = await creationTimesOf([process.pid], { deadlineMs: CANCEL_IDENTITY_MS });
   const me = { pid: process.pid, created_at: times[process.pid] ?? null, attempt: crypto.randomBytes(6).toString('hex'), at: nowIso() };
   const dl = new Deadline(waitMs, 'cancel lock');
   const waitStartedMs = Date.now();
