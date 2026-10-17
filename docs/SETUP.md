@@ -353,6 +353,46 @@ use. MCP readiness is `configured-unqualified` after installation. Health keeps
 fixed-step lifecycle receipt: that receipt covers only its observed trial tool
 profile. Adoption makes no model call and grants no task-launch permission.
 
+## Adopted repository controller qualification
+
+Copilot and Muse can be offered a separate disposable repository task through
+`setup repository-smoke --session <private session> --config <private config>
+--request <JSON>`. The request selects `worker`, `reviewer` and `maxAgeSeconds`.
+It makes no model call. Exact offer approval is required separately for
+`repository-start` (prepare) and `repository-run` (one native controller launch).
+The offer bounds one controller and two Codex/Vibe subscription children.
+
+The fixture preserves owner instructions through adoption. Its approved MCP
+profile exposes ordinary orch lifecycle tools under an offer-bound scope guard,
+plus read-only `repository_instructions` and `repository_verify` tools for the
+installed instructions and independent helper checks. The controller chooses its workflow; no fixed `controller_step` sequence
+qualifies this profile. Foreign paths/routes and duplicate mutation attempts are
+refused. Any failed or refused tool call ends qualification for that offer;
+definite nonzero responses are recorded separately from uncertain outcomes.
+Neither outcome authorizes an automatic retry. Concurrent calls serialize within
+a bounded wait rather than treating an ordinary in-flight call as a stale lock.
+
+`repository-qualify` checks native model/tool results against the server journal,
+independent helper/review checks, child identities, source scope, review removal,
+claim release and stopped registered processes. `repository-qualification`
+validates fresh receipts without launching models or enabling policy. Health
+clears only the corresponding repository gap when the selected controller
+profile matches. Copilot Auto remains observed automatic access; a receipt covers
+only the tested tool profile and case, and grants no future launch permission.
+
+If a trial fails or is abandoned, inspect it and approve `repository-close` for
+that exact offer. Active/unknown processes refuse closure. The existing cleanup
+path records blocked outcomes, removes eligible review resources and releases the
+claim; source and evidence remain retained. Explicit closure can retain changed
+fixture instructions or kit source without certifying those bytes. Original offer,
+session, runtime paths and Git authority must still match. A known preflight refusal
+can close only after the recorded runner stopped; a recorded PID with missing birth
+evidence needs a reliable process table proving it absent. Live or unidentifiable
+processes and unknown registrations remain blockers. It never kills or relaunches an agent.
+The fixture-specific MCP profile delta is recorded separately from the original
+adoption manifest. All fixture configuration and evidence belong outside public
+commits. Owner repositories, credentials and global registrations are unchanged.
+
 ## Native controller lifecycle trial
 
 Controller qualification is separate from child access. `setup controller-smoke`
@@ -443,13 +483,25 @@ in the separate private runtime config, for example:
 ```
 
 The selected model uses the same provider ID, for example `local/model-id`.
-Only credential-free loopback/private IP endpoints are accepted; provider/model
+Only loopback/private IP endpoint URLs without embedded credentials are accepted; provider/model
 configuration and scoped MCP tool/permissions are owned by the trial.
 OpenCode uses isolated config/data/cache/state locations and its actual native
 assistant session export to bind model, provider, directory and terminal evidence.
 Subscription/API OpenCode routes remain unsupported by this qualification profile;
 it never falls back to a paid provider. Requested settings alone cannot qualify.
 The Codex/Vibe child pair remains subscription-only for every controller profile.
+
+For an authenticated local gateway, the private runtime config can additionally
+set `controllerLocalAuthentication` to `{"file":"/private/opencode/auth.json"}`
+using the absolute path to an existing native OpenCode authentication file.
+Only the saved `api` entry matching the selected local provider ID is used.
+The offer binds its fingerprint; launch rechecks that binding and supplies the
+key through a scoped process environment variable. No key is copied into the
+offer, native settings or child subscription environment, and the original
+authentication file is not changed. Inline keys, OAuth entries, public endpoints
+and paid API routes are unsupported. Receipt reuse and health read the saved
+reference and historical native proof without rereading credentials; they do
+not recheck current authentication or grant another launch.
 
 `controller-qualification --config <private config>` validates and reuses a fresh
 receipt without model calls. All controller actions take `--session` and the
@@ -539,3 +591,9 @@ unknown native model evidence cannot qualify either route. Reusable receipts bin
 any Copilot usage sidecar as well as original run, role and cleanup evidence.
 Controller trials retain their existing Codex/Vibe child
 profiles; this access extension does not expand those qualification paths.
+
+For repository-controller qualification, the independent reviewer receives an immutable prompt snapshot of the completed worker’s actual `stats.mjs` bytes. The detached `HEAD` remains the baseline. The tool result and receipt bind the implementation hash and delivered prompt hash; a changed snapshot refuses qualification. The seeded review calibration target remains separate from implementation verification.
+
+The scoped repository-controller tools bind the implementation directory, worker handoff, reviewer prompt and review directory to the approved offer. Native arguments omit filesystem paths; supplying a path override is rejected. Ordinary unscoped tools retain their existing path options. The pure helper fixture accepts safe numeric `Infinity` constants while retaining its AST, isolated execution and contract checks.
+
+Scoped repository-controller status calls wait up to 20 seconds for the owned run’s final record, reducing busy polling during long child runs. At the wait bound, an active run is still reported as active. The global CLI status command keeps its existing behavior.

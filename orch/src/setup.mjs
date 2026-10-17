@@ -283,6 +283,10 @@ export async function cmdSetup(args, io) {
         const {cmdSetupController} = await import('./setup-controller.mjs');
         return cmdSetupController(args, io);
     }
+    if (['repository-smoke','repository-start','repository-run','repository-qualify','repository-qualification','repository-close'].includes(action)) {
+        const {cmdSetupRepositoryController} = await import('./setup-repository-controller.mjs');
+        return cmdSetupRepositoryController(args, io);
+    }
     if (['smoke', 'probe', 'qualify', 'qualification'].includes(action)) {
         const {cmdSetupQualification} = await import('./setup-qualification.mjs');
         return cmdSetupQualification(args, io);

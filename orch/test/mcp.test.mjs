@@ -21,6 +21,7 @@ const TOOL_NAMES = [
   'setup_smoke','setup_probe','setup_qualify','setup_qualification',
   'setup_controller_smoke','setup_controller_start','setup_controller_step','setup_controller_qualify','setup_controller_qualification',
   'setup_controller_run',
+  'setup_repository_smoke','setup_repository_start','setup_repository_run','setup_repository_qualify','setup_repository_qualification','setup_repository_close',
   'setup_task_smoke','setup_task_start','setup_task_step','setup_task_qualify','setup_task_qualification','setup_task_close',
 ];
 
@@ -39,6 +40,8 @@ async function setupConversation(dir,repo,call){
   response=await call('setup_receipt',{session,preview:preview.previewHash});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.status,'applied');
   response=await call('setup_health',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.readOnly,true);assert.equal(response.structuredContent.output.providerCalls,0);
   response=await call('setup_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
+  response=await call('setup_repository_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
+  for(const tool of ['setup_repository_smoke','setup_repository_start','setup_repository_run','setup_repository_qualify','setup_repository_close']){fs.writeFileSync(approval,JSON.stringify({offerHash:'a'.repeat(64),approve:false}));assert.equal((await call(tool,{session,...(tool==='setup_repository_smoke'?{config}:{}),request:approval})).isError,true);}
   response=await call('setup_controller_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
   response=await call('setup_task_qualification',{session,config});assert.equal(response.isError,false);assert.equal(response.structuredContent.output.providerCalls,0);
   fs.writeFileSync(approval,JSON.stringify({worker:0,reviewer:0,caseId:'numeric-summary-v1',maxAgeSeconds:3600}));assert.equal((await call('setup_task_smoke',{session,config,request:approval})).isError,true);
@@ -389,7 +392,7 @@ test('T3 (unit): tool input -> the CLI argv; wait_lane is capped; review is alwa
   assert.equal(bad.isError, true);
 });
 
-test('T3 interop: the official @modelcontextprotocol/sdk Client (dev dependency only) connects over stdio, lists and calls tools', { timeout: 120000 }, async (t) => {
+test('T3 interop: the official @modelcontextprotocol/sdk Client connects over stdio, lists and calls tools', { timeout: 120000 }, async (t) => {
   const c = makeCase('t3-sdk');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');

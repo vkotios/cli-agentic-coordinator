@@ -9,6 +9,7 @@ import {subscriptionEnvironment} from './setup-qualification.mjs';
 import {readBounded} from './adapters/subscription-cli.mjs';
 import {samePath} from './git.mjs';
 import {getAdapter} from './adapters/index.mjs';
+import {REPOSITORY_TOOLS} from './repository-controller.mjs';
 const STEPS=['claim','worker','monitor-worker','reviewer','monitor-reviewer','finalize','record','finish'];
 const fail=m=>{throw new OrchError(m,'controller-qualification-refused');};
 // Copilot's settings and managed legacy state may contain JSON comments.
@@ -28,6 +29,8 @@ const json=(f,comments=false)=>{if(!fs.existsSync(f))return {};try{const text=re
 const replayed=x=>x&&typeof x==='object'&&(x.replayed===true||Object.values(x).some(replayed));
 export function subscriptionControllerSpec(route,files,source=process.env,saved){
   if(!['copilot','muse'].includes(route.harness))fail('Unknown subscription controller profile');getAdapter(route.harness).validateRequest({model:route.model});
+  if(files.repositoryTools&&!isDeepStrictEqual(files.repositoryTools,REPOSITORY_TOOLS))fail('Use the exact owned repository tool profile');
+  const available=files.repositoryTools?files.repositoryTools.map(t=>'orch-'+t):['orch-controller_step'];
   const env=subscriptionEnvironment(source),home=source.USERPROFILE||os.homedir();
   const copilotHome=source.COPILOT_HOME||path.join(home,'.copilot'),museHome=path.join(source.XDG_CONFIG_HOME||path.join(home,'.config'),'muse');
   const settingsDocs=saved?[saved.settings??{}]:route.harness==='copilot'?['config.json','settings.json'].map(n=>json(path.join(copilotHome,n),true)):[json(path.join(museHome,'settings.json'))];
@@ -38,7 +41,7 @@ export function subscriptionControllerSpec(route,files,source=process.env,saved)
   if(route.harness==='copilot'){
     const prompt=readBounded(files.instructions,12000);if(!prompt||prompt.includes('\0')||prompt.length>12000)fail('Copilot controller instructions are unavailable or exceed the bounded argv limit');
     delete env.COPILOT_CUSTOM_INSTRUCTIONS_DIRS;env.COPILOT_PLUGIN_DIR_ONLY='true';env.COPILOT_AUTO_UPDATE='false';
-    return {env,stdinFile:os.devNull,authSource:'copilot-api-overrides-cleared',args:['-C',files.workdir,'--model',/^auto$/i.test(route.model)?'auto':route.model,'--output-format','json','--no-ask-user','--no-color','--no-auto-update','--no-remote-export','--disable-builtin-mcps','--additional-mcp-config','@'+path.join(files.dir,'native-copilot.json'),'--available-tools','orch-controller_step','--allow-tool','orch','--log-level','none','--usage-output-file',path.join(files.dir,'copilot-usage.json'),'-p',prompt]};
+    return {env,stdinFile:os.devNull,authSource:'copilot-api-overrides-cleared',args:['-C',files.workdir,'--model',/^auto$/i.test(route.model)?'auto':route.model,'--output-format','json','--no-ask-user','--no-color','--no-auto-update','--no-remote-export','--disable-builtin-mcps','--additional-mcp-config','@'+path.join(files.dir,'native-copilot.json'),'--available-tools',...available,'--allow-tool','orch','--log-level','none','--usage-output-file',path.join(files.dir,'copilot-usage.json'),'-p',prompt]};
   }
   if(route.harness==='muse'){
     const nativeAuth=path.join(museHome,'auth.json');if(source.MUSE_AUTH_PATH&&!samePath(path.resolve(source.MUSE_AUTH_PATH),nativeAuth))fail('Muse controller requires the native saved sign-in location');delete env.MUSE_AUTH_PATH;for(const k of Object.keys(env))if(k.toUpperCase()==='MUSE_TRANSPORT_TRACE')delete env[k];

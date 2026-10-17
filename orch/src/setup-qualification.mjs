@@ -85,19 +85,24 @@ export function smokeRouteProof(session,offerHash,role,seams={}){return runProof
 export async function smokeEvidence(session,offerHash,seams={},reuse=false){const p=loadPlan(session,offerHash,seams,reuse),proof=await proofSet(p);return {version:1,offerHash,sessionHash:p.sessionHash,...proof,createdAt:new Date(seams.now??Date.now()).toISOString(),expiresAt:new Date(Math.min(...proof.routes.map(r=>Date.parse(r.endedAt)))+p.maxAgeSeconds*1000).toISOString(),cleanup:CLEANUP,scope:scopeFor(p)};}
 export async function launchSmoke(p){return nativeLaunch(p);}
 export async function prepareSmokeFixture(session,request,seams={}){exact(request,['offerHash','approve']);if(request.approve!==true)fail('Approve the exact fixture offer explicitly');const p=loadPlan(session,request.offerHash,seams);return withOperationLock({stateRoot:path.resolve(session)},'setup-qualification',async()=>{if((seams.now??Date.now())-Date.parse(p.createdAt)>p.maxAgeSeconds*1000)fail('Qualification offer expired');if(!fs.existsSync(p.trialRoot))await materialize(p);await cleanSource(p);return p;});}
-async function nativeLaunch(p){const t=trialPaths(p.plan),env=subscriptionEnvironment();env.ORCH_CONFIG=t.config;
+export async function validateSmokeSubscription(p,env=subscriptionEnvironment()){
   try{
     if(p.route.harness==='muse')validateMuseSubscription(JSON.parse(readBounded(museAuthPath(),1048576).replace(/^\uFEFF/,'')));if(p.route.harness==='codex'){const auth=await child(p.binding.exe,['login','status'],env,p.workdir);if(!/(?:^|\r?\n)Logged in using ChatGPT(?:\r?\n|$)/.test(auth.stderr+auth.stdout))fail('Codex subscription login not verified');}
     if(p.route.harness==='vibe'){const dot=path.join(process.env.VIBE_HOME||path.join(process.env.USERPROFILE||os.homedir(),'.vibe'),'.env');if(fs.existsSync(dot)&&/^\s*MISTRAL_API_KEY\s*=\s*[^\r\n]+/im.test(bytes(dot,65536).toString('utf8')))fail('Vibe API dotenv material configured');}
   }catch{throw new OrchError('Subscription authentication was refused before any model launch','qualification-auth-refused');}
+}
+async function nativeLaunch(p){const t=trialPaths(p.plan),env=subscriptionEnvironment();
+  await validateSmokeSubscription(p,env);
+  env.ORCH_CONFIG=t.config; // Restore only the owned runtime after clearing owner overrides.
   // This private path is reached only after exact offer/role approve:true. The
   // existing model-permission flag authorizes this probe, never future runs.
   const args=smokeLaunchArguments(p);const out=await child(process.execPath,[BIN,...args],env,p.workdir);let result;try{result=JSON.parse(out.stdout);}catch{fail('Probe launch response is unknown; inspect existing jobs and never relaunch blindly');}if(result.admission&&result.admission!=='acquired')fail('Probe launch was not admitted; inspect the retained attempt');return {run_id:result.run_id??result.id,...(result.review_id?{review_id:result.review_id}:{})};
 }
 export function smokeLaunchArguments(p){
+  if(p.role==='reviewer'&&(typeof p.plan?.reviewRoot!=='string'||!p.plan.reviewRoot))fail('Exact owned review root is required');
   const common=['--model',p.route.model,'--state-root',p.stateRoot,'--no-window',...(automaticRoute(p.route)?[]:['--effort','medium']),'--json','--owner-approved-model'];
   if(p.wp)common.push('--wp',p.wp,'--by',p.by,'--slice',p.slice??'controller-smoke','--allow',...(p.allow??['challenge.txt']));
-  const args=p.role==='worker'?['run','--cli',p.route.harness,'--dir',p.workdir,'--handoff',p.prompt,...common]:['review','--run',p.workerId,'--reviewer',p.route.harness,'--ref','HEAD','--prompt',p.prompt,'--by','owner','--no-wait',...common];if(p.route.harness==='vibe')args.push('--max-turns',String(p.maxTurns??8));return args;
+  const args=p.role==='worker'?['run','--cli',p.route.harness,'--dir',p.workdir,'--handoff',p.prompt,...common]:['review','--run',p.workerId,'--reviewer',p.route.harness,'--ref','HEAD','--prompt',p.prompt,'--by','owner','--review-root',p.plan.reviewRoot,'--no-wait',...common];if(p.route.harness==='vibe')args.push('--max-turns',String(p.maxTurns??8));return args;
 }
 function launchFile(p,role){return path.join(p.trialRoot,'attempts',role+'-launched.json');}
 function refusalFile(p,role){return path.join(p.trialRoot,'attempts',role+'-outcome.json');}

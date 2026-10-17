@@ -36,12 +36,36 @@ test('P07f: local provider configuration cannot carry credentials or target a pu
 });
 
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
-async function prepared(t,harness){
+async function prepared(t,harness,withAuthentication=false){
   const c=makeCase('p07f-'+harness);t.after(()=>c.cleanup());const repo=path.join(c.base,'repo');makeRepo(repo,{'AGENTS.md':'Preserve existing instructions\n'});const session=path.join(c.base,'session'),config=path.join(c.base,'config.json'),route=(h,model,billing='subscription')=>({harness:h,model,billing,permission:'ask'}),controller=route(harness,harness==='vibe'?'example-controller':'local/example',harness==='vibe'?'subscription':'local');
   let s=await startSetup({repo,harness,session,roster:undefined,catalog:undefined});for(const answer of [{controller,workers:[route('codex','example-worker')],reviewers:[route('vibe','example-reviewer')]},{mode:'deterministic'},{enabled:false},{stateRoot:c.stateRoot,reviewRoot:path.join(c.base,'packages'),cleanup:'retain-unmerged'},{enabled:false}])s=await answerSetup(session,{expectedRevision:s.revision,questionId:s.nextQuestion.id,answer});
   const v=await previewSetup(session,{configFile:config,adopt:false,update:false});await applySetup(session,{previewHash:v.previewHash,approve:true});const raw=JSON.parse(fs.readFileSync(config,'utf8'));raw.exe={vibe:process.execPath,codex:process.execPath,opencode:process.execPath};if(harness==='opencode')raw.controllerLocalProvider={id:'local',baseURL:'http://127.0.0.1:1234/v1',context:16384,output:4096};fs.writeFileSync(config,JSON.stringify(raw));
-  const seams={binding:h=>({harness:h,exe:process.execPath,target:fs.realpathSync.native(process.execPath),sha256:hash(fs.readFileSync(process.execPath))})},o=await offerController(session,{configFile:config,worker:0,reviewer:0,maxAgeSeconds:3600},seams),p=await prepareController(session,{offerHash:o.offerHash,approve:true},seams);return {...c,session,config,o,p,seams};
+  const authenticationFile=path.join(c.base,'local-auth.json');if(withAuthentication){fs.writeFileSync(authenticationFile,JSON.stringify({local:{type:'api',key:'synthetic-local-token'}}));raw.controllerLocalAuthentication={file:authenticationFile};fs.writeFileSync(config,JSON.stringify(raw));}
+  const seams={binding:h=>({harness:h,exe:process.execPath,target:fs.realpathSync.native(process.execPath),sha256:hash(fs.readFileSync(process.execPath))})},o=await offerController(session,{configFile:config,worker:0,reviewer:0,maxAgeSeconds:3600},seams),p=await prepareController(session,{offerHash:o.offerHash,approve:true},seams);return {...c,session,config,o,p,seams,authenticationFile};
 }
+function localAuthenticationCase(t){const c=makeCase('local-auth');t.after(()=>c.cleanup());const file=path.join(c.base,'auth.json');fs.writeFileSync(file,JSON.stringify({local:{type:'api',key:'synthetic-local-token'},other:{type:'api',key:'synthetic-other-token'}}));return {file,route:{harness:'opencode',model:'local/example',billing:'local'},provider:{id:'local',baseURL:'http://127.0.0.1:1234/v1',context:16384,output:4096}};}
+test('P07f local auth: selected saved credentials are fingerprinted without retaining secret bytes',t=>{
+  const c=localAuthenticationCase(t),binding=profiles.controllerLocalAuthentication(c.route,{file:c.file});assert.equal(binding.provider,'local');assert.equal(binding.file,c.file);assert.match(binding.sha256,/^[a-f0-9]{64}$/);assert.ok(!JSON.stringify(binding).includes('synthetic'));
+  const raw=JSON.parse(fs.readFileSync(c.file,'utf8'));raw.other.key='changed-unrelated';fs.writeFileSync(c.file,JSON.stringify(raw));assert.equal(profiles.controllerLocalAuthentication(c.route,{file:c.file}).sha256,binding.sha256);raw.local.key='changed-selected';fs.writeFileSync(c.file,JSON.stringify(raw));assert.notEqual(profiles.controllerLocalAuthentication(c.route,{file:c.file}).sha256,binding.sha256);
+});
+test('P07f local auth: unknown, OAuth, relative and inline credential sources refuse',t=>{
+  const c=localAuthenticationCase(t);for(const source of [{file:c.file,key:'inline'},{file:'relative.json'},{file:c.file,provider:'other'}])assert.throws(()=>profiles.controllerLocalAuthentication(c.route,source));
+  for(const raw of [{local:{type:'oauth',access:'synthetic'}},{other:{type:'api',key:'synthetic'}}]){fs.writeFileSync(c.file,JSON.stringify(raw));assert.throws(()=>profiles.controllerLocalAuthentication(c.route,{file:c.file}));}
+});
+test('P07f local auth: isolated memory-only key binding refuses rotation and public endpoints',t=>{
+  const c=localAuthenticationCase(t),p={controller:c.route,localProvider:c.provider,localAuthentication:profiles.controllerLocalAuthentication(c.route,{file:c.file})},original={KEEP:'yes'},env=profiles.controllerLocalEnvironment(p,original);
+  assert.equal(env.ORCH_CONTROLLER_LOCAL_KEY,'synthetic-local-token');assert.equal(original.ORCH_CONTROLLER_LOCAL_KEY,undefined);assert.equal(env.KEEP,'yes');assert.throws(()=>profiles.controllerLocalEnvironment({...p,localProvider:{...c.provider,baseURL:'https://api.example.com/v1'}},original));fs.writeFileSync(c.file,JSON.stringify({local:{type:'api',key:'changed'}}));assert.throws(()=>profiles.controllerLocalEnvironment(p,original));
+});
+test('P07f local auth: prepared native settings reference only the scoped environment key',async t=>{
+  const c=await prepared(t,'opencode',true),nativeText=fs.readFileSync(c.p.profileFiles[0].file,'utf8'),doc=JSON.parse(nativeText),saved=fs.readFileSync(path.join(c.session,'controller-qualification','offers',c.o.offerHash+'.json'),'utf8');assert.equal(doc.provider.local.options.apiKey,'{env:ORCH_CONTROLLER_LOCAL_KEY}');assert.equal(doc.permission['*'],'deny');assert.deepEqual(doc.provider.local.env,[]);assert.ok(!nativeText.includes('synthetic-local-token'));assert.ok(!saved.includes('synthetic-local-token'));assert.equal(JSON.parse(saved).plan.localAuthentication.provider,'local');
+});
+test('P07f local auth: changed saved authentication cannot consume a native attempt',async t=>{
+  const c=await prepared(t,'opencode',true);fs.writeFileSync(c.authenticationFile,JSON.stringify({local:{type:'api',key:'changed'}}));await assert.rejects(runController(c.session,{offerHash:c.o.offerHash,approve:true},c.seams),/binding changed/);assert.equal(fs.existsSync(path.join(path.dirname(c.p.instructions),'launch-attempt.json')),false);
+});
+test('P07f bootstrap regression: fixed controller runner revalidates its sealed private executable selection',async t=>{
+ const c=await prepared(t,'opencode',true);/** @type {{env?:NodeJS.ProcessEnv}} */const captured={};await runController(c.session,{offerHash:c.o.offerHash,approve:true},{...c.seams,spawn:(_exe,_args,options)=>{captured.env=options.env;return {pid:888888,unref(){}};}});assert.ok(captured.env);const env=captured.env;assert.equal(env.ORCH_CONFIG,c.config);for(const name of ['OPENCODE','CODEX','VIBE'])assert.equal(env['ORCH_'+name+'_EXE'],process.execPath);
+ const saved=Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('ORCH_')));try{for(const k of Object.keys(process.env))if(k.startsWith('ORCH_'))delete process.env[k];for(const [k,v]of Object.entries(env))if(k.startsWith('ORCH_'))process.env[k]=v;assert.equal(api.controllerExecutionSpec(c.session,c.o.offerHash).plan.offerHash,c.o.offerHash);}finally{for(const k of Object.keys(process.env))if(k.startsWith('ORCH_'))delete process.env[k];Object.assign(process.env,saved);}
+});
 test('P07f: new preparations hash-bind scoped native configs without changing child source or owner instructions',async t=>{
   for(const harness of ['vibe','opencode']){const c=await prepared(t,harness);assert.equal(c.p.profile.version,4);assert.ok(c.p.profileFiles.length);assert.notEqual(c.p.workdir,c.o.workdir);assert.equal(c.p.providerCalls,0);fs.appendFileSync(c.p.profileFiles[0].file,' ');await assert.rejects(prepareController(c.session,{offerHash:c.o.offerHash,approve:true},c.seams));}
 });
@@ -120,4 +144,26 @@ test('P07f: offline OpenCode lifecycle refuses live helpers, missing server proo
   const server=fs.readFileSync(c.serverFile);fs.unlinkSync(c.serverFile);await assert.rejects(api.qualifyController(c.session,request,c.seams),/journal is unavailable/);fs.writeFileSync(c.serverFile,server);
   const auditFile=path.join(c.dir,'native-tool-events.ndjson'),audit=fs.readFileSync(auditFile);fs.writeFileSync(auditFile,'');await assert.rejects(api.qualifyController(c.session,request,c.seams),/execution audit/);fs.writeFileSync(auditFile,audit);
   const receipt=await api.qualifyController(c.session,request,c.seams);assert.equal(receipt.status,'controller-observed');assert.equal(receipt.controller.model,'local/example');assert.equal(receipt.controller.observedModel,'example');assert.equal(receipt.cleanup.review,'removed');assert.equal(receipt.launchAllowed,false);assert.equal((await api.qualifyController(c.session,request,c.seams)).replayed,true);
+});
+
+test('P07f native OpenCode regression: CLI schema normalization preserves the sealed profile bytes',async t=>{
+ const c=await prepared(t,'opencode'),file=c.p.profileFiles[0].file,before=fs.readFileSync(file,'utf8'),doc=JSON.parse(before);
+ assert.equal(doc.$schema,'https://opencode.ai/config.json');
+ const normalized=JSON.stringify({...doc,$schema:'https://opencode.ai/config.json'},null,2)+'\n';
+ assert.equal(normalized,before);assert.equal(hash(normalized),c.p.profileFiles[0].sha256);
+ fs.writeFileSync(file,normalized);await runController(c.session,{offerHash:c.o.offerHash,approve:true},{...c.seams,spawn:()=>({pid:12345,unref(){}})});
+ assert.equal(api.controllerNativeToolSpec(c.session,c.o.offerHash,c.seams).plan.offerHash,c.o.offerHash);
+});
+test('P07f native OpenCode regression: scoped local profile disables the background title request',async t=>{
+ const c=await prepared(t,'opencode'),doc=JSON.parse(fs.readFileSync(c.p.profileFiles[0].file,'utf8'));
+ assert.equal(doc.agent.title?.disable,true);assert.equal(doc.agent['orch-controller'].mode,'primary');assert.deepEqual(doc.permission,{'*':'deny',orch_controller_step:'allow'});
+});
+
+test('P07f native OpenCode regression: effective permission ordering exposes exactly the approved MCP tool',async t=>{
+ const c=await prepared(t,'opencode'),doc=JSON.parse(fs.readFileSync(c.p.profileFiles[0].file,'utf8')),agent=doc.agent['orch-controller'];
+ // OpenCode 1.18.31 normalizes deprecated tools before assigning permission.
+ // Assignment preserves existing keys: a newly appended wildcard can mask them.
+ const normalized={};for(const [tool,enabled]of Object.entries(agent.tools??{}))normalized[['write','edit','patch'].includes(tool)?'edit':tool]=enabled?'allow':'deny';Object.assign(normalized,agent.permission);
+ const effective=tool=>Object.entries(normalized).filter(([key])=>key==='*'||key===tool).at(-1)?.[1]??'ask';
+ assert.equal(effective('orch_controller_step'),'allow');for(const tool of ['bash','read','edit','write','task','webfetch','foreign_tool'])assert.equal(effective(tool),'deny');
 });

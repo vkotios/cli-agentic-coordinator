@@ -6,7 +6,7 @@ import {controllerExecutionSpec} from './setup-controller.mjs';
 import {subscriptionEnvironment} from './setup-qualification.mjs';
 import {ownChildCreationTime,creationTimesOf} from './procs.mjs';
 import {fileURLToPath} from 'node:url';
-import {controllerWorkdir} from './controller-profiles.mjs';
+import {controllerWorkdir,controllerLocalEnvironment} from './controller-profiles.mjs';
 import {aliasFor} from './adapters/vibe.mjs';
 import os from 'node:os';
 import {subscriptionControllerSpec} from './controller-subscriptions.mjs';
@@ -47,6 +47,7 @@ try{
       authSource='vibe-api-overrides-cleared';env.PWD=workdir;env.PYTHONIOENCODING='utf-8';env.PYTHONUTF8='1';env.VIBE_ACTIVE_MODEL=aliasFor(p.controller.model);
       args=['-p','--workdir',workdir,'--agent','orch-controller','--enabled-tools','orch_controller_step','--trust','--max-turns','80','--output','streaming'];
     }else{
+      stage='local-authentication';env=controllerLocalEnvironment(p,env);
       authSource='explicit-local-provider';for(const key of ['CONFIG','DATA','STATE','CACHE']){const folder=path.join(directory,'xdg-'+key.toLowerCase());fs.mkdirSync(folder,{mode:0o700});env['XDG_'+key+'_HOME']=folder;}
       env.OPENCODE_CONFIG=path.join(directory,'native-opencode.json');env.OPENCODE_DISABLE_PROJECT_CONFIG='true';env.PWD=workdir;
       args=['run','--model',p.controller.model,'--agent','orch-controller','--dir',workdir,'--format','json','--print-logs'];

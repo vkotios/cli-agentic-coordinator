@@ -16,7 +16,7 @@ import {readProcessTable,verifyIdentity,normalizeCreationTime} from './procs.mjs
 import {readLedger} from './ledger.mjs';
 import {TERMINAL} from './store.mjs';
 import {samePath} from './git.mjs';
-import {additionalControllerProfile,validateControllerLocalProvider,additionalProfileFiles,controllerWorkdir,observeAdditionalControllerTrace,openCodeExportModel,MCP_CONTROLLERS} from './controller-profiles.mjs';
+import {additionalControllerProfile,validateControllerLocalProvider,controllerLocalAuthentication,controllerLocalAuthenticationReference,additionalProfileFiles,controllerWorkdir,observeAdditionalControllerTrace,openCodeExportModel,MCP_CONTROLLERS} from './controller-profiles.mjs';
 import {observeSubscriptionControllerTrace} from './controller-subscriptions.mjs';
 import vibe from './adapters/vibe.mjs';
 import {aliasFor} from './adapters/vibe.mjs';
@@ -47,7 +47,9 @@ function publish(file,value){checkedSetupPath(path.dirname(file),true);try{const
 function directory(session){setupProposal(session);return path.join(path.resolve(session),'controller-qualification');}
 function bounded(dir){checkedSetupPath(dir,true);const names=fs.existsSync(dir)?fs.readdirSync(dir):[];if(names.length>16)fail('Controller evidence bound reached; inspect retained trials');return names;}
 function offerFile(session,id){if(typeof id!=='string'||!HEX.test(id))fail('Use the exact controller offer hash');return path.join(directory(session),'offers',id+'.json');}
-function planFor(session,id,seams={},reuse=false){const e=input(offerFile(session,id));exact(e,['offerHash','plan']);if(e.offerHash!==id||hash(JSON.stringify(e.plan))!==id)fail('Controller offer changed');const p=e.plan,s=smokePlan(session,p.smokeHash,seams,reuse);if(!isDeepStrictEqual((seams.binding??smokeBinding)(p.controller.harness),p.binding)||!isDeepStrictEqual(p.nativeContract,nativeContract())||digest(PROTOCOL)!==p.protocolHash||s.sessionHash!==p.sessionHash||p.controller.harness==='opencode'&&!isDeepStrictEqual(input(s.configFile).controllerLocalProvider,p.localProvider))fail('Controller binding changed');return {...p,smoke:s,offerHash:id,session:path.resolve(session)};}
+function planFor(session,id,seams={},reuse=false){const e=input(offerFile(session,id));exact(e,['offerHash','plan']);if(e.offerHash!==id||hash(JSON.stringify(e.plan))!==id)fail('Controller offer changed');const p=e.plan,s=smokePlan(session,p.smokeHash,seams,reuse);if(!isDeepStrictEqual((seams.binding??smokeBinding)(p.controller.harness),p.binding)||!isDeepStrictEqual(p.nativeContract,nativeContract())||digest(PROTOCOL)!==p.protocolHash||s.sessionHash!==p.sessionHash)fail('Controller binding changed');
+  if(p.controller.harness==='opencode'){const raw=input(s.configFile),expected=p.localAuthentication??null,actual=reuse?controllerLocalAuthenticationReference(p.controller,raw.controllerLocalAuthentication):controllerLocalAuthentication(p.controller,raw.controllerLocalAuthentication),bound=reuse&&expected?{provider:expected.provider,file:expected.file}:expected;if(!isDeepStrictEqual(raw.controllerLocalProvider,p.localProvider)||!isDeepStrictEqual(actual,bound))fail('Controller binding changed');}
+  return {...p,smoke:s,offerHash:id,session:path.resolve(session)};}
 function files(p){return {dir:path.join(p.smoke.trialRoot,'controller'),instructions:path.join(p.smoke.trialRoot,'controller','instructions.txt'),prepared:path.join(p.smoke.trialRoot,'controller','prepared.json')};}
 const receiptFile=(session,id)=>path.join(directory(session),'receipts',id+'.json');
 /** @param {any} options @param {any} seams */
@@ -60,13 +62,14 @@ export async function offerController(session,options,seams={}){
   const additional=MCP_CONTROLLERS.includes(controller.harness),profile=additional?additionalControllerProfile(controller):null;
   if(!additional&&(!['claude','codex'].includes(controller.harness)||controller.billing!=='subscription'))fail('Selected native controller profile is unsupported');
   const localProvider=controller.harness==='opencode'?validateControllerLocalProvider(controller,input(options.configFile).controllerLocalProvider):null;
+  const localAuthentication=controller.harness==='opencode'?controllerLocalAuthentication(controller,input(options.configFile).controllerLocalAuthentication):null;
   const binding=(seams.binding??smokeBinding)(controller.harness),dir=directory(session);
   return withOperationLock({stateRoot:path.resolve(session)},'setup-controller',async()=>{
     if(bounded(path.join(dir,'offers')).length>=16)fail('Controller offers are full');
     const child=await offerSmoke(session,options,seams),s=smokePlan(session,child.offerHash,seams);
     if(s.roster.sha256&&input(s.roster.file).models.some(m=>m.cli===controller.harness&&canonicalId(m.model)===canonicalId(controller.model)&&m.enabled===false))fail('Controller route is disabled in the current roster');
     if([BIN,GUARD,process.execPath,path.resolve(session)].some(s=>/[\r\n$`%"]/.test(s)))fail('Native shell profiles require paths without shell expansion characters');
-    const plan={version:1,sessionHash:s.sessionHash,smokeHash:child.offerHash,controller,binding,nativeContract:nativeContract(),protocolHash:digest(PROTOCOL),createdAt:s.createdAt,maxAgeSeconds:s.maxAgeSeconds,wp:'controller-'+crypto.randomBytes(12).toString('hex'),by:controller.harness==='claude'?'claude-code':controller.harness,profile:profile??{version:2,mode:'native-cli',tools:controller.harness==='claude'?['Bash']:['command_execution'],effort:'medium',commandPolicy:controller.harness==='claude'?'exact-owned-steps':'workspace-write-owned-trial'},localProvider};
+    const plan={version:1,sessionHash:s.sessionHash,smokeHash:child.offerHash,controller,binding,nativeContract:nativeContract(),protocolHash:digest(PROTOCOL),createdAt:s.createdAt,maxAgeSeconds:s.maxAgeSeconds,wp:'controller-'+crypto.randomBytes(12).toString('hex'),by:controller.harness==='claude'?'claude-code':controller.harness,profile:profile??{version:2,mode:'native-cli',tools:controller.harness==='claude'?['Bash']:['command_execution'],effort:'medium',commandPolicy:controller.harness==='claude'?'exact-owned-steps':'workspace-write-owned-trial'},localProvider,...(localAuthentication?{localAuthentication}:{})};
     for(const n of ['offers','receipts']){const d=path.join(dir,n);checkedSetupPath(d,true);fs.mkdirSync(d,{recursive:true,mode:0o700});}
     const offerHash=hash(JSON.stringify(plan));publish(offerFile(session,offerHash),{offerHash,plan});return {mode:'setup-controller-offer',offerHash,controller,profile:plan.profile,workdir:s.workdir,steps:STEPS,bounds:{controllerLaunches:1,childLaunches:2,automaticRetries:0},scope:SCOPE,providerCalls:0,activation:false};
   });
@@ -97,7 +100,7 @@ export async function runController(session,request,seams={}){
     if((seams.now??Date.now())-Date.parse(p.createdAt)>p.maxAgeSeconds*1000)fail('Controller offer expired');
     if(stepRecords(p).length)fail('Native controller must perform the complete new trial without parent-assisted steps');
     publish(attempt,{offerHash:p.offerHash,approve:true,at:new Date().toISOString(),runnerHash:digest(RUNNER)});
-    const env=subscriptionEnvironment();
+    const env=subscriptionEnvironment();env.ORCH_CONFIG=p.smoke.configFile;for(const b of [...p.smoke.bindings,p.binding])env['ORCH_'+b.harness.toUpperCase()+'_EXE']=b.exe;if(p.smoke.roster.sha256)env.ORCH_ROSTER=p.smoke.roster.file;
     try{const child=(seams.spawn??spawn)(process.execPath,[RUNNER,path.resolve(session),p.offerHash],{cwd:controllerWorkdir(p,f.dir),env,windowsHide:true,detached:true,stdio:'ignore'});if(!Number.isInteger(child?.pid)||child.pid<1)fail('Native runner identity is unknown');child.unref();const out={mode:'setup-controller-started',offerHash:p.offerHash,runnerPid:child.pid,evidenceDirectory:f.dir,status:'starting',automaticRetries:0,scope:SCOPE};publish(path.join(f.dir,'runner-started.json'),out);return out;}catch{throw new OrchError('Native controller launch outcome is uncertain; inspect retained attempt, never relaunch','controller-launch-uncertain');}
   });
 }
