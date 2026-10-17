@@ -1,5 +1,7 @@
 // Additional native profiles. Configuration is intent; native results prove operation.
 import {isDeepStrictEqual} from 'node:util';
+import {createHash} from 'node:crypto';
+import {readSetupInput} from './setup.mjs';
 import {canonicalId} from './models.mjs';
 import {samePath} from './git.mjs';
 import {OrchError} from './errors.mjs';
@@ -23,8 +25,8 @@ export function additionalProfileFiles(p,dir,commands,node,guard,server){
     {file:path.join(workdir,'.vibe','agents','orch-controller.toml'),text:`description = "Owned controller qualification steps only"\nbypass_tool_permissions = false\nenabled_tools = ["orch_controller_step"]\n[tools.orch_controller_step]\npermission = "always"\n`}
   ];
   if(p.controller.harness==='opencode'){
-    const local=validateControllerLocalProvider(p.controller,p.localProvider),model=p.controller.model.split('/').slice(1).join('/'),permission={'*':'deny',orch_controller_step:'allow'};
-    return [{file:path.join(dir,'native-opencode.json'),text:JSON.stringify({model:p.controller.model,enabled_providers:[local.id],plugin:[],mcp:{orch:{type:'local',command:[node,...args],environment:env,enabled:true}},permission,agent:{'orch-controller':{mode:'primary',description:'Owned controller qualification',tools:{orch_controller_step:true,bash:false,read:false,edit:false,write:false,webfetch:false,task:false},permission}},provider:{[local.id]:{npm:'@ai-sdk/openai-compatible',name:'Explicit local controller',env:[],options:{baseURL:local.baseURL},models:{[model]:{name:model,limit:{context:local.context,output:local.output}}}}}},null,2)+'\n'}];
+    const local=validateControllerLocalProvider(p.controller,p.localProvider),model=p.controller.model.split('/').slice(1).join('/'),permission={'*':'deny',orch_controller_step:'allow'},keyReference='{env:ORCH_CONTROLLER_LOCAL_KEY}';
+    return [{file:path.join(dir,'native-opencode.json'),text:JSON.stringify({$schema:'https://opencode.ai/config.json',model:p.controller.model,enabled_providers:[local.id],plugin:[],mcp:{orch:{type:'local',command:[node,...args],environment:env,enabled:true}},permission,agent:{title:{disable:true},'orch-controller':{mode:'primary',description:'Owned controller qualification',permission}},provider:{[local.id]:{npm:'@ai-sdk/openai-compatible',name:'Explicit local controller',env:[],options:{baseURL:local.baseURL,...(p.localAuthentication?{apiKey:keyReference}:{})},models:{[model]:{name:model,limit:{context:local.context,output:local.output}}}}}},null,2)+'\n'}];
   }
   return [];
 }
@@ -38,6 +40,31 @@ export function validateControllerLocalProvider(r,p){
   const host=url.hostname,privateHost=host==='localhost'||host==='[::1]'||isIP(host)===4&&(/^127\./.test(host)||/^10\./.test(host)||/^192\.168\./.test(host)||/^172\.(?:1[6-9]|2\d|3[01])\./.test(host));
   if(!privateHost||!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)fail('Local controller provider must be a credential-free private or loopback endpoint');
   return p;
+}
+// Reuse only an explicitly selected saved API credential for this local provider.
+// Offers and native settings retain a reference/fingerprint, never secret bytes.
+export function controllerLocalAuthenticationReference(r,source){
+  if(source==null)return null;
+  if(r.harness!=='opencode'||r.billing!=='local'||!source||Object.keys(source).join(',')!=='file'||typeof source.file!=='string'||!path.isAbsolute(source.file))fail('Use an explicit saved local authentication file');
+  return {provider:r.model.split('/')[0],file:path.resolve(source.file)};
+}
+function localCredential(r,source){
+  const reference=controllerLocalAuthenticationReference(r,source);if(!reference)fail('Explicit local authentication reference required');
+  const raw=readSetupInput(reference.file,{max:1048576}).raw,entry=raw?.[reference.provider];
+  if(entry?.type!=='api'||typeof entry.key!=='string'||!entry.key||entry.key.length>16384||/[\r\n\0]/.test(entry.key))fail('Selected saved local API authentication is unavailable');
+  return {...reference,key:entry.key};
+}
+export function controllerLocalAuthentication(r,source){
+  if(source==null)return null;const selected=localCredential(r,source);
+  return localAuthenticationBinding(selected);
+}
+const localAuthenticationBinding=selected=>({file:selected.file,provider:selected.provider,sha256:createHash('sha256').update(JSON.stringify({type:'api',key:selected.key})).digest('hex')});
+export function controllerLocalEnvironment(p,env){
+  const out={...env};delete out.ORCH_CONTROLLER_LOCAL_KEY;if(!p.localAuthentication)return out;
+  validateControllerLocalProvider(p.controller,p.localProvider);
+  const selected=localCredential(p.controller,{file:p.localAuthentication.file}),binding=localAuthenticationBinding(selected);
+  if(!isDeepStrictEqual(binding,p.localAuthentication))fail('Selected local authentication changed');
+  out.ORCH_CONTROLLER_LOCAL_KEY=selected.key;return out;
 }
 export function observeAdditionalControllerTrace(events,o){
   if(!o.nativeModel||canonicalId(o.nativeModel)!==canonicalId(o.model))fail('Actual controller model is unknown or mismatched');

@@ -82,6 +82,12 @@ const LAUNCH_OPTS = {
  * Option keys are the CLI flag names, so the schema reads like the CLI usage.
  */
 export const TOOLS = {
+  setup_repository_close:{cmd:'setup',sub:['repository-close'],description:'Explicitly close one failed or abandoned repository trial after terminal process/run checks. Retains source, records blocked outcomes and uses existing cleanup; never kills or relaunches.',opts:{session:S('Private completed setup session'),request:S('offerHash/approve:true JSON')},required:['session','request']},
+  setup_repository_smoke:{cmd:'setup',sub:['repository-smoke'],description:'Offer one disposable adopted-repository controller coding/review case. No model call or owner activation.',opts:{session:S('Private completed setup session'),config:S('Private runtime config'),request:S('worker/reviewer/maxAgeSeconds JSON')},required:['session','config','request']},
+  setup_repository_start:{cmd:'setup',sub:['repository-start'],description:'Prepare an exact-approved repository fixture with owner-preserving adoption and an ordinary-tool scope guard; no model launch.',opts:{session:S('Private completed setup session'),request:S('offerHash/approve:true JSON')},required:['session','request']},
+  setup_repository_run:{cmd:'setup',sub:['repository-run'],description:'Reserve and launch one exact-approved native repository controller. Unknown launch outcomes are never retried automatically.',opts:{session:S('Private completed setup session'),request:S('offerHash/approve:true JSON')},required:['session','request']},
+  setup_repository_qualify:{cmd:'setup',sub:['repository-qualify'],description:'Verify actual native repository tools/models, independent code/review checks and complete cleanup before capturing a scoped receipt.',opts:{session:S('Private completed setup session'),request:S('offerHash JSON')},required:['session','request']},
+  setup_repository_qualification:{cmd:'setup',sub:['repository-qualification'],description:'Validate fresh repository-controller receipts. No model calls, policy changes or launch permission.',opts:{session:S('Private completed setup session'),config:S('Private runtime config')},required:['session','config']},
   setup_controller_smoke:{cmd:'setup',sub:['controller-smoke'],description:'Offer a scoped native controller lifecycle using owned child routes; no model calls or launch authority.',opts:{session:S('--session <completed private session>'),config:S('--config <private runtime config>'),request:S('--request <worker/reviewer/maxAgeSeconds JSON>')},required:['session','config','request']},
   setup_controller_start:{cmd:'setup',sub:['controller-start'],description:'Prepare an exact approved controller offer and its fixed native lifecycle instructions; no model launch.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true JSON>')},required:['session','request']},
   setup_controller_run:{cmd:'setup',sub:['controller-run'],description:'Start one exact-approved native subscription controller with durable launch/process/log evidence. Never repeats an uncertain spawn.',opts:{session:S('--session <private session>'),request:S('--request <offerHash/approve:true JSON>')},required:['session','request']},
@@ -411,7 +417,7 @@ export async function callTool(name, input, { stateRoot } = {}) {
   if (!t.text) args.json = true;
   Object.assign(args, t.force || {});
   // Health is explicitly bound to its completed setup session, not server state.
-  if (stateRoot && !args['state-root'] && !name.startsWith('setup_controller_') && !name.startsWith('setup_task_') && !['setup_health','setup_smoke','setup_probe','setup_qualify','setup_qualification'].includes(name)) args['state-root'] = stateRoot;
+  if (stateRoot && !args['state-root'] && !name.startsWith('setup_controller_') && !name.startsWith('setup_task_') && !name.startsWith('setup_repository_') && !['setup_health','setup_smoke','setup_probe','setup_qualify','setup_qualification'].includes(name)) args['state-root'] = stateRoot;
   let boundMs = t.boundMs || DEFAULT_BOUND_MS;
   if (name === 'wait_lane') {
     const s = waitLaneSeconds(args.timeout);

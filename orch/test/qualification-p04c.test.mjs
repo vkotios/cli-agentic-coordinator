@@ -1,4 +1,6 @@
-import {test} from 'node:test';
+import {test,mock} from 'node:test';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,4 +98,20 @@ test('P04c: malformed task requests fail as controlled contract refusals before 
 test('P04c: missing Muse authentication is a retained refusal before any model launch',async t=>{
   const c=await fixture(t,true),o=await offer(c),prior=process.env.MUSE_AUTH_PATH;process.env.MUSE_AUTH_PATH=path.join(c.base,'missing-auth.json');
   try{await assert.rejects(api.probeSmoke(c.session,{offerHash:o.offerHash,approve:true,role:'worker'},{binding}),e=>e instanceof Error&&'code' in e&&e.code==='qualification-auth-refused');const status=await api.qualificationStatus(c.session,{configFile:c.config},{binding});assert.equal(status.trials[0].attempts[0].state,'refused');assert.equal(status.routes.length,0);}finally{if(prior===undefined)delete process.env.MUSE_AUTH_PATH;else process.env.MUSE_AUTH_PATH=prior;}
+});
+
+test('P04i live regression: smoke reviewer receives the exact owned review root',()=>{
+ const p={route:{harness:'vibe',model:'example-reviewer'},role:'reviewer',stateRoot:'state',workdir:'source',prompt:'prompt',workerId:'owned-worker',plan:{reviewRoot:'owned-review-packages'}};
+ const args=api.smokeLaunchArguments(p);assert.equal(args[args.indexOf('--review-root')+1],p.plan.reviewRoot);assert.equal(args.filter(x=>x==='--review-root').length,1);
+ assert.throws(()=>api.smokeLaunchArguments({...p,plan:{}}),/review root/i);
+});
+
+test('P04i live regression: actual smoke spawn restores its sealed runtime config after sanitizing owner overrides',async t=>{
+ const c=makeCase('smoke-runtime-env');t.after(()=>c.cleanup());const runtime=path.join(c.base,'runtime.json');fs.writeFileSync(runtime,'{}');const selected=process.env.ORCH_CONFIG;process.env.ORCH_CONFIG='foreign-owner-config';let launches=0;
+ const mocked=mock.method(childProcess,'execFile',/** @type {any} */((exe,args,options,callback)=>{
+  launches++;assert.equal(exe,process.execPath);assert.ok(args[0].endsWith('orch.mjs'));assert.equal(options.env.ORCH_CONFIG,runtime);assert.equal(options.env.ORCH_STATE_ROOT,undefined);
+  callback(null,JSON.stringify({run_id:'owned-worker'}),'');return {};
+ }));syncBuiltinESMExports();
+ try{const out=await api.launchSmoke({plan:{trialRoot:c.base},route:{harness:'copilot',model:'Auto'},role:'worker',stateRoot:c.stateRoot,workdir:c.base,prompt:path.join(c.base,'worker.txt')});assert.equal(out.run_id,'owned-worker');assert.equal(launches,1);}
+ finally{mocked.mock.restore();syncBuiltinESMExports();if(selected===undefined)delete process.env.ORCH_CONFIG;else process.env.ORCH_CONFIG=selected;}
 });

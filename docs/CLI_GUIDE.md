@@ -71,6 +71,19 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - A local gateway usually serves **one model at a time**: never run two local workers at once (orch's
   `local` lane enforces this machine-wide), batch slices per model, and set opencode's `small_model` to the
   same model as the agent (a different one forces a reload).
+- Adding `$schema` during native configuration loading changed the scoped controller config on
+  1.18.31 and caused its integrity check to refuse MCP startup (verified). Generated controller
+  profiles include `$schema` before hashing; a model-free native MCP connection then left the
+  configuration unchanged.
+- Scoped local controller profiles disable the built-in `title` agent. On 1.18.31 a background title
+  request overlapped the main request; the main request hit HTTP 409 conflicts and internal retries
+  (verified). A single outer CLI launch does not mean one inference request or no provider retries.
+  Native agent listing verifies the disabled title profile; a completed trial is still required for
+  controller qualification.
+- Do not mix deprecated agent `tools` flags with the scoped controller permission allowlist on
+  1.18.31. Its legacy normalization can append the wildcard denial after the MCP tool allowance
+  and hide that tool (verified with native effective rules). Generated profiles use permission
+  rules alone: default deny followed by the one approved MCP tool.
 - A plugin that bootstraps a large skill set hung opencode on Windows (verified on 1.18.31). Keep worker
   agents lean: MCP off, a small skill list.
 - Cancel: `taskkill /PID <recorded root> /T /F` removed the whole tree with no orphans, and the gateway
@@ -281,3 +294,7 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   no changes, a failed commit, or two consecutive tasks with failing checks.
 
 Muse installation markers accept `major.minor.patch-Rrevision[.revision]` (case-insensitive R). Other formats require an explicit native executable override; orch does not guess or run the updater.
+
+Native repository-controller evidence uses the complete structured tool result, including its exact offer/request proof. Copilot display text can be joined or truncated; it is not a substitute for its separate structured result. Text-only transports receive the same complete structured data without a duplicate human-readable output. A malformed structured channel is refused, even when display text looks valid.
+
+Read-only access trial reviewers use the exact review root recorded in their offer. A default directory cannot substitute for the owned trial directory.
