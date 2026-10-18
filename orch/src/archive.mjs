@@ -5,9 +5,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { OrchError } from './errors.mjs';
 import { samePath } from './git.mjs';
+import { wpKey } from './claims.mjs';
+import { projectReviewHeader } from './review-header.mjs';
 
 export const ARCHIVE_LIMIT = 256 * 1024;
 export const DOCUMENT_LIMIT = 2 * 1024 * 1024;
+// Historical review snapshots include complete source/worker statuses. Keep their
+// compatibility budget separate from compact evidence and ordinary documents.
+export const REVIEW_DOCUMENT_LIMIT = 64 * 1024 * 1024;
+export const readReviewDocument = (file) => readDocument(file, REVIEW_DOCUMENT_LIMIT);
 export const digest = (b) => crypto.createHash('sha256').update(b).digest('hex');
 export const identity = (s) => `${s.dev}:${s.ino}:${s.birthtimeNs}`;
 export const stamp = (file) => identity(fs.lstatSync(file, { bigint: true }));
@@ -37,16 +43,16 @@ export function evidencePath(cfg, area, kind, id) {
   if (!['run', 'review'].includes(kind)) throw new OrchError('invalid evidence kind', 'bad-kind');
   return path.join(cfg.stateRoot, 'retention', area, kind, `${checkedId(id)}.json`);
 }
-export function readDocument(file, limit = DOCUMENT_LIMIT) {
+export function readDocument(file, limit = DOCUMENT_LIMIT, parse = JSON.parse) {
   let fd;
   try {
     fd = fs.openSync(safe(file), 'r');
     const s = fs.fstatSync(fd);
     if (!s.isFile() || s.size > limit) throw new OrchError('evidence document exceeds its read limit', 'archive-oversized');
-    const b = Buffer.alloc(limit + 1); let n = 0;
-    while (n <= limit) { const got = fs.readSync(fd, b, n, b.length - n, null); if (!got) break; n += got; }
+    let b = Buffer.alloc(Math.min(limit + 1, Math.max(1, s.size + 1))); let n = 0;
+    while (n <= limit) { if (n === b.length) { const grown = Buffer.alloc(Math.min(limit + 1, b.length * 2)); b.copy(grown); b = grown; } const got = fs.readSync(fd, b, n, b.length - n, null); if (!got) break; n += got; }
     if (n > limit) throw new OrchError('evidence document grew beyond its read limit', 'archive-oversized');
-    return JSON.parse(b.subarray(0, n).toString('utf8'));
+    return parse(b.subarray(0, n).toString('utf8'));
   } catch (e) { if (e.code === 'ENOENT') return null; if (e instanceof OrchError) throw e; throw new OrchError(`evidence unreadable: ${file}`, 'archive-unreadable'); }
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
@@ -56,8 +62,8 @@ export async function readDocumentAsync(file, limit = DOCUMENT_LIMIT) {
     fd = await fsp.open(await safeAsync(file), 'r');
     const s = await fd.stat();
     if (!s.isFile() || s.size > limit) throw new OrchError('evidence document exceeds its read limit', 'archive-oversized');
-    const b = Buffer.alloc(limit + 1); let n = 0;
-    while (n <= limit) { const { bytesRead } = await fd.read(b, n, b.length - n, null); if (!bytesRead) break; n += bytesRead; }
+    let b = Buffer.alloc(Math.min(limit + 1, Math.max(1, s.size + 1))); let n = 0;
+    while (n <= limit) { if (n === b.length) { const grown = Buffer.alloc(Math.min(limit + 1, b.length * 2)); b.copy(grown); b = grown; } const { bytesRead } = await fd.read(b, n, b.length - n, null); if (!bytesRead) break; n += bytesRead; }
     if (n > limit) throw new OrchError('evidence document grew beyond its read limit', 'archive-oversized');
     return JSON.parse(b.subarray(0, n).toString('utf8'));
   } catch (e) { if (e.code === 'ENOENT') return null; if (e instanceof OrchError) throw e; throw new OrchError(`evidence unreadable: ${file}`, 'archive-unreadable'); }
@@ -92,7 +98,7 @@ export function readArchived(cfg, kind, id) {
   if (!entry && journal?.state === 'prepared' && Object.values(journal.files || {}).every((f) => f.state === 'planned')) entry = journal.entry;
   validate(entry, journal, cfg, kind, id, stamp(safe(cfg.stateRoot)));
   const original = safe(entry.original.path), present = fs.existsSync(original);
-  const record = present ? readDocument(kind === 'run' ? path.join(original, 'run.json') : original) : null;
+  const record = present ? readDocument(kind === 'run' ? path.join(original, 'run.json') : original, kind === 'review' ? REVIEW_DOCUMENT_LIMIT : DOCUMENT_LIMIT) : null;
   checkOriginal(entry, journal, present, present ? stamp(original) : null, record);
   return { ...entry.data, metadata: { state: journal.state === 'complete' ? 'retired' : 'retirement-pending', kind, retired_at: journal.completed_at || null }, journal };
 }
@@ -109,7 +115,7 @@ export async function readArchivedAsync(cfg, kind, id) {
   validate(entry, journal, cfg, kind, id, identity(await fsp.lstat(await safeAsync(cfg.stateRoot), { bigint: true })));
   const original = await safeAsync(entry.original.path);
   let s; try { s = await fsp.lstat(original, { bigint: true }); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const record = s ? await readDocumentAsync(kind === 'run' ? path.join(original, 'run.json') : original) : null;
+  const record = s ? await readDocumentAsync(kind === 'run' ? path.join(original, 'run.json') : original, kind === 'review' ? REVIEW_DOCUMENT_LIMIT : DOCUMENT_LIMIT) : null;
   checkOriginal(entry, journal, !!s, s ? identity(s) : null, record);
   return { ...entry.data, metadata: { state: journal.state === 'complete' ? 'retired' : 'retirement-pending', kind, retired_at: journal.completed_at || null }, journal };
 }
@@ -117,14 +123,14 @@ export function readEvidence(cfg, kind, id) {
   const archived = readArchived(cfg, kind, id);
   if (archived) return archived;
   const file = kind === 'run' ? path.join(cfg.runsDir, checkedId(id), 'run.json') : path.join(cfg.stateRoot, 'reviews', `${checkedId(id)}.json`);
-  const record = readDocument(file);
+  const record = readDocument(file, kind === 'review' ? REVIEW_DOCUMENT_LIMIT : DOCUMENT_LIMIT);
   return record ? { record, metadata: { state: 'available', kind } } : null;
 }
 export async function readEvidenceAsync(cfg, kind, id) {
   const archived = await readArchivedAsync(cfg, kind, id);
   if (archived) return archived;
   const file = kind === 'run' ? path.join(cfg.runsDir, checkedId(id), 'run.json') : path.join(cfg.stateRoot, 'reviews', `${checkedId(id)}.json`);
-  const record = await readDocumentAsync(file);
+  const record = await readDocumentAsync(file, kind === 'review' ? REVIEW_DOCUMENT_LIMIT : DOCUMENT_LIMIT);
   return record ? { record, metadata: { state: 'available', kind } } : null;
 }
 export function evidenceIds(cfg, kind) {
@@ -150,7 +156,36 @@ export async function evidenceIdsAsync(cfg, kind) {
   }
   return [...ids].sort();
 }
-export const listReviewEvidence = (cfg) => evidenceIds(cfg, 'review').map((id) => readEvidence(cfg, 'review', id)).map((e) => { if (!e) throw new OrchError('review inventory unreadable', 'archive-unreadable'); return e.record; });
+// Only ownership metadata is projected before package selection. Full parsing,
+// retirement hashes and original/archive consistency remain mandatory afterwards.
+function reviewPackages(cfg, id) {
+  const live = readDocument(path.join(cfg.stateRoot, 'reviews', id + '.json'), REVIEW_DOCUMENT_LIMIT, projectReviewHeader);
+  const headers = live ? [live] : [];
+  for (const area of ['archive', 'retired', 'sealed']) {
+    const doc = readDocument(evidencePath(cfg, area, 'review', id), area === 'archive' ? ARCHIVE_LIMIT : DOCUMENT_LIMIT);
+    const record = area === 'retired' ? doc?.entry?.data?.record : doc?.data?.record;
+    if (record) headers.push(record);
+  }
+  if (!headers.length) throw new OrchError('review ownership unreadable', 'archive-unreadable');
+  const packages = new Set(headers.map(r => {
+    if (r.id !== id || r.wp != null && typeof r.wp !== 'string') throw new OrchError('review ownership unreadable', 'archive-unreadable');
+    return r.wp == null ? null : wpKey(r.wp);
+  }));
+  if (packages.size !== 1) throw new OrchError('review ownership conflicts with compact evidence', 'archive-changed');
+  return packages;
+}
+export function listReviewEvidence(cfg, { wp = null } = {}) {
+  const key = wp == null ? null : wpKey(wp);
+  const out = [];
+  for (const id of evidenceIds(cfg, 'review')) {
+    if (key !== null && !reviewPackages(cfg, id).has(key)) continue;
+    const e = readEvidence(cfg, 'review', id);
+    if (!e) throw new OrchError('review inventory unreadable', 'archive-unreadable');
+    if (key !== null && (!e.record.wp || wpKey(e.record.wp) !== key)) throw new OrchError('review ownership changed during inventory', 'archive-changed');
+    out.push(e.record);
+  }
+  return out;
+}
 export const listRunEvidence = (cfg) => evidenceIds(cfg, 'run').map((id) => readEvidence(cfg, 'run', id)).map((e) => { if (!e) throw new OrchError('run inventory unreadable', 'archive-unreadable'); return e.record; });
 export const readScopeEvidence = (cfg, id) => readArchived(cfg, 'run', id)?.scope || readDocument(path.join(cfg.runsDir, checkedId(id), 'scope.json'));
 export function assertLive(cfg, kind, id) {
