@@ -1,7 +1,8 @@
 // G5 — cancel tells the truth (amendment A3).
 //
-// `orch cancel` may report success ONLY when a post-kill process-table read shows the
-// recorded MAIN worker gone. A refused kill is NOT evidence of death, and `cancel.json`
+// `orch cancel` may report success ONLY with positive worker-death evidence: a
+// readable post-kill table or the keeper's recorded exit. A refused kill is NOT
+// evidence of death, and `cancel.json`
 // is a request that can never make a live worker look terminal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -89,7 +90,16 @@ test(`G5/TE: cancel at ${REPS} randomised offsets -> never 'cancelled' without a
       dist.cancelled++;
       assert.equal(res.code, 0);
       assert.ok(['gone', 'mismatch'].includes(after), `rep ${rep}: 'cancelled' was claimed while the worker verifies ${after}`);
-      assert.ok(['gone', 'mismatch'].includes(out.worker_identity_after), `rep ${rep}: no post-kill verification: ${res.stdout}`);
+      assert.equal(out.kill_verdict, 'match', 'a refused kill cannot confirm cancellation');
+      const trail = keeperLines(c.stateRoot, id);
+      const exit = trail.find((line) => line.event === 'worker-exit');
+      const bound = trail.some((line) => line.event === 'worker-identity' && line.worker_pid === workerPid && line.worker_created_at === workerCreatedAt);
+      const recordedExit = out.exit_recorded === true && exit && bound;
+      assert.ok(out.worker_identity_after === 'gone' || recordedExit, `rep ${rep}: no post-kill verification: ${res.stdout}`);
+      if (recordedExit) {
+        const request = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'runs', id, 'cancel.json'), 'utf8'));
+        assert.ok(Date.parse(exit.at) >= Date.parse(request.requested_at), 'a stale exit cannot confirm this cancellation');
+      }
       assert.deepEqual(out.survivors, []);
     } else {
       dist.unconfirmed++;

@@ -601,25 +601,49 @@ function captureWorkerIdentity(pid) {
     return;
   }
   try {
-    const cmd =
-      `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | ` +
-      'Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress -Depth 2';
+    // Read birth and parent from the SAME open process handle, without the CIM
+    // provider. The parent check and live-child guard remain mandatory: never bind
+    // a replacement PID or fill a missing identity from a monitor's later snapshot.
+    const cmd = `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class OrchWorkerIdentity {
+  [StructLayout(LayoutKind.Sequential)] public struct Basic {
+    public int ExitStatus; public IntPtr Peb; public UIntPtr Affinity;
+    public int Priority; public UIntPtr Pid; public UIntPtr Parent;
+  }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int kind, out Basic value, int size, out int length);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr h, out long birth, out long exit, out long kernel, out long user);
+  public static void Read(int id, int parent) {
+    using (Process p = Process.GetProcessById(id)) {
+      IntPtr h = p.Handle; Basic b; int length; long birth, exit, kernel, user;
+      if (NtQueryInformationProcess(h, 0, out b, Marshal.SizeOf(typeof(Basic)), out length) != 0 || length != Marshal.SizeOf(typeof(Basic))) return;
+      if (b.Pid.ToUInt64() != (ulong)id || b.Parent.ToUInt64() != (ulong)parent || p.HasExited) return;
+      if (!GetProcessTimes(h, out birth, out exit, out kernel, out user)) return;
+      long ms = new DateTimeOffset(DateTime.FromFileTimeUtc(birth)).ToUnixTimeMilliseconds();
+      Console.Write("ORCH_WORKER:" + id + ":" + parent + ":" + ms);
+    }
+  }
+}
+'@; [OrchWorkerIdentity]::Read(${Number(pid)}, ${process.pid})`;
     const ps = execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd],
       { encoding: 'utf8', windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 },
       (err, stdout) => {
-        if (err && !stdout) return;
+        if (err) {
+          append(F.keeper, { event: 'worker-identity-unavailable', reason: err.killed ? 'query-timeout' : 'query-error', at: nowIso() });
+          return;
+        }
         // Record ONLY while this is provably still our child: the worker has not exited
         // (so its pid cannot have been reused) and the process answering is parented by
         // this keeper. Otherwise record nothing - an absent identity stays `unknown`, and
         // every kill path refuses on `unknown` (astra H4).
         if (workerExited) return;
-        const pp = /"ParentProcessId":(\d+)/.exec(String(stdout || ''));
-        if (!pp || Number(pp[1]) !== process.pid) return;
-        const m = /\/Date\((-?\d+)/.exec(String(stdout || ''));
-        if (!m) return;
-        append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: `ms:${m[1]}`, at: nowIso() });
+        const m = /^ORCH_WORKER:(\d+):(\d+):(\d+)$/.exec(String(stdout || '').trim());
+        if (!m || Number(m[1]) !== Number(pid) || Number(m[2]) !== process.pid || !Number.isSafeInteger(Number(m[3]))) return;
+        append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: `ms:${Number(m[3])}`, at: nowIso() });
       },
     );
     ps.on('error', () => {});
