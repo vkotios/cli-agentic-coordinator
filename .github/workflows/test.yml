@@ -2,21 +2,144 @@ name: test
 
 on:
   push:
+    branches: [main]
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       suite:
-        description: "fast (npm test) or stress (npm run test:stress, full repetition counts)"
+        description: "fast (commit checks), full (all acceptance), or stress (all repetitions)"
         required: true
-        default: stress
+        default: full
         type: choice
-        options: [fast, stress]
+        options: [fast, full, stress]
 
 permissions:
   contents: read
+  actions: read
+
+# Only obsolete runs for the same PR are cancelled. Main/release/manual runs are independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  plan:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.suite == 'fast')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      integration: ${{ steps.plan.outputs.integration }}
+      stress: ${{ steps.plan.outputs.stress }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+          cache: npm
+          cache-dependency-path: orch/package-lock.json
+      - run: npm ci
+        working-directory: orch
+      - id: plan
+        run: node orch/tools/ci-plan.mjs --github
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  commit:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: orch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+          cache: npm
+          cache-dependency-path: orch/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node tools/release-scan.mjs
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: commit-${{ matrix.os }}
+          path: orch/.state-test/ci-results/*.json
+          retention-days: 7
+
+  integration:
+    needs: [plan, commit]
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.plan.outputs.integration != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        group: ${{ fromJSON(needs.plan.outputs.integration || '[]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: orch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+          cache: npm
+          cache-dependency-path: orch/package-lock.json
+      - run: npm ci
+      - run: node tools/ci-run.mjs --mode integration --group "$CI_GROUP"
+        shell: bash
+        env:
+          CI_GROUP: ${{ matrix.group }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-${{ matrix.group }}-${{ matrix.os }}
+          path: orch/.state-test/ci-results/*.json
+          retention-days: 7
+
+  stress:
+    needs: [plan, commit, integration]
+    if: needs.plan.outputs.stress == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: orch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+          cache: npm
+          cache-dependency-path: orch/package-lock.json
+      - run: npm ci
+      - run: npm run test:stress
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-${{ matrix.os }}
+          path: orch/.state-test/ci-results/*.json
+          retention-days: 7
+
+  full:
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.suite != 'fast')
     strategy:
       fail-fast: false
       matrix:
@@ -35,9 +158,34 @@ jobs:
           cache-dependency-path: orch/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      # Every push / PR: the fast suite (each stress test runs once).
-      - if: github.event_name != 'workflow_dispatch' || inputs.suite == 'fast'
-        run: npm test
-      # Manual only (Actions > test > Run workflow): the full repetition counts.
-      - if: github.event_name == 'workflow_dispatch' && inputs.suite == 'stress'
+      - run: node tools/release-scan.mjs
+      - if: inputs.suite != 'stress'
+        run: npm run test:full
+      - if: inputs.suite == 'stress'
         run: npm run test:stress
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-${{ matrix.os }}
+          path: orch/.state-test/ci-results/*.json
+          retention-days: 7
+
+  ci:
+    name: CI
+    if: always()
+    needs: [plan, commit, integration, stress, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: orch/package.json
+      - run: npm ci
+        working-directory: orch
+      - run: node orch/tools/ci-run.mjs --gate
+        env:
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+          CI_FULL_REQUIRED: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.suite != 'fast') }}
+          CI_INTEGRATION_REQUIRED: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && needs.plan.outputs.integration != '[]' }}
+          CI_STRESS_REQUIRED: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && needs.plan.outputs.stress == 'true' }}
