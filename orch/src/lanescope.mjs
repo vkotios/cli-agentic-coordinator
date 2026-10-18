@@ -69,7 +69,7 @@ export function laneScope(lane = 'local') {
   const scope = `${laneId}-${lane}`;
   const laneDir = path.join(laneHome(), scope);
   const pipePath = (kind, id) => process.platform === 'linux'
-    ? path.join(os.tmpdir(), `.orch-${process.getuid()}`, `${kind}-${id}.sock`)
+    ? path.join('/tmp', `.orch-${process.getuid()}`, `${kind}-${id}.sock`)
     : `\\\\.\\pipe\\orch-${kind}-${id}`;
   return {
     laneId,

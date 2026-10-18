@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { makeCase, orch, ORCH_BIN, idFrom, waitFor, keeperLines, suspendProcess, resumeProcess, spawnedIdentity, contend, testReps } from './helpers.mjs';
+import { makeCase, orch, ORCH_BIN, idFrom, waitFor, keeperLines, suspendProcess, prepareProcessControl, releaseSuspendedProcess, spawnedIdentity, contend, testReps } from './helpers.mjs';
 import { probeFree } from '../src/lanepipe.mjs';
 
 const REPS = testReps(20, 'ORCH_G6_REPS');
@@ -47,11 +47,16 @@ function laneSnapshot(dir) {
 test(`G6/TD: wait-lane against held / free / frozen holders, ${REPS}x each`, { timeout: 25 * 60 * 1000 }, async (t) => {
   const c = makeCase('g6');
   let frozen = null;
+  let assemblyPath;
   t.after(async () => {
-    if (frozen) await resumeProcess(frozen.pid, frozen.createdAt);
+    if (frozen) {
+      const cleanup = await releaseSuspendedProcess(frozen.pid, frozen.createdAt, {assemblyPath});
+      assert.ok(cleanup.ok, `preserved uncertain suspended fixture: ${JSON.stringify(cleanup)}`);
+    }
     c.cleanup();
   });
 
+  assemblyPath = await prepareProcessControl(c.base);
   const dist = { free: [], held: [], frozen: [] };
 
   // FREE: exits 0 at once.
@@ -89,9 +94,9 @@ test(`G6/TD: wait-lane against held / free / frozen holders, ${REPS}x each`, { t
     const id = idFrom(run.stdout);
     const spawned = await waitFor(() => spawnedIdentity(c.stateRoot, id), { timeoutMs: 20000, what: 'spawned.json' });
     await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'spawned'), { timeoutMs: 20000, what: 'spawn' });
-    const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at);
-    assert.ok(s.ok, s.output);
     frozen = { pid: spawned.keeper_pid, createdAt: spawned.keeper_created_at };
+    const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at, false, {assemblyPath});
+    assert.ok(s.ok, s.output);
     const t0 = Date.now();
     const r = await orch(['wait-lane', '--lane', 'local', '--timeout', '3', '--json'], c.env);
     dist.frozen.push(Date.now() - t0);

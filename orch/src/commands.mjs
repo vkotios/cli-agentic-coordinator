@@ -16,7 +16,7 @@ import { getAdapter, PUBLIC_ADAPTERS } from './adapters/index.mjs';
 import { assertModelPermitted } from './models.mjs';
 import { OrchError } from './errors.mjs';
 import { laneScope, assertLaneOverrideAllowed } from './lanescope.mjs';
-import { connectHello } from './lanepipe.mjs';
+import { connectHello, recoverLinuxSocket } from './lanepipe.mjs';
 import { readProcessTable, verifyIdentity, creationTimesOf, ownChildCreationTime, killChecked, treeKillChecked } from './procs.mjs';
 import { deriveStatus } from './statusrules.mjs';
 import { closeViewer } from './viewer.mjs';
@@ -115,11 +115,12 @@ async function runLocked(args, io, opts) {
   return withQuotaAdmission({args,cfg,cli:cliName,model,role,id}, async (quota, markAttempted) => {
   // Adapter pre-flight runs in THIS process, BEFORE any record exists, so a bad handoff
   // or a bad model config fails the caller's command loudly and leaves nothing half-born.
-  const pre = adapter.preLaunch
-    ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'] })
-    : { notes: [], extra: {} };
-
   const P = paths(cfg, id);
+  const pre = adapter.preLaunch
+    ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'],
+        agent: args.agent || null, flags: args.flag || [], maxTurns: args['max-turns'] != null ? Number(args['max-turns']) : null,
+        maxPrice: args['max-price'] != null ? String(args['max-price']) : null, effort: args.effort || null, runDir: P.dir, launchPromptPath: P.prompt })
+    : { notes: [], extra: {} };
   beginRunArtifacts(cfg, id);
   fs.mkdirSync(P.dir);
 
@@ -617,6 +618,7 @@ export async function inspect(cfg, id, dl) {
     exit_code: facts.workerExit ? facts.workerExit.code : (rec.exit_code ?? null),
     dir_evidence: rec.dir_evidence || 'none',
     escaped_helpers: rec.escaped_helpers || [],
+    helper_audit: rec.helper_audit ?? null,
     last_activity_at: rec.last_activity_at || null,
     last_activity_signal: rec.last_activity_signal || null,
     quiet_seconds: rec.last_activity_at ? Math.round((Date.now() - Date.parse(rec.last_activity_at)) / 1000) : null,
@@ -708,8 +710,11 @@ export async function cmdStatus(args, io = console) {
     if (r.cancel_requested) io.log('  cancel requested');
     if (r.note) io.log(`  note: ${r.note}`);
     for (const h of r.escaped_helpers || []) {
-      io.log(`  ESCAPED HELPER pid ${h.pid} (${h.name}) is alive. orch did not kill it and never will.`);
+      io.log(h.state === 'unknown'
+        ? `  HELPER CANDIDATE pid ${h.pid} (${h.name}): identity or ancestry is unknown; no kill authorized.`
+        : `  ESCAPED HELPER pid ${h.pid} (${h.name}) is alive. orch did not kill it and never will.`);
     }
+    if (r.helper_audit?.state === 'unknown') io.log(`  HELPER AUDIT unknown (${r.helper_audit.reason || 'unverified ancestry'}); inspect before qualification or retirement.`);
     io.log(`  stdout=${r.stdout_bytes}B stderr=${r.stderr_bytes}B  last activity ${r.last_activity_at ?? '-'} (${r.quiet_seconds ?? '-'}s ago)`);
     for (const [stream, payload] of Object.entries(r.transcripts || {})) if (payload.state !== 'available') io.log(`  ${stream}: ${payload.state}`);
     if (r.retention_evidence_error) io.log(`  retention evidence error: ${r.retention_evidence_error}`);
@@ -776,6 +781,7 @@ export function cmdResult(args, io = console) {
     metadata: readArchived(cfg, 'run', id)?.metadata || { state: 'available' },
     warnings: rec.post_exit_warnings || [],
     escaped_helpers: rec.escaped_helpers || [],
+    helper_audit: rec.helper_audit ?? null,
     paths: { ...P },
   };
   if (args.json) {
@@ -1085,8 +1091,9 @@ function cancelText(o) {
 }
 
 /** The accepted, documented conflict with "escaped helpers are never killed" (v4 §6 H6). */
-export const TREE_KILL_NOTE =
-  'a tree kill also ends descendants the worker spawned detached. This is accepted and documented, not claimed away.';
+export const TREE_KILL_NOTE = process.platform === 'linux'
+  ? 'Linux cancellation targets the verified worker process group. Descendants that leave that group are outside this kill scope; retained helper evidence still governs finalization.'
+  : 'a tree kill also ends descendants the worker spawned detached. This is accepted and documented, not claimed away.';
 
 /**
  * `orch cancel --keeper <id>` — explicit operator escalation for a frozen keeper.
@@ -1198,6 +1205,15 @@ async function monitorLocked(cfg, id, args, io) {
     return { ...out, exitCode: 3 };
   }
 
+  if (process.platform === 'linux' && probe.state === 'free') {
+    const recovery = await recoverLinuxSocket(scope.monitorPipe(id));
+    if (!['absent', 'recovered'].includes(recovery.state)) {
+      const out = { id, monitor: 'not-started', reason: `socket owner ${recovery.state}; inspect retained evidence` };
+      emit(args, io, out, `${id}: no monitor started (${out.reason})`);
+      return { ...out, exitCode: 3 };
+    }
+  }
+
   const child = spawn(process.execPath, [MONITOR, '--state-root', cfg.stateRoot, '--id', id, '--run-dir', P.dir], {
     detached: true,
     shell: false,
@@ -1213,14 +1229,19 @@ async function monitorLocked(cfg, id, args, io) {
 
 /* ------------------------------------------------------------------- gc ---- */
 
-/** Removes only advisory lane files whose run is terminal. Kills nothing. */
+/** Removes stale advisory files and verified Linux orphan sockets. Kills nothing. */
 export async function cmdGc(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   const scope = laneScope(args.lane || 'local');
   const holder = readJson(scope.holderFile, null);
   const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
   const out = { lane: scope.lane, lane_state: probe.state, holder_run: holder ? holder.run_id : null, removed: [] };
-  if (holder && probe.state === 'free') {
+  if (process.platform === 'linux' && probe.state === 'free') {
+    const recovery = await recoverLinuxSocket(scope.pipeName);
+    out.removed.push(...recovery.removed);
+    if (!['absent', 'recovered'].includes(recovery.state)) out.lane_state = 'unknown';
+  }
+  if (holder && out.lane_state === 'free') {
     const rec = readRun(cfg, holder.run_id);
     if (!rec || TERMINAL.has(rec.status)) {
       try {
@@ -1231,7 +1252,7 @@ export async function cmdGc(args, io = console) {
       }
     }
   }
-  emit(args, io, out, `lane ${scope.lane}: ${probe.state}; removed ${out.removed.length} stale advisory file(s)`);
+  emit(args, io, out, `lane ${scope.lane}: ${out.lane_state}; removed ${out.removed.length} stale lane file(s)`);
   return { ...out, exitCode: 0 };
 }
 

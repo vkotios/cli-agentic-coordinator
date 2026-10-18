@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { OrchError } from './errors.mjs';
 import { topLevel } from './git.mjs';
@@ -95,14 +96,16 @@ function readJsonForMerge(file) {
 }
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const hasNull = v => v === null || typeof v === 'object' && Object.values(v).some(hasNull);
 
 /** A command hook handler that runs the kit guard. */
 function runsGuard(handler, roots = [KIT_ROOT]) {
   if (!isObj(handler) || (handler.type !== undefined && handler.type !== 'command')) return false;
-  const command = fwd(String(handler.command || '')).toLowerCase();
+  const normalize = value => process.platform === 'win32' ? fwd(String(value)).toLowerCase() : String(value);
+  const command = normalize(handler.command || '');
   return roots.some((root) => {
-    const want = `${fwd(root).replace(/\/$/, '')}/hooks/guard.mjs`.toLowerCase();
-    if (Array.isArray(handler.args)) return /^(node|node\.exe)$/.test(command) && handler.args.length === 1 && fwd(String(handler.args[0])).toLowerCase() === want;
+    const want = normalize(root).replace(/\/$/, '')+'/hooks/guard.mjs';
+    if (Array.isArray(handler.args)) return /^(node|node\.exe)$/.test(command) && handler.args.length === 1 && normalize(handler.args[0]) === want;
     // Exact invocation only. A suffix/substring in echo, a wrapper, or another command
     // is not authority to replace an owner's handler.
     return command === `node "${want}"` || (!/\s/.test(want) && command === `node ${want}`);
@@ -202,7 +205,7 @@ function sortKeys(o) {
 export async function planAdopt(repoArg, opts = {}) {
   const update = !!opts.update;
   const harnesses = [...new Set(opts.harness ? Array.isArray(opts.harness) ? opts.harness : [opts.harness] : ['claude', 'codex'])];
-  if (!harnesses.length || harnesses.some((h) => !['claude', 'codex', 'opencode', 'vibe'].includes(h))) throw new OrchError('--harness must be claude, codex, opencode or vibe', 'bad-harness');
+  if (!harnesses.length || harnesses.some((h) => !['claude', 'codex', 'opencode', 'vibe', 'copilot', 'muse'].includes(h))) throw new OrchError('--harness must be claude, codex, opencode, vibe, copilot or muse', 'bad-harness');
   if (!repoArg) throw new OrchError('adopt needs --repo <path>', 'missing-arg');
   const given = path.resolve(repoArg);
   if (!fs.existsSync(given) || !fs.statSync(given).isDirectory()) throw new OrchError(`--repo is not a directory: ${given}`, 'bad-repo');
@@ -223,6 +226,7 @@ export async function planAdopt(repoArg, opts = {}) {
     try {
       const m = JSON.parse(utf8Text(fs.readFileSync(manFile)).replace(/^﻿/, ''));
       if (!isObj(m) || !isObj(m.files)) throw new Error('no "files" object');
+      if (m.mcp_harnesses !== undefined && (!Array.isArray(m.mcp_harnesses) || m.mcp_harnesses.some(h => !['claude', 'copilot', 'muse'].includes(h)))) throw new Error('invalid MCP harness ownership');
       if (m.blocks !== undefined && !isObj(m.blocks)) throw new Error('invalid "blocks" object');
       if (m.schema !== undefined && m.schema !== 1 && m.schema !== 2) throw new Error('unsupported manifest schema');
       for (const [rel, entry] of Object.entries(m.blocks || {})) {
@@ -301,30 +305,37 @@ export async function planAdopt(repoArg, opts = {}) {
   }
 
   // 3. project MCP entry
-  const server = { command: 'node', args: [fwd(ORCH_BIN_PATH), 'mcp'] };
+  const mcpHarnesses = [...new Set([...(manifest.mcp_harnesses || []), ...harnesses.filter(h => ['claude', 'copilot', 'muse'].includes(h))])].sort();
+  const home = os.homedir(), metadata = mcpHarnesses.includes('muse') ? { HOME: home, ...(process.platform === 'win32' ? { USERPROFILE: home } : {}), VIBE_HOME: process.env.VIBE_HOME || path.join(home, '.vibe'), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || path.join(home, '.config') } : null;
+  const server = { command: 'node', args: [fwd(ORCH_BIN_PATH), 'mcp'], ...(metadata ? { env: metadata } : {}) };
+  const homeLocations = metadata ? `; home locations ${JSON.stringify(metadata)}` : '';
   let mcpRecord = manifest.mcp_entry;
-  const mcpItem = harnesses.includes('claude') ? planJson(repo, '.mcp.json', (obj) => {
+  const installMcp = harnesses.some(h => ['claude', 'copilot', 'muse'].includes(h));
+  const mcpItem = installMcp ? planJson(repo, '.mcp.json', (obj) => {
+    if (harnesses.some(h => h === 'copilot' || h === 'muse') && obj.mcpServers === undefined && Object.keys(obj).some(k => k !== '$schema')) return { error: 'project MCP schema is not the supported mcpServers wrapper; left untouched' };
+    if (mcpHarnesses.includes('muse') && (hasNull(obj) || Object.keys(obj).some(k => !['mcpServers', '$schema'].includes(k)) || obj.$schema !== undefined && typeof obj.$schema !== 'string')) return { error: 'project MCP document is incompatible with Muse; left untouched' };
     if (obj.mcpServers === undefined) obj.mcpServers = {};
     if (!isObj(obj.mcpServers)) return { error: '"mcpServers" is not an object' };
+    if (mcpHarnesses.includes('muse') && Object.values(obj.mcpServers).some(v => !isObj(v) || 'transport' in v || 'mode' in v)) return { error: 'project MCP server entries are incompatible with Muse; use canonical fields and leave owner settings unchanged' };
     const cur = obj.mcpServers.orch;
     if (cur === undefined) {
       obj.mcpServers.orch = server;
       mcpRecord = server;
-      return { changed: true, detail: `mcpServers.orch -> node ${server.args.join(' ')}` };
+      return { changed: true, detail: `mcpServers.orch -> node ${server.args.join(' ')}${homeLocations}` };
     }
     if (JSON.stringify(cur) === JSON.stringify(server)) {
       mcpRecord = server;
-      return { changed: false, detail: 'mcpServers.orch already present' };
+      return { changed: false, detail: `mcpServers.orch already present${homeLocations}` };
     }
     if (manifest.mcp_entry && JSON.stringify(cur) === JSON.stringify(manifest.mcp_entry)) {
-      if (!update) return { stale: 'mcpServers.orch was written by adopt and the kit path changed; run with --update' };
+      if (!update) return { stale: `mcpServers.orch was written by adopt and its kit path or harness requirements changed; run with --update${homeLocations}` };
       obj.mcpServers.orch = server;
       mcpRecord = server;
-      return { changed: true, detail: 'mcpServers.orch (written by adopt) updated to the current kit' };
+      return { changed: true, detail: `mcpServers.orch (written by adopt) updated to the current kit${homeLocations}` };
     }
     return { conflict: 'mcpServers.orch exists with different settings; left untouched' };
   }) : null;
-  if (harnesses.includes('claude')) items.push(mcpItem);
+  if (installMcp) items.push(mcpItem);
 
   // 4. Codex hook (project .codex/hooks.json; Codex asks the owner to trust it once).
   if (harnesses.includes('codex')) items.push(
@@ -343,7 +354,7 @@ export async function planAdopt(repoArg, opts = {}) {
     const mcpDone = successful.some((it) => it.path === '.mcp.json');
     return JSON.stringify({ ...manifest, tool: 'orch adopt', schema: 2, kit: fwd(KIT_ROOT),
       previous_kits: [...new Set(roots.map(fwd).filter((r) => r !== fwd(KIT_ROOT)))].sort(),
-      files: sortKeys(files), blocks: sortKeys(blocks), mcp_entry: mcpDone ? mcpRecord : manifest.mcp_entry }, null, 2) + '\n';
+      files: sortKeys(files), blocks: sortKeys(blocks), mcp_entry: mcpDone ? mcpRecord : manifest.mcp_entry, ...(mcpDone ? { mcp_harnesses: mcpHarnesses } : {}) }, null, 2) + '\n';
   };
   if (!manifestBad) {
     const next = manifestContent(items.filter((i) => ['create', 'update', 'unchanged'].includes(i.action)));
@@ -353,6 +364,7 @@ export async function planAdopt(repoArg, opts = {}) {
   }
   for (const route of readiness) {
     const entry = items.find((i) => i.path === route.path);
+    if (route.harness === 'copilot' || route.harness === 'muse') route.mcp = mcpItem && ['create', 'update', 'unchanged'].includes(mcpItem.action) ? 'planned-unqualified' : 'not-confirmed';
     const readyActions = ['create', 'update', 'unchanged'];
     if (!readyActions.includes(entry.action)) route.warnings.push(`bootstrap ${entry.action}`);
     if (items.some((i) => ['stale', 'conflict', 'refused'].includes(i.action))) route.warnings.push('adoption contains stale, conflicting or refused items');
@@ -451,6 +463,7 @@ export async function cmdAdopt(args, io, opts = {}) {
     update: !!args.update,
     harnesses: plan.harnesses,
     readiness: plan.readiness.map((r) => ({ ...r, instructions: blocked.length ? 'partial' : r.instructions,
+      ...(r.mcp ? { mcp: blocked.length || r.mcp === 'not-confirmed' ? 'not-confirmed' : dryRun ? 'planned-unqualified' : 'configured-unqualified' } : {}),
       hooks: r.hooks === 'not-installed' ? r.hooks : blocked.length ? 'not-confirmed'
         : plan.items.find((i) => i.path === (r.harness === 'claude' ? '.claude/settings.json' : '.codex/hooks.json'))?.action === 'stale'
           ? 'stale-unqualified' : dryRun ? 'planned-unqualified' : r.hooks })),

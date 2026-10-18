@@ -2,32 +2,38 @@
 // lifetime to the keeper. If the keeper disappears, this wrapper kills the
 // session so neither the CLI nor its same-session descendants are orphaned.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { creationPoint } from './process-time.mjs';
 
+let nativeScope = null;
+/** @returns {{unknown:boolean,state?:string,ppid?:number,pgrp?:number,session?:number,start?:string,identity?:string}|null} */
 function procStat(pid) {
+  if (nativeScope === null) {
+    try {
+      const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+      const ns = /^pid:\[([1-9]\d*)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'));
+      nativeScope = ns ? `linux:${boot}:${ns[1]}` : null;
+      if (!creationPoint(`${nativeScope}:0`)) return { unknown: true };
+    } catch { return { unknown: true }; }
+  }
   try {
     const raw = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
     const close = raw.lastIndexOf(')');
-    if (close < 0) return null;
-    const fields = raw.slice(close + 1).trim().split(/\s+/);
-    return {
-      state: fields[0],
-      ppid: Number(fields[1]),
-      pgrp: Number(fields[2]),
-      session: Number(fields[3]),
-      start: fields[19],
-    };
-  } catch {
-    return null;
+    if (close < 0 || Number(raw.slice(0, raw.indexOf('(')).trim()) !== Number(pid)) return { unknown: true };
+    const fields = raw.slice(close + 1).trim().split(/\s+/), identity = `${nativeScope}:${fields[19]}`;
+    const ppid = Number(fields[1]), pgrp = Number(fields[2]), session = Number(fields[3]);
+    if (!creationPoint(identity) || !Number.isInteger(ppid) || !Number.isInteger(pgrp) || !Number.isInteger(session)) return { unknown: true };
+    return { unknown: false, state: fields[0], ppid, pgrp, session, start: fields[19], identity };
+  } catch (error) {
+    return ['ENOENT', 'ESRCH'].includes(error?.code) ? null : { unknown: true };
   }
 }
 
 function ownPipe(pathname, deviceText, inodeText) {
   if (!pathname) return null;
   const uid = process.getuid?.();
-  const expectedDir = path.join(os.tmpdir(), `.orch-${uid}`);
+  const expectedDir = path.join('/tmp', `.orch-${uid}`);
   if (!Number.isInteger(uid) || path.dirname(pathname) !== expectedDir || !path.isAbsolute(pathname) || !/^lane-[A-Za-z0-9_-]+\.sock$/.test(path.basename(pathname))) {
     throw new Error('unsafe Linux lane socket path');
   }
@@ -35,17 +41,17 @@ function ownPipe(pathname, deviceText, inodeText) {
   if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 0o077) !== 0) {
     throw new Error('unsafe Linux lane socket directory');
   }
-  const socket = fs.lstatSync(pathname);
-  if (!socket.isSocket() || socket.uid !== uid || String(socket.dev) !== deviceText || String(socket.ino) !== inodeText) {
+  const socket = fs.lstatSync(pathname, { bigint: true });
+  if (!socket.isSocket() || socket.uid !== BigInt(uid) || String(socket.dev) !== deviceText || String(socket.ino) !== inodeText) {
     throw new Error('lane socket ownership could not be established');
   }
-  return { pathname, dev: socket.dev, ino: socket.ino, uid };
+  return { pathname, dev: socket.dev, ino: socket.ino, uid: socket.uid };
 }
 
 function removeOwnPipe(identity) {
   if (!identity) return;
   try {
-    const current = fs.lstatSync(identity.pathname);
+    const current = fs.lstatSync(identity.pathname, { bigint: true });
     if (current.isSocket() && current.uid === identity.uid && current.dev === identity.dev && current.ino === identity.ino) {
       fs.unlinkSync(identity.pathname);
     }
@@ -73,7 +79,7 @@ const [exe, encodedArgs, keeperPidText, keeperStart, pipeName, pipeDevice, pipeI
 let args;
 try { args = JSON.parse(encodedArgs); } catch { fail('invalid worker arguments'); }
 const keeperPid = Number(keeperPidText);
-if (!exe || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string') || !Number.isInteger(keeperPid) || keeperPid <= 1 || !/^\d+$/.test(keeperStart || '')) {
+if (!exe || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string') || !Number.isInteger(keeperPid) || keeperPid <= 1 || creationPoint(keeperStart)?.kind !== 'linux') {
   fail('invalid worker launch request');
 }
 
@@ -86,12 +92,14 @@ if (pipeName) {
   fail('unexpected lane socket identity for a non-exclusive lane');
 }
 const keeper = procStat(keeperPid);
-if (!keeper || keeper.start !== keeperStart || keeper.state === 'Z' || keeper.state === 'X') {
+// Uncertainty refuses admission, but the live owner still owns its listener.
+if (keeper?.unknown) fail('keeper identity could not be established');
+if (!keeper || keeper.identity !== keeperStart || keeper.state === 'Z' || keeper.state === 'X') {
   removeOwnPipe(pipeIdentity);
   fail('keeper identity could not be established');
 }
 const self = procStat(process.pid);
-if (!self || self.pgrp !== process.pid || self.session !== process.pid) {
+if (!self || self.unknown || self.pgrp !== process.pid || self.session !== process.pid) {
   fail('worker supervisor is not an isolated session leader');
 }
 
@@ -111,11 +119,12 @@ worker.once('spawn', () => reportStatus('READY'));
 
 let complete = false;
 let timer;
-function terminateSession() {
+function terminateSession(releasePipe = false) {
   if (complete) return;
   complete = true;
   if (timer) clearInterval(timer);
-  removeOwnPipe(pipeIdentity);
+  // A signal to this worker is not proof that its keeper released the lane.
+  if (releasePipe) removeOwnPipe(pipeIdentity);
   // The wrapper is the verified session leader; its worker and ordinary
   // descendants share this group. Detached descendants are outside this scope.
   try {
@@ -128,12 +137,13 @@ function terminateSession() {
 
 function checkKeeper() {
   const current = procStat(keeperPid);
-  if (!current || current.start !== keeperStart || current.state === 'Z' || current.state === 'X') {
-    terminateSession();
+  if (current?.unknown) return; // uncertainty is not keeper death and must not kill a live job
+  if (!current || current.identity !== keeperStart || current.state === 'Z' || current.state === 'X') {
+    terminateSession(true);
   }
 }
 
-for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, terminateSession);
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => terminateSession());
 timer = setInterval(checkKeeper, 50);
 checkKeeper();
 worker.on('error', (/** @type {any} */ error) => {

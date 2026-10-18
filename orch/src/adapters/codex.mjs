@@ -1,3 +1,4 @@
+import { pathKey } from '../git.mjs';
 // codex adapter (slice 2). CLI facts: docs/CLI_GUIDE.md "codex" + `codex exec --help`
 // (v0.154.0, read not run).
 //
@@ -62,7 +63,7 @@ export function codexSessionsDir() {
 
 function sameDir(a, b) {
   if (!a || !b) return false;
-  const n = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const n = pathKey;
   return n(a) === n(b);
 }
 

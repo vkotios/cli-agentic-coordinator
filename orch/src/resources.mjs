@@ -5,12 +5,13 @@ import crypto from 'node:crypto';
 import { OrchError } from './errors.mjs';
 import { nowIso, writeJsonAtomic, readTailLines, sleep } from './util.mjs';
 import { publishExclusive } from './exclusive.mjs';
-import { git, worktreeList, samePath, isInside } from './git.mjs';
+import { git, worktreeList, samePath, isInside, pathKey } from './git.mjs';
 import { wpKey, readClaim, requireClaim } from './claims.mjs';
 import { paths, readRun, TERMINAL, keeperFacts } from './store.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { sha256File } from './scope.mjs';
 import { listRunEvidence, readArchived } from './archive.mjs';
+import { reconcileHelpers } from './helper-reconciliation.mjs';
 
 const directory = (cfg) => path.join(cfg.stateRoot, 'resources');
 export const resourceFile = (cfg, id) => {
@@ -135,7 +136,7 @@ export async function withOperationLock(cfg, key, fn, waitMs = 0) {
   }
 }
 export const withWpOperation = (cfg, wp, fn) => wp ? withOperationLock(cfg, `wp:${wpKey(wp)}`, fn, 5000) : fn();
-export const withResourceLock = (cfg, r, fn) => withOperationLock(cfg, `path:${path.resolve(r.path).replace(/\\/g, '/').toLowerCase()}`, fn);
+export const withResourceLock = (cfg, r, fn) => withOperationLock(cfg, 'path:'+pathKey(path.resolve(r.path)), fn);
 export const closureFile = (cfg, wp) => path.join(cfg.stateRoot, 'finishes', `${wpKey(wp)}.json`);
 export function readClosure(cfg, wp) {
   try { return JSON.parse(fs.readFileSync(closureFile(cfg, wp), 'utf8')); }
@@ -216,6 +217,8 @@ export async function dependentRunBlock(cfg, r) {
     }
     if (!depends) continue;
     if (!TERMINAL.has(run.status)) return `dependent run ${run.id} is active or starting`;
+    const helpers = await reconcileHelpers(run, Date.now() + 4000);
+    if (helpers.reason) return `run ${run.id} ${helpers.reason}`;
     let archived;
     try { archived = readArchived(cfg, 'run', run.id); } catch { return `run ${run.id} compact evidence unreadable`; }
     if (archived) {

@@ -69,7 +69,9 @@ test(
       })();
       try {
 
-      const results = await contend(N, runArgs(c, 2), c.env);
+      const release = path.join(c.base, 'release-contenders-'+rep);
+      const results = await contend(N, [...runArgs(c, 0), '--flag', '--wait-for-file', '--flag', release], c.env);
+      fs.writeFileSync(release, 'all admission responses collected');
       const { admitted, busy, other } = classify(results);
 
       assert.equal(admitted.length, 1, `rep ${rep}: expected exactly 1 admitted, got ${admitted.length}\n${JSON.stringify(results, null, 1)}`);
@@ -132,7 +134,10 @@ test(
 test('TA-20: twenty simultaneous orch run processes -> exactly one job id, 19 lane-busy', { timeout: 5 * 60 * 1000 }, async (t) => {
   const c = makeCase('ta20');
   t.after(() => c.cleanup());
-  const results = await contend(20, runArgs(c, 3), c.env, { leadMs: 1500 });
+  const release = path.join(c.base, 'release-twenty');
+  t.after(()=>{if(fs.existsSync(c.base))fs.writeFileSync(release,'release');});
+  const results = await contend(20, [...runArgs(c, 0), '--flag', '--wait-for-file', '--flag', release], c.env, { leadMs: 1500 });
+  fs.writeFileSync(release, 'all admission responses collected');
   const { admitted, busy, other } = classify(results);
   assert.equal(admitted.length, 1, `expected 1 admitted, got ${admitted.length}: ${JSON.stringify(results.map((r) => [r.label, r.code, r.stdout.split('\n')[0]]))}`);
   assert.equal(busy.length, 19, `expected 19 lane-busy, got ${busy.length}`);
@@ -216,7 +221,7 @@ test('A2: orch run records keeper pid AND OS creation time itself, before any mo
   const id = idFrom(r.stdout);
   const spawned = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'runs', id, 'spawned.json'), 'utf8'));
   assert.equal(typeof spawned.keeper_pid, 'number');
-  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^ticks:\d+$/ : /^ms:\d+$/, 'keeper OS creation time was not captured by the spawner');
+  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'keeper OS creation time was not captured by the spawner');
   assert.equal(spawned.monitor_pid, null, 'no monitor was requested');
   const rec = readRunRecord(c.stateRoot, id);
   assert.equal(rec.lane, 'local');

@@ -25,6 +25,8 @@ import { spawn, execFile } from 'node:child_process';
 const nowIso = () => new Date().toISOString();
 
 let writeFailures = 0;
+/** @type {import('node:net').Server|null} */
+let server = null;
 let workerExited = false; // set on the worker's `exit`; guards the identity capture
 
 // CODE-REVIEW FIX (agy g9): `orch run` destroys the admission pipe once it has its
@@ -125,6 +127,14 @@ function answer(obj) {
 function blockedExit(reason, code, extra = {}) {
   append(F.keeper, { blocked: reason, at: nowIso(), ...extra });
   answer({ admission: 'blocked', reason });
+  if (process.platform === 'linux' && server?.listening) {
+    const fallback = setTimeout(() => process.exit(code), 2000);
+    fallback.unref?.();
+    try {
+      server.close(() => { clearTimeout(fallback); process.exit(code); });
+    } catch { process.exit(code); }
+    return;
+  }
   process.exit(code);
 }
 
@@ -160,8 +170,7 @@ function prepareLinuxLaneSocketDir() {
   if (process.platform !== 'linux' || !EXCLUSIVE) return;
   const uid = process.getuid?.();
   if (!Number.isInteger(uid)) throw new Error('cannot determine the Linux uid for the lane socket');
-  const tmpRoot = path.resolve(process.env.TMPDIR || process.env.TMP || process.env.TEMP || '/tmp');
-  const expected = path.join(tmpRoot, `.orch-${uid}`);
+  const expected = path.join('/tmp', `.orch-${uid}`);
   const base = path.basename(PIPE);
   if (path.dirname(PIPE) !== expected || !path.isAbsolute(PIPE) || !base.startsWith('lane-') || !base.endsWith('.sock') || !/^[A-Za-z0-9_-]+$/.test(base.slice(5, -5))) {
     throw new Error('unsafe Linux lane socket path');
@@ -179,8 +188,8 @@ function prepareLinuxLaneSocketDir() {
 
 function readLinuxLaneSocketIdentity() {
   const uid = process.getuid?.();
-  const socket = fs.lstatSync(PIPE);
-  if (!Number.isInteger(uid) || !socket.isSocket() || socket.uid !== uid) {
+  const socket = fs.lstatSync(PIPE, { bigint: true });
+  if (!Number.isInteger(uid) || !socket.isSocket() || socket.uid !== BigInt(uid)) {
     throw new Error('lane socket ownership could not be established');
   }
   return { dev: String(socket.dev), ino: String(socket.ino) };
@@ -203,7 +212,35 @@ function readHolderFacts() {
   }
 }
 
-const server = net.createServer();
+// Native scope and tick frequency are established in Phase A, before a worker exists.
+// The keeper retains its four-core-module surface; failures refuse admission.
+let LINUX_SCOPE = '', LINUX_HZ = 0;
+if (process.platform === 'linux') {
+  try {
+    const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    const ns = /^pid:\[([1-9]\d{0,19})\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'));
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(boot) || !ns) throw new Error('native process scope unavailable');
+    LINUX_SCOPE = `linux:${boot}:${ns[1]}`;
+    LINUX_HZ = await new Promise((resolve, reject) => execFile('getconf', ['CLK_TCK'],
+      { encoding: 'utf8', timeout: 1000, maxBuffer: 1024 }, (error, stdout) => {
+        const value = Number(String(stdout).trim());
+        if (error || !/^\d+\s*$/.test(String(stdout)) || !Number.isSafeInteger(value) || value <= 0 || value > 1000000) reject(new Error('Linux clock frequency unavailable'));
+        else resolve(value);
+      }));
+  } catch (error) { blockedExit('linux-process-clock-unavailable', 5, { detail: String(error?.message || error).slice(0, 160) }); }
+}
+function linuxStamp(ticks) {
+  const value = Number(ticks);
+  return LINUX_SCOPE && Number.isSafeInteger(value) && value >= 0 ? `${LINUX_SCOPE}:${value}` : null;
+}
+function linuxExitClock() {
+  try {
+    const raw = fs.readFileSync('/proc/uptime', 'utf8'), match = /^(\d+(?:\.\d+)?)\s/.exec(raw);
+    return match ? linuxStamp(Math.ceil(Number(match[1]) * LINUX_HZ)) : null;
+  } catch { return null; } // unreadable time remains unknown; it cannot change Phase B flow
+}
+
+server = net.createServer();
 server.on('error', () => {}); // after the bind, a server error may never change control flow
 
 // 5 listen ONCE. No retry, no loop, no ticket.
@@ -271,6 +308,15 @@ function onBound() {
   if (process.platform === 'linux' && EXCLUSIVE) {
     try {
       PIPE_IDENTITY = readLinuxLaneSocketIdentity();
+      const raw = fs.readFileSync('/proc/self/stat', 'utf8'), ticks = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
+      const createdAt = /^\d+$/.test(ticks || '') ? linuxStamp(ticks) : null;
+      if (!createdAt) throw new Error('socket owner identity unavailable');
+      const ownerFile = PIPE + '.owner.json', owner = { token: crypto.randomUUID(), pid: process.pid, createdAt,
+        netns: fs.readlinkSync('/proc/self/ns/net'), dev: PIPE_IDENTITY.dev, ino: PIPE_IDENTITY.ino, uid: String(process.getuid()) };
+      writeAtomic(ownerFile, JSON.stringify(owner));
+      server.once('close', () => {
+        try { if (fs.readFileSync(ownerFile, 'utf8') === JSON.stringify(owner)) fs.unlinkSync(ownerFile); } catch { /* preserve successors and uncertainty */ }
+      });
     } catch (e) {
       server.close(() => blockedExit('lane-socket-identity-unavailable', 7, { pipe: PIPE, detail: String(e?.message || e) }));
       return;
@@ -377,8 +423,8 @@ function phaseB(ctx) {
       const raw = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
       const close = raw.lastIndexOf(')');
       const fields = close >= 0 ? raw.slice(close + 1).trim().split(/\s+/) : [];
-      const keeperStart = fields[19] || '';
-      if (!/^\d+$/.test(keeperStart)) {
+      const keeperStart = /^\d+$/.test(fields[19] || '') ? linuxStamp(fields[19]) : null;
+      if (!keeperStart) {
         throw Object.assign(new Error('keeper identity could not be established'), { code: 'KEEPER_IDENTITY_UNAVAILABLE' });
       }
       if (launch.lane_exclusive !== false && !PIPE_IDENTITY) {
@@ -420,6 +466,7 @@ function phaseB(ctx) {
   let settled = false;
   let supervisorStatus = '';
   let supervisorTimer = null;
+  let deferredExit = null;
 
   const clearSupervisorTimer = () => {
     if (supervisorTimer) clearTimeout(supervisorTimer);
@@ -456,6 +503,11 @@ function phaseB(ctx) {
     // Record the session leader identity; it is the verified group id used for
     // cancellation and is also the supervisor that owns the worker lifecycle.
     captureWorkerIdentity(child.pid);
+    if (deferredExit) {
+      const { code, signal } = deferredExit;
+      deferredExit = null;
+      workerExit(code, signal);
+    }
   }
 
   if (process.platform === 'linux') {
@@ -497,19 +549,22 @@ function phaseB(ctx) {
 
   if (process.platform !== 'linux') child.on('spawn', workerSpawned);
 
-  child.on('exit', (code, signal) => {
+  function workerExit(code, signal) {
     workerExited = true;
     if (settled) return;
     // A supervisor may exit before its status-pipe data is delivered. Let the pipe's
     // close event decide whether the real worker ever spawned.
-    if (!sawSpawn && process.platform === 'linux') return;
+    if (!sawSpawn && process.platform === 'linux') {
+      deferredExit = { code, signal };
+      return;
+    }
     if (!sawSpawn) {
       failBeforeWorker('SUPERVISOR');
       return;
     }
     settled = true;
     // 14
-    append(F.keeper, { event: 'worker-exit', code: code ?? null, signal: signal ?? null, at: nowIso() });
+    append(F.keeper, { event: 'worker-exit', code: code ?? null, signal: signal ?? null, at: nowIso(), ...(process.platform === 'linux' ? { process_clock: linuxExitClock() } : {}) });
     // 15 wait for the streams, capped: an escaped helper can hold the fds open.
     let closed = false;
     const cap = setTimeout(() => {
@@ -526,7 +581,8 @@ function phaseB(ctx) {
       append(F.keeper, { event: 'streams-closed', at: nowIso() });
       teardown(ctx);
     });
-  });
+  }
+  child.on('exit', workerExit);
 }
 
 /** One bounded, guarded process query. Never blocks, never kills, never throws. */
@@ -538,7 +594,7 @@ function captureWorkerIdentity(pid) {
       const fields = raw.slice(close + 1).trim().split(/\s+/);
       // procfs starttime is field 22 (index 19 after the state field); PPID is field 4.
       if (workerExited || Number(fields[1]) !== process.pid || !/^\d+$/.test(fields[19] || '')) return;
-      append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: `ticks:${fields[19]}`, at: nowIso() });
+      append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: linuxStamp(fields[19]), at: nowIso() });
     } catch {
       /* a missing or unreadable identity stays unknown; never adopt it later */
     }

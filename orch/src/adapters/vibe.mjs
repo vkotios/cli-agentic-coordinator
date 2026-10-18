@@ -1,3 +1,4 @@
+import { pathKey } from '../git.mjs';
 // vibe adapter.
 //
 // Verified mechanics (from the original spike runs; see docs/CLI_GUIDE.md "vibe"):
@@ -289,7 +290,7 @@ export function aliasNameFromConfigToml(text, alias) {
 
 function sameDir(a, b) {
   if (!a || !b) return false;
-  const norm = (p) => path.resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase();
+  const norm = (p) => pathKey(path.resolve(String(p)));
   return norm(a) === norm(b);
 }
 

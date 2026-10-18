@@ -7,6 +7,15 @@ quirk after upgrading, and record new ones here.
 Legend: **verified** = observed on the stated version on Windows 11 with Node 24.
 **unverified** = from documentation or research, not confirmed by a run.
 
+Helper ancestry is an observation, not an OS sandbox. Parent PIDs can be reused,
+so the monitor checks creation order against the recorded worker identity and,
+after exit, its keeper-recorded lifetime. Older unrelated branches are excluded.
+Missing identities or timestamps remain unknown: status distinguishes uncertain
+helper candidates from verified live escapes, and an unknown helper audit cannot
+qualify a route or authorize retirement. Helpers are never killed by monitoring
+and never affect lane admission. Explicit cancellation retains its documented
+identity-checked tree-termination behaviour.
+
 Common to all workers:
 
 - Workers are started only through `orch run` / `orch review`. Never start one by hand: the guard hook
@@ -26,6 +35,9 @@ Common to all workers:
 | codex | `ORCH_CODEX_EXE` or `exe.codex` | `codex.exe` on `PATH` |
 | agy | `ORCH_AGY_EXE` or `exe.agy` | `agy.exe` on `PATH` |
 | vibe | `ORCH_VIBE_EXE` or `exe.vibe` | `vibe.exe` on `PATH`; then `%USERPROFILE%\.local\bin\vibe.exe` |
+
+| copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
+| muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
 
 A CLI that cannot be found is a clear `cli-not-found` error naming the override to set. The `.cmd`
 shims npm installs are deliberately **not** accepted (see opencode below).
@@ -59,6 +71,19 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - A local gateway usually serves **one model at a time**: never run two local workers at once (orch's
   `local` lane enforces this machine-wide), batch slices per model, and set opencode's `small_model` to the
   same model as the agent (a different one forces a reload).
+- Adding `$schema` during native configuration loading changed the scoped controller config on
+  1.18.31 and caused its integrity check to refuse MCP startup (verified). Generated controller
+  profiles include `$schema` before hashing; a model-free native MCP connection then left the
+  configuration unchanged.
+- Scoped local controller profiles disable the built-in `title` agent. On 1.18.31 a background title
+  request overlapped the main request; the main request hit HTTP 409 conflicts and internal retries
+  (verified). A single outer CLI launch does not mean one inference request or no provider retries.
+  Native agent listing verifies the disabled title profile; a completed trial is still required for
+  controller qualification.
+- Do not mix deprecated agent `tools` flags with the scoped controller permission allowlist on
+  1.18.31. Its legacy normalization can append the wildcard denial after the MCP tool allowance
+  and hide that tool (verified with native effective rules). Generated profiles use permission
+  rules alone: default deny followed by the one approved MCP tool.
 - A plugin that bootstraps a large skill set hung opencode on Windows (verified on 1.18.31). Keep worker
   agents lean: MCP off, a small skill list.
 - Cancel: `taskkill /PID <recorded root> /T /F` removed the whole tree with no orphans, and the gateway
@@ -192,12 +217,62 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 ## copilot (GitHub Copilot CLI)
 
-- No orch adapter yet: the guard denies direct `copilot -p` launches, and `orch run` cannot start it.
+- Worker and reviewer adapter: `orch run --cli copilot --model <selector>` and
+  `orch review --reviewer copilot --model <selector>`. Direct worker `copilot -p`
+  bypasses orch and is denied; an exact-approved scoped controller trial uses its own native runner.
 - Observed on **1.0.86**: a Microsoft Store install lives under
-  `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` and may need a new shell before it is on `PATH`.
-- Flags seen in `--help` (not run): `-p`, `--no-ask-user`, `--silent`, `--output-format json`, `--model`,
-  `--max-ai-credits`, `--usage-output-file`, `--log-dir`, `--allow-tool`, `--deny-tool`.
+  `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` and is a fallback when it is not yet on `PATH`.
+- Launches the native executable directly with JSONL, a bounded prompt argument, empty stdin,
+  explicit model, no updates/remote export and a per-run usage file. Shell metacharacters remain
+  argument data; no command wrapper is used. Extra flags and custom agents are refused.
+- Saved native GitHub authentication is used. BYOK/provider and GitHub-token environment overrides,
+  including enterprise tokens and GitHub host/config-directory/API-URL redirects, are excluded
+  from worker and reviewer child environments with case-insensitive name matching. Parent
+  environment and saved authentication files are preserved. A sign-in available only through an
+  excluded redirect may require signing in through the CLI's normal configuration location.
+  Orch does not buy credits or change account/overage preferences. Subscription quotas and
+  provider billing remain subject to the selected account's existing plan.
+- Reviewer tools are restricted to `view`, `glob` and `grep`; implementation also permits file
+  edits and shell tools. This is a tool restriction, not a filesystem sandbox. Existing detached
+  review containment and cleanup checks remain authoritative.
+- A pinned model is never silently replaced. `--model auto` is allowed only when explicitly
+  requested and without `--effort`; Auto is excluded from exact-model task-fit profiles.
+- Actual model attribution uses successful native model-call pairs and main-agent usage counters.
+  A selected/default model or a subagent's model alone is not evidence. Ambiguity stays unknown.
+- `--max-turns` and `--max-price` are refused: autopilot continuations and AI credits do not mean
+  model turns or a dollar budget. Native usage metrics remain metadata until explicit retirement.
 - Never script inline completions (against GitHub's acceptable-use terms).
+- Scoped controller qualification uses only the owned `orch-controller_step` MCP
+  tool, an explicit subscription selector, and native call/result evidence. Auto
+  preserves the observed model separately from its selector. This profile does not
+  grant general controller admission. Separate `orch adopt --harness copilot`
+  wiring uses root `AGENTS.md` and project `.mcp.json`; native trust and custom-agent
+  instruction opt-in remain owner checks. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
+
+## muse (Meta Muse Code)
+
+- Worker/reviewer adapter uses `muse exec` with JSONL, prompt file, explicit model and workspace.
+  Select the real `.exe` with `ORCH_MUSE_EXE` / `exe.muse`, or let orch resolve the installed
+  `.muse-version` marker beside `muse.cmd`. The updater/login launcher is never spawned.
+- Saved device-code OAuth provenance at the official Meta endpoint is required. Environment
+  API-key/base-URL overrides and raw transport tracing are excluded. No ordinary API key fallback,
+  account change, subscription upgrade or credential write is performed. The provider verifies
+  current subscription entitlement; local provenance alone does not prove current access.
+- Workspace trust loads existing project rules for both roles. Review additionally disables
+  shell execution and file writes. Web/reminder tools are disabled; native session worktrees and
+  duplicate session logs are disabled. The detached review audit still checks containment.
+- `--max-turns` maps to a positive `--max-model-steps`; `--max-price` is not supported.
+- Model attribution binds the native `run.model.configured` fact to the same completed main run
+  and Meta provider. It reports the runtime model, not independent backend model verification.
+  Unknown or contradictory facts remain unknown. Final output comes only from completed runs.
+- Extra CLI/config flags and custom agents are refused. Native stdout/stderr and compact orch
+  records provide evidence; this worker adapter does not itself qualify a controller
+  or task capability. A separately approved scoped controller trial uses the native
+  `mcp__orch__controller_step` tool, the CLI's saved device sign-in location and
+  bound runtime/tool evidence. Shell/writes and foreign personal context are disabled;
+  other tool profiles remain unqualified. Separate `orch adopt --harness muse`
+  preserves native fallback instructions and merges owned project MCP wiring,
+  without trust grants or native launches. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
 
 ## Claude escalation reviewers
 
@@ -217,3 +292,9 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - It deletes `MISTRAL_API_KEY` before starting (with it set, vibe bills that API key instead of the CLI
   plan's allowance) and stops the whole queue on a model fallback, a forbidden path, a stall, a task with
   no changes, a failed commit, or two consecutive tasks with failing checks.
+
+Muse installation markers accept `major.minor.patch-Rrevision[.revision]` (case-insensitive R). Other formats require an explicit native executable override; orch does not guess or run the updater.
+
+Native repository-controller evidence uses the complete structured tool result, including its exact offer/request proof. Copilot display text can be joined or truncated; it is not a substitute for its separate structured result. Text-only transports receive the same complete structured data without a duplicate human-readable output. A malformed structured channel is refused, even when display text looks valid.
+
+Read-only access trial reviewers use the exact review root recorded in their offer. A default directory cannot substitute for the owned trial directory.

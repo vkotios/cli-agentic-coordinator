@@ -1,4 +1,4 @@
-// Windows process helpers. Every read is BOUNDED and asynchronous; every kill is
+// Windows and Linux process helpers. Every read is BOUNDED and asynchronous; every kill is
 // identity-checked.
 //
 // Hard rules (owner rule, spec rule, and v3 §6):
@@ -13,6 +13,7 @@
 // predicate silently turned "the table could not be read" into "not alive".
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { creationPoint, tableClockScope } from './process-time.mjs';
 
 const PS = 'powershell.exe';
 const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
@@ -21,7 +22,7 @@ const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', 
 export function normalizeCreationTime(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string') {
-    if (/^ms:-?\d+$/.test(v) || /^ticks:\d+$/.test(v)) return v; // already normalised: MUST be idempotent
+    if (/^ms:-?\d+$/.test(v) || /^ticks:\d+$/.test(v) || v.startsWith('linux:')) return v; // already normalised: MUST be idempotent
     const m = /\/Date\((-?\d+)/.exec(v);
     if (m) return `ms:${m[1]}`;
     const t = Date.parse(v);
@@ -54,11 +55,12 @@ function runPs(command, deadlineMs) {
               /* ignore */
             }
           }
-          done(err && !stdout ? null : String(stdout || ''));
+          done({ raw: err && !stdout ? null : String(stdout || ''), failure: err
+            ? { reason: err.killed ? 'query-timeout' : 'query-error', code: err.code ?? null, signal: err.signal ?? null } : null });
         },
       );
-    } catch {
-      done(null);
+    } catch (e) {
+      done({ raw: null, failure: { reason: 'query-error', code: e?.code ?? null, signal: null } });
       return;
     }
     const timer = setTimeout(() => {
@@ -67,7 +69,7 @@ function runPs(command, deadlineMs) {
       } catch {
         /* already gone */
       }
-      done(null);
+      done({ raw: null, failure: { reason: 'query-timeout', code: null, signal: null } });
     }, deadlineMs + 250);
     timer.unref?.();
     child.on('close', () => clearTimeout(timer));
@@ -94,7 +96,7 @@ function parseTable(raw) {
   }));
 }
 
-function parseLinuxStat(pid, raw) {
+function parseLinuxStat(pid, raw, scope) {
   const open = raw.indexOf('(');
   const close = raw.lastIndexOf(')');
   if (open < 0 || close <= open) return null;
@@ -104,32 +106,37 @@ function parseLinuxStat(pid, raw) {
   const pgrp = Number(fields[2]);
   const session = Number(fields[3]);
   const startTicks = fields[19]; // procfs stat field 22; stable across PID reuse
-  if (actualPid !== Number(pid) || !Number.isInteger(ppid) || !Number.isInteger(pgrp) || !/^\d+$/.test(startTicks || '')) return null;
-  return { pid: actualPid, ppid, pgrp, session, name: raw.slice(open + 1, close), createdAt: `ticks:${startTicks}` };
+  if (actualPid !== Number(pid) || !Number.isInteger(ppid) || ppid < 0 || !Number.isInteger(pgrp) || !Number.isInteger(session) || !creationPoint(`${scope}:${startTicks}`)) return null;
+  return { pid: actualPid, ppid, pgrp, session, name: raw.slice(open + 1, close), createdAt: `${scope}:${startTicks}` };
 }
 
 async function readLinuxProcessTable(list, deadlineMs) {
   const started = Date.now();
   const work = (async () => {
-    let ids;
+    let ids, scope;
     try {
+      const [boot, namespace] = await Promise.all([fs.readFile('/proc/sys/kernel/random/boot_id', 'utf8'), fs.readlink('/proc/self/ns/pid')]);
+      const ns = /^pid:\[([1-9]\d*)\]$/.exec(namespace);
+      scope = ns ? `linux:${boot.trim()}:${ns[1]}` : null;
+      if (!creationPoint(`${scope}:0`)) return null;
       ids = list || (await fs.readdir('/proc')).filter((name) => /^\d+$/.test(name)).map(Number);
     } catch {
       return null;
     }
     const rows = [];
+    Object.defineProperty(rows, 'clockScope', { value: scope });
     for (let i = 0; i < ids.length; i += 32) {
       if (Date.now() - started >= deadlineMs) return null;
       const batch = await Promise.all(ids.slice(i, i + 32).map(async (pid) => {
         try {
-          return { row: parseLinuxStat(pid, await fs.readFile(`/proc/${pid}/stat`, 'utf8')) };
+          return { row: parseLinuxStat(pid, await fs.readFile(`/proc/${pid}/stat`, 'utf8'), scope) };
         } catch (e) {
           return { error: e?.code || 'PROC-READ-FAILED' };
         }
       }));
       for (const result of batch) {
         if (result.row) rows.push(result.row);
-        else if (list && result.error && !['ENOENT', 'ESRCH'].includes(result.error)) return null;
+        else if (!['ENOENT', 'ESRCH'].includes(result.error)) return null;
       }
     }
     return rows;
@@ -148,10 +155,22 @@ async function readLinuxProcessTable(list, deadlineMs) {
  * @returns {Promise<Array<{pid:number,ppid:number,pgrp?:number,session?:number,name:string,createdAt:string|null}>|null>}
  *          `null` means UNKNOWN (not "nothing is alive").
  */
-export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2 } = {}) {
+/** @param {{deadlineMs?:number,pids?:Array|null,attempts?:number,onFailure?:(failure:any)=>void}} [options]
+ * @param {{query?:(command:string,deadlineMs:number)=>Promise<any>}} [seams] */
+export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2, onFailure = null } = {}, seams = {}) {
   const list = Array.isArray(pids) ? [...new Set(pids.map(Number).filter((n) => Number.isFinite(n) && n > 0))] : null;
   if (list && list.length === 0) return [];
-  if (process.platform === 'linux') return readLinuxProcessTable(list, deadlineMs);
+  if (process.platform === 'linux' && !seams.query) {
+    const started = Date.now();
+    for (let i = 0; i < Math.max(1, attempts); i++) {
+      const left = deadlineMs - (Date.now() - started);
+      if (left <= 0) break;
+      const table = await readLinuxProcessTable(list, left);
+      if (table !== null) return table;
+      try { onFailure?.({ reason: 'linux-process-table-unreadable', attempt: i + 1, elapsed_ms: Date.now() - started }); } catch { /* diagnostics never change evidence */ }
+    }
+    return null;
+  }
   const filter = list && list.length <= 60 ? ` -Filter "${list.map((p) => `ProcessId=${p}`).join(' or ')}"` : '';
   const cmd =
     `Get-CimInstance Win32_Process${filter} | ` +
@@ -165,7 +184,12 @@ export async function readProcessTable({ deadlineMs = 5000, pids = null, attempt
   for (let i = 0; i < Math.max(1, attempts); i++) {
     const left = deadlineMs - (Date.now() - started);
     if (left <= 50) break;
-    const parsed = parseTable(await runPs(cmd, left));
+    const result = await (seams.query ?? runPs)(cmd, left), parsed = parseTable(result.raw);
+    if (result.failure || parsed === null) {
+      // Error category and timing only: no command, environment, table or stderr.
+      // Diagnostics must not change the three-valued answer or its time budget.
+      try { onFailure?.({ ...(result.failure ?? { reason: 'invalid-json' }), attempt: i + 1, elapsed_ms: Date.now() - started }); } catch { /* bookkeeping cannot cost a read */ }
+    }
     if (parsed !== null) return parsed;
   }
   return null;
@@ -194,6 +218,80 @@ export function descendantsOf(root, table) {
   return out;
 }
 
+function creationEpoch(value, scope = null) {
+  const point = creationPoint(normalizeCreationTime(value));
+  return point && (scope === null || point.scope === scope) ? point.value : null;
+}
+
+/** A PPID snapshot is adjacency, not ownership. Bind every edge to creation order.
+ * A keeper-recorded exit permits a historical root: its direct children must have
+ * been born during that worker's lifetime, even if the PID is now absent/reused.
+ * @param {number} root @param {string|null} recordedCreatedAt @param {Array|null} table
+ * @param {{exitedAt?:string|null}} [options]
+ */
+export function observeDescendants(root, recordedCreatedAt, table, options = {}) {
+  const identity = verifyIdentity(root, recordedCreatedAt, table), point = creationPoint(normalizeCreationTime(recordedCreatedAt));
+  const scope = point?.scope ?? null, birth = point?.value ?? null;
+  const exit = options.exitedAt == null ? null : creationEpoch(options.exitedAt, scope);
+  const unknown = (reason, adjacency = false) => ({ state: 'unknown', rootVerified: false, rootIdentity: identity.verdict, reason,
+    candidates: adjacency ? descendantsOf(root, table).map(p => ({ ...p, ancestry: 'unknown' })) : [] });
+  if (!Number.isSafeInteger(Number(root)) || Number(root) <= 0) return unknown('worker-pid-unreadable');
+  if (!table) return unknown('process-table-unreadable');
+  if (birth === null) return unknown('worker-creation-time-unreadable', true);
+  if (point.kind === 'linux' && tableClockScope(table, identity.found) !== scope) return unknown('worker-clock-scope-unreadable');
+  if (options.exitedAt != null && (exit === null || exit < birth)) return unknown('worker-lifetime-unreadable');
+  if (identity.verdict !== 'match' && exit === null) return unknown('worker-identity-' + identity.verdict);
+  const replacementBirth = identity.verdict !== 'match' && identity.found ? creationEpoch(identity.found.createdAt, scope) : null;
+  if (identity.verdict !== 'match' && identity.found && (replacementBirth === null || replacementBirth <= birth)) return unknown('replacement-identity-unreadable');
+  const byParent = new Map();
+  for (const p of table) {
+    if (!byParent.has(p.ppid)) byParent.set(p.ppid, []);
+    byParent.get(p.ppid).push(p);
+  }
+  const candidates = [], seen = new Set([Number(root)]), stack = [{ pid: Number(root), birth, ancestry: 'verified' }];
+  let uncertain = false;
+  while (stack.length) {
+    const parent = stack.pop();
+    for (const child of byParent.get(parent.pid) || []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      const at = creationEpoch(child.createdAt, scope);
+      // Reject an entire impossible branch; never traverse an older incarnation.
+      if (at !== null && (at < birth || parent.birth !== null && at < parent.birth || parent.pid === Number(root) && (exit !== null && at > exit || replacementBirth !== null && at > replacementBirth))) continue;
+      const overlapsReplacement = parent.pid === Number(root) && replacementBirth !== null && at === replacementBirth;
+      const ancestry = parent.ancestry === 'verified' && at !== null && !overlapsReplacement ? 'verified' : 'unknown';
+      if (ancestry === 'unknown') uncertain = true;
+      candidates.push({ ...child, ancestry });
+      stack.push({ pid: child.pid, birth: at, ancestry });
+    }
+  }
+  return { state: uncertain ? 'unknown' : 'observed', rootVerified: true, rootIdentity: identity.verdict,
+    reason: uncertain ? 'descendant-creation-time-unreadable' : null, candidates };
+}
+
+/** Remember incarnations, not just PIDs. A later query cannot fill an old missing birth. */
+export function rememberDescendants(map, observation) {
+  for (const p of observation.candidates) {
+    const createdAt = normalizeCreationTime(p.createdAt), key = `${p.pid}@${createdAt ?? '?'}`, previous = map.get(key);
+    if (!previous || previous.ancestry !== 'verified' && p.ancestry === 'verified') {
+      map.set(key, { pid: p.pid, name: p.name, createdAt, ancestry: p.ancestry });
+    }
+  }
+}
+
+/** Read-only identity classification. A current identity match cannot prove ancestry. */
+export function classifyObservedHelpers(map, table) {
+  const out = [];
+  for (const p of map.values()) {
+    const v = verifyIdentity(p.pid, p.createdAt, table);
+    if (v.verdict === 'gone' || v.verdict === 'mismatch') continue;
+    const verified = v.verdict === 'match' && p.ancestry === 'verified';
+    out.push({ pid: p.pid, name: p.name, created_at: p.createdAt, ancestry: p.ancestry,
+      state: verified ? 'alive' : 'unknown', ...(verified ? {} : { reason: v.reason || 'ancestry-unverified' }) });
+  }
+  return out;
+}
+
 /**
  * THE identity predicate (v3 §6, carried from v2 §2.9). Four labels, and `unknown`
  * is a real answer that no caller may downgrade.
@@ -209,16 +307,21 @@ export function descendantsOf(root, table) {
  * @returns {{verdict:string, reason?:string, found?:any}}
  */
 export function verifyIdentity(pid, recordedCreatedAt, table) {
-  // CODE-REVIEW FIX (astra H2): no recorded pid is NOT evidence that a process is
-  // gone - it is the absence of evidence. It used to answer `gone`, which let a live
-  // worker whose `spawned` line was never written be derived `cancelled`.
-  if (!pid || !Number.isFinite(Number(pid))) return { verdict: 'unknown', reason: 'no-pid-recorded' };
-  if (table === null || table === undefined) return { verdict: 'unknown', reason: 'process-table-unreadable' };
-  const hit = table.find((p) => p.pid === Number(pid));
-  if (!hit) return { verdict: 'gone', reason: 'pid-not-in-table' };
+  if (!Number.isFinite(Number(pid)) || Number(pid) <= 0) return { verdict: 'unknown', reason: 'no-pid' };
+  if (!table) return { verdict: 'unknown', reason: 'process-table-unreadable' };
+  const hit = table.find(p => p.pid === Number(pid));
+  const recorded = normalizeCreationTime(recordedCreatedAt), point = creationPoint(recorded);
+  const scope = tableClockScope(table, hit), currentScope = creationPoint(scope === 'ms' ? 'ms:0' : scope ? `${scope}:0` : null);
+  if (typeof recorded === 'string' && /^(?:ticks:|linux:)/.test(recorded) && !point) return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
+  if (point?.kind === 'linux') {
+    if (currentScope?.kind !== 'linux') return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
+    if (point.boot !== currentScope.boot) return { verdict: 'mismatch', reason: 'boot-changed', found: hit };
+    if (point.namespace !== currentScope.namespace) return { verdict: 'unknown', reason: 'pid-namespace-unreadable', found: hit };
+  } else if (point?.kind === 'wall' && currentScope?.kind === 'linux') return { verdict: 'unknown', reason: 'creation-clock-mismatch', found: hit };
+  if (!hit) return { verdict: 'gone', reason: 'pid-not-present' };
   if (!recordedCreatedAt) return { verdict: 'unknown', reason: 'no-creation-time-recorded', found: hit };
   if (!hit.createdAt) return { verdict: 'unknown', reason: 'creation-time-unreadable', found: hit };
-  return normalizeCreationTime(recordedCreatedAt) === normalizeCreationTime(hit.createdAt)
+  return recorded === normalizeCreationTime(hit.createdAt)
     ? { verdict: 'match', found: hit }
     : { verdict: 'mismatch', reason: 'pid-reused', found: hit };
 }

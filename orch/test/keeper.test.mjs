@@ -18,7 +18,8 @@ import {
   identityOf,
   spawnedIdentity,
   suspendProcess,
-  resumeProcess, testReps } from './helpers.mjs';
+  prepareProcessControl,
+  releaseSuspendedProcess, testReps } from './helpers.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { connectHello, probeFree } from '../src/lanepipe.mjs';
@@ -68,7 +69,7 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
 
   for (let rep = 0; rep < KEEPER_REPS; rep++) {
     const { id, spawned, workerPid } = await launchHeld(c, 30);
-    assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^ticks:\d+$/ : /^ms:\d+$/, 'the spawner must have captured the keeper identity');
+    assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'the spawner must have captured the keeper identity');
 
     // On Linux the keeper starts a supervisor process which must in turn start the
     // actual CLI inside its session. Checking only the supervisor pid can pass while
@@ -148,12 +149,17 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
 test('G4: a SUSPENDED keeper reports `held, unresponsive`, nothing is auto-released, and cancel --keeper clears it', { timeout: 180000 }, async (t) => {
   const c = makeCase('g4-frozen');
   let suspended = null;
+  let assemblyPath;
   t.after(async () => {
     // Never leave a suspended process behind, whatever the assertions did.
-    if (suspended) await resumeProcess(suspended.pid, suspended.createdAt);
+    if (suspended) {
+      const cleanup = await releaseSuspendedProcess(suspended.pid, suspended.createdAt, {assemblyPath});
+      assert.ok(cleanup.ok, `preserved uncertain suspended fixture: ${JSON.stringify(cleanup)}`);
+    }
     c.cleanup();
   });
 
+  assemblyPath = await prepareProcessControl(c.base);
   const { id, spawned, workerPid } = await launchHeld(c, 60);
 
   // A healthy keeper answers the hello (A5).
@@ -161,9 +167,10 @@ test('G4: a SUSPENDED keeper reports `held, unresponsive`, nothing is auto-relea
   assert.equal(healthy.state, 'held', `a healthy keeper did not answer: ${JSON.stringify(healthy)}`);
   assert.match(String(healthy.hello), new RegExp(id));
 
-  const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at);
-  assert.ok(s.ok, `could not suspend the keeper: ${s.output}`);
+  // A timeout after the native call may still have suspended it: cleanup must resume it.
   suspended = { pid: spawned.keeper_pid, createdAt: spawned.keeper_created_at };
+  const s = await suspendProcess(spawned.keeper_pid, spawned.keeper_created_at, false, {assemblyPath});
+  assert.ok(s.ok, `could not suspend the keeper: ${s.output}`);
 
   // X5: connect still succeeds; only the reply is missing. That is the third state.
   const frozen = await connectHello(c.lanePipe, { deadlineMs: 2000 });

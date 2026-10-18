@@ -20,7 +20,7 @@ const deny = (reason, rule) => ({ block: true, reason, rule });
  * 1. WORKER LAUNCH
  * ===================================================================== */
 
-export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot'];
+export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot', 'muse'];
 
 /** npm / PyPI package names that install a worker CLI. */
 const PACKAGE_ALIASES = {
@@ -50,6 +50,7 @@ export function programName(token) {
   let t = String(token || '').trim().replace(/^['"]|['"]$/g, '');
   t = t.split(/[\\/]/).pop() || '';
   t = t.toLowerCase().replace(/\.(exe|cmd|bat|ps1|com|js|mjs|cjs|py)$/, '');
+  if (/^muse-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?$/.test(t)) return 'muse';
   return t;
 }
 
@@ -310,6 +311,8 @@ export function judgeWorker(cli, args) {
     if (hasFlag('-p', '--print', '--prompt')) launch = 'agy -p';
   } else if (cli === 'copilot') {
     if (hasFlag('-p', '--prompt')) launch = 'copilot -p';
+  } else if (cli === 'muse') {
+    if (a.includes('exec') || a.includes('serve')) launch = 'muse exec/serve';
   }
   if (!launch) return ok;
   return { ...deny(`Blocked: a direct \`${launch}\` launch bypasses orch. ${orchHint(cli)}`, 'worker-launch'), cli };
@@ -343,14 +346,14 @@ export function collectVars(text, outer = {}) {
   return vars;
 }
 
-const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
+const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot|muse(?:-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?)?)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
 
 /** Program name of a (resolved) token; an expression such as `(Get-Command codex).Source` names its worker. */
 function programOf(v) {
   const n = programName(v);
   if (!/[\s(]/.test(String(v))) return n;
   const w = WORKER_WORD.exec(String(v));
-  return w ? w[1].toLowerCase() : n;
+  return w ? programName(w[1]) : n;
 }
 
 function resolveVar(token, vars) {
@@ -367,6 +370,10 @@ function checkText(text, depth, outerVars = {}) {
   if (depth > MAX_NESTING) {
     return deny(`Blocked: the command nests shells/wrappers more than ${MAX_NESTING} levels deep, too deep for the guard to inspect. Run it without the extra wrapping.`, 'nesting-too-deep');
   }
+  // Keep a literal PowerShell executable lookup together before parentheses split
+  // command segments. This resolves only known worker names, never executes lookup.
+  text = String(text).replace(/\(\s*Get-Command\s+("[^"]+"|'[^']+'|[^\s()]+)\s*\)\.Source/gi,
+    (expression, literal) => WORKERS.includes(programName(literal)) ? literal : expression);
   const vars = collectVars(text, outerVars);
   const { segments, nested } = splitSegments(text);
   for (const seg of segments) {

@@ -1,6 +1,7 @@
 # Resumable setup conversation
 
-`orch setup` records onboarding choices for Claude Code, Codex, OpenCode or Vibe.
+`orch setup` records onboarding choices for Claude Code, Codex, OpenCode, Vibe,
+Copilot or Muse.
 It returns one structured question at a time. A controlling harness can ask the
 user the question and submit their answer, or a terminal user can edit an answer
 file. MCP tools never prompt on stdin.
@@ -58,7 +59,7 @@ the user's answer. For example, the first answer can be:
 
 Replace the example models with exact selectors you can use. The controller must
 match the harness selected at start. Worker/reviewer choices use existing launch
-adapters: Codex, OpenCode, Vibe or agy. Merely selecting a model, billing mode or
+adapters: Codex, OpenCode, Vibe, agy, Copilot or Muse. Merely selecting a model, billing mode or
 `permission: "allowed"` does not authorize or launch it. Review independence,
 actual access and qualification still need verification before real work.
 
@@ -217,10 +218,11 @@ preview and approval. A live disposable qualification run is a separate action.
 
 ## Explicit access qualification
 
-The first live smoke supports one selected Codex subscription worker and one
-selected Vibe subscription reviewer (either harness can take either role).
-Other harnesses and billing modes remain unqualified by this smoke. Choose
-different canonical models, then write a private request:
+The live access smoke supports selected Codex, Vibe, Copilot and Muse subscription
+routes, with different harnesses for worker and reviewer. Other harnesses and
+billing modes remain unqualified by this smoke. Choose different canonical models;
+the completed evidence also rejects equal actual worker/reviewer models. Write a
+private request:
 
 ```json
 {"worker":0,"reviewer":0,"maxAgeSeconds":3600}
@@ -307,3 +309,291 @@ matching proof, but keeps task capability, roster permissions, configuration,
 adoption and usage requirements separate. `runtime-ready` requires those
 requirements too, and still grants no launch permission. A read-only access smoke
 does not qualify a model for coding tasks or prove controller orchestration.
+
+## Copilot and Muse repository adoption
+
+For either harness, optional setup adoption uses the same exact preview/apply
+approval as other controllers. Direct adoption can be previewed first:
+
+```powershell
+orch adopt --repo C:\path\to\your-repo --harness copilot --harness muse --dry-run --json
+```
+
+Adoption appends a managed instruction region and installs the role payload. It
+merges only the owned `mcpServers.orch` entry in project `.mcp.json`, preserving
+other servers. Conflicting owner entries, linked targets, incompatible Muse
+project documents and concurrent changes refuse writes. Existing owned entries
+whose kit path or harness requirements changed need an explicit `--update`
+preview. Repeating the same completed selection leaves file bytes and mtimes
+unchanged; adding a harness can refresh only ownership metadata.
+
+Copilot-only adoption merges the `mcpServers` wrapper and preserves other
+top-level owner fields without interpreting them. Muse's stricter whole-document
+schema applies whenever Muse shares ownership of that server.
+
+Copilot uses root `AGENTS.md`. Custom agents must explicitly opt into repository
+instructions. Muse selects the first existing `AGENTS.md`, `CLAUDE.md`,
+`.agents/AGENTS.md` or `.claude/CLAUDE.md` at each directory from the repository
+root to the supplied working directory. A shared `AGENTS.md` keeps a previously
+selected Muse fallback as an explicit owner-source reference. Owner instruction
+bytes outside the managed region remain unchanged, including BOM and line endings.
+
+Muse's MCP child environment needs explicit home-location metadata for orch to
+locate the normal saved subscription profiles. The preview includes `HOME`,
+Windows `USERPROFILE`, `VIBE_HOME` and `XDG_CONFIG_HOME` locations; it copies
+no credentials or other environment variables. These machine paths, merged MCP
+settings and the ownership manifest should stay outside public commits. Previously
+adopted Muse requirements remain in the shared server when another harness is added.
+
+The adopter does not grant native workspace trust, inspect global MCP settings,
+resolve every nested/native configuration override, register a global server or
+install Copilot/Muse hooks. Inspect effective native discovery and trust before
+use. MCP readiness is `configured-unqualified` after installation. Health keeps
+`repository-controller-profile-unqualified` visible even with a successful
+fixed-step lifecycle receipt: that receipt covers only its observed trial tool
+profile. Adoption makes no model call and grants no task-launch permission.
+
+## Adopted repository controller qualification
+
+Copilot and Muse can be offered a separate disposable repository task through
+`setup repository-smoke --session <private session> --config <private config>
+--request <JSON>`. The request selects `worker`, `reviewer` and `maxAgeSeconds`.
+It makes no model call. Exact offer approval is required separately for
+`repository-start` (prepare) and `repository-run` (one native controller launch).
+The offer bounds one controller and two Codex/Vibe subscription children.
+
+The fixture preserves owner instructions through adoption. Its approved MCP
+profile exposes ordinary orch lifecycle tools under an offer-bound scope guard,
+plus read-only `repository_instructions` and `repository_verify` tools for the
+installed instructions and independent helper checks. The controller chooses its workflow; no fixed `controller_step` sequence
+qualifies this profile. Foreign paths/routes and duplicate mutation attempts are
+refused. Any failed or refused tool call ends qualification for that offer;
+definite nonzero responses are recorded separately from uncertain outcomes.
+Neither outcome authorizes an automatic retry. Concurrent calls serialize within
+a bounded wait rather than treating an ordinary in-flight call as a stale lock.
+
+`repository-qualify` checks native model/tool results against the server journal,
+independent helper/review checks, child identities, source scope, review removal,
+claim release and stopped registered processes. `repository-qualification`
+validates fresh receipts without launching models or enabling policy. Health
+clears only the corresponding repository gap when the selected controller
+profile matches. Copilot Auto remains observed automatic access; a receipt covers
+only the tested tool profile and case, and grants no future launch permission.
+
+If a trial fails or is abandoned, inspect it and approve `repository-close` for
+that exact offer. Active/unknown processes refuse closure. The existing cleanup
+path records blocked outcomes, removes eligible review resources and releases the
+claim; source and evidence remain retained. Explicit closure can retain changed
+fixture instructions or kit source without certifying those bytes. Original offer,
+session, runtime paths and Git authority must still match. A known preflight refusal
+can close only after the recorded runner stopped; a recorded PID with missing birth
+evidence needs a reliable process table proving it absent. Live or unidentifiable
+processes and unknown registrations remain blockers. It never kills or relaunches an agent.
+The fixture-specific MCP profile delta is recorded separately from the original
+adoption manifest. All fixture configuration and evidence belong outside public
+commits. Owner repositories, credentials and global registrations are unchanged.
+
+## Native controller lifecycle trial
+
+Controller qualification is separate from child access. `setup controller-smoke`
+offers one isolated lifecycle for the selected controller and the same supported
+Codex/Vibe subscription child pair. The request has `worker`, `reviewer` and
+`maxAgeSeconds` fields. Creating an offer makes no model call. Inspect its controller,
+child routes, native tool profile and one-controller/two-child launch bounds.
+
+Use `controller-start` with `{ "offerHash": "<exact hash>", "approve": true }`
+to prepare the fixture. Use `controller-run` with that exact approval to launch
+one native controller. Preparation creates no model call; run returns promptly
+with a native-runner process and private evidence directory. Normal owner config,
+instructions, policies and credentials are preserved. The child environment strips
+known API/billing overrides and verifies the saved subscription login. No API-key
+fallback is accepted.
+
+The native controller must use its own shell tools to perform the supplied steps:
+claim, worker launch, worker monitoring, reviewer launch, reviewer monitoring,
+review finalization, disposition recording and finish. Each step is restricted
+to this owned trial and exact approved routes. Repeating an unfinished monitor
+step polls the existing job. Each mutating step has an exclusive durable attempt;
+unknown outcomes are retained for inspection and never relaunched automatically.
+Preflight refusals also consume that offer's launch attempt, even when no model
+was called. Inspect the reported refusal and make a fresh explicitly approved
+offer after resolving it; the original evidence is preserved.
+Recordings describe the read-only trial without adding coding-quality acceptance.
+Finish uses the existing closure machinery, removes review resources and releases
+the claim. The source anchor and audit evidence retain a reason and revisit step.
+
+After the controller and runner exit, `controller-qualify` takes
+`{ "offerHash": "<exact hash>" }`. It requires the ordered native tool results,
+an observed exact model, successful native terminal evidence, matching process
+identities, complete child proofs, clean independent review/removal, dispositions
+and the actual closed/released claim. A claimant name, assistant prose or requested
+model is insufficient. Parent-assisted steps, missing/ambiguous model evidence,
+changed instructions/executables, incomplete cleanup and expired evidence refuse
+qualification. No process is automatically killed; inspect retained launch evidence
+if the runner or controller stops unexpectedly.
+
+The native subscription profiles are Claude with its Bash tool, Codex with command
+execution, and Vibe, Copilot and Muse with scoped native MCP tools. Claude/Codex/Muse
+use medium effort; Vibe and Copilot record the provider default. Codex retains its workspace-write sandbox and
+grants model-driven writes only to the owned trial directory. Coordination locks
+and the child-access proof for this lifecycle remain inside that trial. Claude's
+session-local PreToolUse hook permits only the eight exact prepared commands;
+general Node-prefix approval is absent, and missing guard evidence refuses proof.
+Vibe, OpenCode, Copilot and Muse use an owned MCP server exposing only `controller_step` with
+one fixed `step` enum. The server binds the approved offer; the model cannot
+supply commands, paths, approval or another session. Copilot exposes only this tool;
+Muse disables shell and writes, and its proof refuses other observed tool calls.
+The existing Vibe/OpenCode profiles disable shell/file tools.
+Native tool results, server audit and stopped server process must match the eight
+lifecycle steps. Vibe also binds native session/runtime model evidence. An
+inherited user hooks file refuses this scoped Vibe profile; normal hooks are never
+changed or removed. The tool boundary is not an OS sandbox. No profile installs or
+changes global hooks. Codex retains
+normal approval rules; environments needing interactive host approval can remain
+unqualified. Other harness/model/tool profiles remain unqualified until their
+native evidence path is supported and observed. This is a coverage boundary,
+not a judgment about a harness or models with different context/tool profiles.
+
+Copilot/Muse onboarding can record controller intent and apply private configuration
+with or without `--adopt`. Repository adoption is described below; it remains
+separate from this scoped qualification flow. Prepared instructions and MCP configuration live
+in the owned controller workspace, separately from the child source. Inherited MCP,
+hooks or custom-provider configuration refuses this trial rather than changing the
+owner's setup. Muse uses the CLI's native saved device sign-in location; an alternate
+adapter auth-path override cannot redirect the controller. No credentials are copied.
+Copilot saved sign-in is established by successful native call/exit evidence rather
+than a separate login-status probe. Missing sign-in can consume the one-shot attempt;
+inspect its retained refusal and do not retry automatically.
+
+Copilot controller Auto receipts retain `model: "auto"` and separately record the
+observed native model. They prove only the completed automatic-selector lifecycle,
+not exact-model access or task-fit capability. Explicit Copilot selectors require
+matching native model-call evidence. Muse requires one completed session/run and
+matching Meta runtime-model evidence; this is not independent backend attestation.
+Both profiles require ordered native tool results, the matching server execution
+audit and stopped controller/runner/registered MCP server incarnations. Receipts
+remain immutable and expire; reuse makes no model calls and never permits a launch.
+
+OpenCode's initial profile supports explicitly configured local inference. Set
+the controller route to `billing: "local"` and supply `controllerLocalProvider`
+in the separate private runtime config, for example:
+
+```json
+{"id":"local","baseURL":"http://127.0.0.1:1234/v1","context":16384,"output":4096}
+```
+
+The selected model uses the same provider ID, for example `local/model-id`.
+Only loopback/private IP endpoint URLs without embedded credentials are accepted; provider/model
+configuration and scoped MCP tool/permissions are owned by the trial.
+OpenCode uses isolated config/data/cache/state locations and its actual native
+assistant session export to bind model, provider, directory and terminal evidence.
+Subscription/API OpenCode routes remain unsupported by this qualification profile;
+it never falls back to a paid provider. Requested settings alone cannot qualify.
+The Codex/Vibe child pair remains subscription-only for every controller profile.
+
+For an authenticated local gateway, the private runtime config can additionally
+set `controllerLocalAuthentication` to `{"file":"/private/opencode/auth.json"}`
+using the absolute path to an existing native OpenCode authentication file.
+Only the saved `api` entry matching the selected local provider ID is used.
+The offer binds its fingerprint; launch rechecks that binding and supplies the
+key through a scoped process environment variable. No key is copied into the
+offer, native settings or child subscription environment, and the original
+authentication file is not changed. Inline keys, OAuth entries, public endpoints
+and paid API routes are unsupported. Receipt reuse and health read the saved
+reference and historical native proof without rereading credentials; they do
+not recheck current authentication or grant another launch.
+
+`controller-qualification --config <private config>` validates and reuses a fresh
+receipt without model calls. All controller actions take `--session` and the
+request actions take `--request`; CLI and MCP expose the same contract. Health can
+remove the matching controller-operation gap while preserving permissions,
+current roster, adoption, configuration selection and subscription freshness
+requirements. The receipt is scoped to the observed lifecycle/tool profile; it
+does not qualify coding capability, prove general orchestration judgment or grant
+future launch permission. `launchAllowed` remains false.
+
+Health also needs an explicit matching `controllerProfile` in the private runtime
+configuration before reporting controller readiness. Select the receipt's profile
+only when that is the profile you will use; an absent selection remains pending,
+and a different tool profile is blocked. Qualification never writes this choice
+or treats a native Bash/command trial as proof for a different interactive or MCP
+tool configuration.
+
+## Measured coding and review cases
+
+`setup task-smoke` (MCP: `setup_task_smoke`) offers a separate owned representative
+case for selected different Codex/Vibe/Copilot/Muse subscription harnesses. Its private request contains
+`worker`, `reviewer`, `caseId: "numeric-summary-v1"` and `maxAgeSeconds`. It makes
+no model calls. Inspect the exact routes, case contracts and bounds before approving
+the returned offer hash with `task-start`. Preparation preserves the owner repo and
+configuration. Other routes and cases remain unsupported by this first case.
+
+The fixed `task-step` order is claim, worker, monitor-worker, verify-worker,
+reviewer, monitor-reviewer, finalize, record, finish. Each request contains the
+exact `offerHash`, `approve: true` and `step`. Poll only pending monitor steps;
+uncertain mutations are retained and never automatically relaunched.
+
+The worker implements a specified pure numeric-summary function in `stats.mjs`.
+An independent bounded verifier checks results, input validation, fully and partly
+sparse arrays and absence of input mutation. It executes the captured, validated
+bytes and binds their fingerprint to the source before and after verification.
+Its syntax gate rejects imports, dynamic execution,
+process access and computed/prototype member access. It runs with a minimal
+environment, restricted filesystem/child/worker permissions, a small memory limit
+and a bounded local verification time. This is a controlled pure-function case,
+not a sandbox for arbitrary hostile programs. Agent runs retain the existing
+advisory monitoring and explicit cancellation rules.
+
+The independent reviewer must demonstrate both deliberately seeded finite-number
+filtering defects in the protected `review-target.mjs` with checked input/output
+witnesses. The seeded target remains unchanged as evidence. These findings are
+recorded as confirmed but outside the worker's `stats.mjs` change scope. The
+existing acceptance gate also requires the worker's independent verification and
+scope checks to pass. Review resources must be removed and the claim released.
+
+`task-qualify` captures native exact-model/role/keeper evidence, case outcomes,
+gate and closure records, and protected source/configuration fingerprints.
+`task-qualification` validates fresh matching receipts without model calls.
+Changed code, instructions, executables, configuration, evidence or expired
+receipts grant no observation. Health shows measured `taskCases` separately from
+owner-declared routing qualification. Measured task evidence also proves the observed
+subscription/model access, but does not replace a separate read-only role smoke.
+Passing one short case does not establish
+general C2 suitability, critical review ability or a model's context capacity.
+
+Returned routing proposals remain disabled and marked `trial`; inspect the case
+coverage before explicitly selecting a capability group and owner policy.
+Qualification does not write those settings or authorize future tasks.
+Copilot Auto case receipts retain the actual serving model and automatic-selection
+label. They are observations of that automatic route, so they produce no pinned
+exact-model routing proposal. Muse and explicit Copilot selectors can produce
+disabled case-scoped proposals after native model and independent review checks.
+Vibe-specific fixture configuration is created only when a Vibe route participates.
+
+For failure or abandonment, `task-close` takes the exact offer hash and explicit
+approval. It inspects only the owned trial, refuses active/uncertain runs, finalizes
+reviews, records unqualified runs and uses the existing cleanup/finish machinery.
+Source and incident evidence are retained with a reason and revisit condition.
+It never kills an agent, relaunches a model or removes the source fixture. Changed
+runtime configuration or uncertain cleanup requires inspection through existing
+status, cleanup and finish commands; closure cannot create a successful receipt.
+
+Copilot and Muse worker/reviewer choices currently require subscription billing.
+Their scoped controller trials are separate from these role-access receipts.
+The access smoke/probe/qualify flow supports
+either role for both harnesses and checks their native model evidence. Copilot
+Auto may be requested explicitly without a reasoning effort; its receipt reports
+automatic subscription access and the observed serving model. Health labels this
+`automatic-selection` and keeps exact-model access unqualified. Auto cannot be
+declared an exact-model task-fit routing profile. Muse records native runtime-model
+evidence, not independent backend verification. Requested-only, contradictory or
+unknown native model evidence cannot qualify either route. Reusable receipts bind
+any Copilot usage sidecar as well as original run, role and cleanup evidence.
+Controller trials retain their existing Codex/Vibe child
+profiles; this access extension does not expand those qualification paths.
+
+For repository-controller qualification, the independent reviewer receives an immutable prompt snapshot of the completed worker’s actual `stats.mjs` bytes. The detached `HEAD` remains the baseline. The tool result and receipt bind the implementation hash and delivered prompt hash; a changed snapshot refuses qualification. The seeded review calibration target remains separate from implementation verification.
+
+The scoped repository-controller tools bind the implementation directory, worker handoff, reviewer prompt and review directory to the approved offer. Native arguments omit filesystem paths; supplying a path override is rejected. Ordinary unscoped tools retain their existing path options. The pure helper fixture accepts safe numeric `Infinity` constants while retaining its AST, isolated execution and contract checks.
+
+Scoped repository-controller status calls wait up to 20 seconds for the owned run’s final record, reducing busy polling during long child runs. At the wait bound, an active run is still reported as active. The global CLI status command keeps its existing behavior.

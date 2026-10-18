@@ -106,17 +106,22 @@ export async function worktreeList(cwd) {
   return out;
 }
 
-/** Case-insensitive, separator-insensitive path equality for Windows paths. */
+export function pathKey(value) {
+  const text = String(value);
+  return (process.platform === 'win32' ? text.replace(/\\/g, '/').toLowerCase() : text).replace(/\/+$/, '');
+}
+
+/** Path equality follows the host filesystem: case-sensitive on Linux. */
 export function samePath(a, b) {
   if (!a || !b) return false;
-  const n = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const n = pathKey;
   return n(a) === n(b);
 }
 
-/** Is `child` equal to or inside `parent` (Windows semantics: case-insensitive)? */
+/** Is `child` equal to or inside `parent` under this platform's path semantics? */
 export function isInside(child, parent) {
   if (!child || !parent) return false;
-  const n = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const n = pathKey;
   const c = n(child);
   const p = n(parent);
   return c === p || c.startsWith(p + '/');

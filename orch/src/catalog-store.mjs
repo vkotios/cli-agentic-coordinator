@@ -2,13 +2,13 @@
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
 import {REPO_ROOT} from './config.mjs';import {OrchError} from './errors.mjs';
 import {validateCatalog,previewCatalogUpdate} from './catalog.mjs';
-import {resolvedPath,withOperationLock} from './resources.mjs';import {samePath} from './git.mjs';
+import {resolvedPath,withOperationLock} from './resources.mjs';import {samePath,pathKey} from './git.mjs';
 const MAX_BYTES=1048576,MAX_TRANSACTIONS=64,HEX=/^[a-f0-9]{64}$/,SNAPSHOT=/^[a-f0-9]{32}$/;
 const authority={rosterChanges:false,policyChanges:false,launchChanges:false};
 const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const token=values=>hash(JSON.stringify(values));
 const fail=message=>{throw new OrchError(message,'catalog-transaction-refused');};
-const fileKey=file=>hash(path.resolve(file).replace(/\\/g,'/').toLowerCase());
+const fileKey=file=>hash(pathKey(path.resolve(file)));
 const historyRoot=file=>path.resolve(file)+'.orch-history';
 const stamp=s=>`${s.dev}:${s.ino}:${s.birthtimeMs}`;
 function exact(raw,keys){if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).sort().join(',')!==[...keys].sort().join(','))fail('Invalid catalogue transaction record');}

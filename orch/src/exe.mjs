@@ -37,6 +37,17 @@ export function whereAll(name, env = process.env) {
   return found;
 }
 
+/** Inspect a direct executable only; discovery never invokes it. */
+export function isNativeExecutable(file) {
+  try {
+    if (typeof file !== 'string' || !file || !fs.statSync(file).isFile()) return false;
+    if (process.platform === 'win32') return /\.exe$/i.test(file);
+    if (/\.(cmd|bat|ps1)$/i.test(file)) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch { return false; }
+}
+
 /** The explicit override for a CLI, or null. */
 export function exeOverride(cli) {
   const env = `ORCH_${cli.toUpperCase()}_EXE`;

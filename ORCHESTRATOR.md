@@ -15,16 +15,41 @@ grants launch permission or verifies subscriptions. Run `setup health` / `setup_
 with the complete session and private config after apply or reconfiguration. Resolve
 reported gaps; installed files, cached quota and declared qualification never prove
 current authentication or exact model access. See `docs/SETUP.md`.
-For selected Codex/Vibe subscription routes, `setup smoke` / `setup_smoke` returns
+For selected Codex/Vibe/Copilot/Muse subscription routes, `setup smoke` / `setup_smoke` returns
 an offer for a separate owned read-only fixture. Get approval for its exact hash
 and each role before `setup probe` / `setup_probe`. Inspect the launched runs;
 `setup qualify` / `setup_qualify` finalizes the independent review and captures
-only successful exact-model proof with clean containment and removed review resources.
+successful native model/access proof with clean containment and removed review resources.
+Copilot Auto receipts report automatic subscription access and the observed model;
+they do not qualify an exact-model routing profile or coding capability.
 Read `setup qualification` / `setup_qualification` and health to reuse fresh matching
 evidence. Failed, unknown, expired or changed evidence grants no qualification.
 Retain the reported source/evidence with its disposal reason; inspect uncertain
 attempts instead of relaunching them. This smoke does not qualify coding capability,
 controller orchestration, or authorize future tasks.
+For a separate scoped controller trial, use `setup controller-smoke`, inspect its
+controller/child routes and native tool profile, then approve its exact offer before
+`controller-start` and `controller-run`. The native controller calls the supplied
+fixed lifecycle steps; do not perform them on its behalf. Inspect process/log
+evidence before `controller-qualify`. Reuse only fresh matching receipts through
+`controller-qualification` and health. This proves the observed lifecycle in that
+profile, with task capability and future launch authority remaining separate.
+The supported trial profiles are Claude/Codex/Vibe/Copilot/Muse subscriptions and
+explicitly configured local OpenCode; inspect billing and tool-profile coverage in
+`docs/SETUP.md`. Copilot Auto records the observed model separately from its selector;
+Muse reports native runtime-model evidence. Neither expands task capability or
+future launch authority. Copilot/Muse use only the approved scoped step-tool profile;
+generic repository adoption and other controller tool configurations remain separate.
+For measured coding/review cases, use `setup task-smoke`, approve its exact offer,
+then `task-start` and the supplied fixed `task-step` sequence. Capture with
+`task-qualify` only after independent checks, review cleanup and claim release.
+The measured child profiles support different Codex/Vibe/Copilot/Muse subscription
+harnesses. Copilot Auto records case results with its observed model, without a
+pinned exact-model capability proposal. Controller child profiles remain Codex/Vibe.
+`task-qualification` reuses fresh case evidence without model calls or policy
+activation. These cases do not qualify an entire workload class or context capacity.
+For a failed or abandoned trial, inspect active jobs and use exact-approved
+`task-close`; it retains source evidence and never kills or relaunches an agent.
 
 ## 1. What you do and do not do
 - You **specify, plan, assign, monitor, adjudicate, accept/reject, merge, and keep docs current**.

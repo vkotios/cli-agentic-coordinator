@@ -54,7 +54,7 @@ test('G7: kill helpers are private; defined only in procs; Linux supervision may
       assert.equal((text.match(/process\.kill\s*\(/g) || []).length, 1, 'Linux supervisor has exactly one signal site');
       assert.ok(text.indexOf('self.pgrp !== process.pid') < text.indexOf("process.kill(-process.pid, 'SIGKILL')"), 'session-leader proof must precede group signaling');
       assert.match(text, /self\.session !== process\.pid/, 'the supervisor must verify its isolated session');
-      assert.match(text, /current\.start !== keeperStart/, 'keeper PID reuse must be rejected');
+      assert.match(text, /current\.identity !== keeperStart/, 'keeper PID reuse must be rejected');
       assert.match(text, /removeOwnPipe\(pipeIdentity\)/, 'only the verified socket inode may be unlinked');
     } else if (/process\.kill\s*\(/.test(text)) {
       offenders.push(`${f}: calls process.kill`);
@@ -188,16 +188,21 @@ test('TG: the keeper has no process.exit between the spawn and the keeper-exit l
   assert.equal((tail.match(/process\.exit\(/g) || []).length, 1, 'exactly one exit in the final teardown');
 });
 
-test('TG: server.close() is limited to pre-worker identity failure and post-worker teardown (v3 H1)', () => {
+test('TG: server.close() is limited to pre-worker admission/identity failure and post-worker teardown (v3 H1)', () => {
   const src = readCode('keeper.mjs');
-  assert.equal(src.split('server.close(').length - 1, 2);
-  const preWorkerCloseIdx = src.indexOf('server.close(');
+  assert.equal(src.split('server.close(').length - 1, 3);
+  const admissionCloseIdx = src.indexOf('server.close(');
+  const blockedStart = src.indexOf('function blockedExit('), blockedEnd = src.indexOf('let launch;');
+  assert.ok(admissionCloseIdx > blockedStart && admissionCloseIdx < blockedEnd, 'admission cleanup belongs only to the pre-worker failure helper');
+  assert.match(src.slice(blockedStart, blockedEnd), /process\.platform === 'linux' && server\?\.listening/);
+  const preWorkerCloseIdx = src.indexOf('server.close(', admissionCloseIdx + 1);
   const spawnIdx = src.indexOf('child = spawn(');
   assert.ok(preWorkerCloseIdx > src.indexOf('function onBound()') && preWorkerCloseIdx < spawnIdx);
   assert.ok(src.slice(preWorkerCloseIdx, preWorkerCloseIdx + 180).includes('lane-socket-identity-unavailable'));
   const closeIdx = src.lastIndexOf('server.close(');
   const exitLineIdx = src.indexOf("append(F.keeper, { event: 'worker-exit'");
   assert.ok(closeIdx > exitLineIdx, 'the lane must not be released before the worker exit is recorded');
+  assert.ok(!src.slice(src.indexOf('function phaseB('), src.indexOf('function closeFds(')).includes('server.close('), 'the worker-running path cannot close the lane');
   // agy L2: the process exit happens in the close callback, not on the next line.
   assert.match(src, /server\.close\(go\)/);
 });
@@ -310,7 +315,7 @@ test('the run record carries every field an operator needs, and the launch block
   assert.ok(Array.isArray(rec.launch.args));
   assert.deepEqual(rec.launch.env_set, { PWD: c.work });
   const expectedPipe = process.platform === 'linux'
-    ? path.join(os.tmpdir(), `.orch-${process.getuid()}`, `lane-${rec.lane_id}-${rec.lane}.sock`)
+    ? path.join('/tmp', `.orch-${process.getuid()}`, `lane-${rec.lane_id}-${rec.lane}.sock`)
     : `\\\\.\\pipe\\orch-lane-${rec.lane_id}-${rec.lane}`;
   assert.equal(rec.launch.pipe_name, expectedPipe);
   await waitForStatus(c.stateRoot, id, ['completed', 'failed'], { timeoutMs: 60000 });

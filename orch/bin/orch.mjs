@@ -74,7 +74,7 @@ Workflow (slice 2)
            retention is disabled until configured in <state-root>/config.json
 
 Integration (slice 3)
-  orch setup start --repo <Git root> --harness claude|codex|opencode|vibe --session <private directory>
+  orch setup start --repo <Git root> --harness claude|codex|opencode|vibe|copilot|muse --session <private directory>
              [--catalog <JSON>] [--roster <JSON>] [--json]
   orch setup status|proposal --session <private directory> [--json]
   orch setup answer --session <private directory> --answers <revision-bound JSON> [--json]
@@ -85,9 +85,14 @@ Integration (slice 3)
   orch setup smoke --session <completed private directory> --config <private config> --request <route indexes JSON> [--json]
   orch setup probe|qualify --session <private directory> --request <exact offer request JSON> [--json]
   orch setup qualification --session <private directory> --config <private config> [--json]
+  orch setup controller-smoke --session <private directory> --config <private config> --request <route indexes JSON> [--json]
+  orch setup controller-start|controller-run|controller-step|controller-qualify --session <private directory> --request <exact controller request JSON> [--json]
+  orch setup repository-smoke|repository-start|repository-run|repository-qualify|repository-close --session <private session> --request <JSON> [--config <private config>]
+  orch setup repository-qualification --session <private session> --config <private config> [--json]
+  orch setup controller-qualification --session <private directory> --config <private config> [--json]
              resumable choices only; no configuration/adoption/policy activation
   orch mcp [--state-root <dir>]                           stdio MCP server over the same commands
-  orch adopt --repo <path> [--harness claude|codex|opencode|vibe]... [--dry-run] [--update] [--json]
+  orch adopt --repo <path> [--harness claude|codex|opencode|vibe|copilot|muse]... [--dry-run] [--update] [--json]
            append owned instruction blocks and install only selected integrations (default Claude + Codex)
            [--codex-config <effective-config.toml>] [--instruction-file <harness>=<relative.md>]...
            --update replaces only unchanged orch-owned blocks/copies (.orch-adopt.json)

@@ -11,7 +11,9 @@ import { publishExclusive } from './exclusive.mjs';
 import { resolveCliExe } from './exe.mjs';
 import { validateCatalog } from './catalog.mjs';
 import { resolveOpencodeExe } from './adapters/opencode.mjs';
-const LIMIT = 65536, HARNESSES = ['claude', 'codex', 'opencode', 'vibe'], WORKERS = ['codex', 'opencode', 'vibe', 'agy'];
+import { resolveMuseExe } from './adapters/muse.mjs';
+import { resolveCopilotExe } from './adapters/copilot.mjs';
+const LIMIT = 65536, HARNESSES = ['claude', 'codex', 'opencode', 'vibe', 'copilot', 'muse'], WORKERS = ['codex', 'opencode', 'vibe', 'agy', 'copilot', 'muse'];
 const authority = { configChanges: false, adoptionChanges: false, credentialChanges: false, launchChanges: false };
 const sha = x => crypto.createHash('sha256').update(x).digest('hex');
 const encoded = x => JSON.stringify(x, null, 2) + '\n';
@@ -81,7 +83,7 @@ export function localPath(value, repo) { text(value); const abs=path.resolve(val
     fail('Choose an absolute private path outside the target repository'); return value; }
 function validDiscovery(d) {
     object(d, ['platform', 'nodeMajor', 'harnesses', 'models', 'authentication', 'modelAccess', 'providerCalls']);
-    if (typeof d.platform !== 'string' || !Number.isInteger(d.nodeMajor) || !Array.isArray(d.harnesses) || d.harnesses.length !== 5 || !Array.isArray(d.models) || d.models.length > 128 || d.authentication !== 'not-checked' || d.modelAccess !== 'not-checked' || d.providerCalls !== 0)
+    if (typeof d.platform !== 'string' || !Number.isInteger(d.nodeMajor) || !Array.isArray(d.harnesses) || d.harnesses.length < 5 || d.harnesses.length > new Set([...HARNESSES,...WORKERS]).size || !['claude','codex','opencode','vibe','agy'].every(name=>d.harnesses.some(h=>h.harness===name)) || !Array.isArray(d.models) || d.models.length > 128 || d.authentication !== 'not-checked' || d.modelAccess !== 'not-checked' || d.providerCalls !== 0)
         fail('Invalid setup discovery evidence');
     const seen = new Set();
     for (const h of d.harnesses) {
@@ -109,6 +111,7 @@ function validateAnswer(id, a, meta) {
             for (const r of values) {
                 object(r, ['harness', 'model', 'billing', 'permission']);
                 text(r.model, 200);
+                if (['copilot','muse'].includes(r.harness) && r.billing !== 'subscription') fail('Copilot and Muse adapters currently support subscription routes only');
                 if (!/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(r.model) || !(role === 'controller' ? HARNESSES : WORKERS).includes(r.harness) || !['subscription', 'local', 'api'].includes(r.billing) || !['ask', 'allowed'].includes(r.permission) || role === 'controller' && r.harness !== meta.harness)
                     fail('Invalid harness/model/billing role route');
             }
@@ -193,7 +196,7 @@ export const readSetupInput = read;
 export const checkedSetupPath = safe;
 function discover(catalog, roster) {
     const harnesses = [...new Set([...HARNESSES, ...WORKERS])].map(harness => { try {
-        const exe = harness === 'opencode' ? resolveOpencodeExe() : resolveCliExe(harness, { fallbacks: env => ['vibe', 'claude'].includes(harness) ? [path.join(env.USERPROFILE || os.homedir(), '.local', 'bin', harness + '.exe')] : [] });
+        const exe = harness === 'opencode' ? resolveOpencodeExe() : harness === 'muse' ? resolveMuseExe() : harness === 'copilot' ? resolveCopilotExe() : resolveCliExe(harness, { fallbacks: env => ['vibe', 'claude'].includes(harness) ? [path.join(env.USERPROFILE || os.homedir(), '.local', 'bin', harness + '.exe')] : [] });
         const installed = fs.existsSync(exe) && fs.statSync(exe).isFile();
         return { harness, installed, status: installed ? 'installed-but-unqualified' : 'blocked', nextStep: installed ? 'Verify subscription authentication and exact model access before qualification' : 'Install the CLI and log in explicitly; setup does not perform either action' };
     }
@@ -272,6 +275,18 @@ export function setupProposal(session) { const s = state(session); if (s.revisio
     fail('Answer all setup questions before requesting a proposal'); return { mode: 'setup-proposal', version: 1, repo: s.meta.repo, harness: s.meta.harness, revision: s.revision, sessionHash: s.hash, answers: s.answers, intentOnly: true, applyAvailable: false, activation: false, authority, readiness: ['controller', 'workers', 'reviewers'].flatMap(role => (role === 'controller' ? [s.answers.routes.controller] : s.answers.routes[role]).map(r => ({ role, harness: r.harness, model: r.model, status: s.meta.discovery.harnesses.find(h => h.harness === r.harness)?.installed ? 'installed-but-unqualified' : 'blocked', nextStep: 'Review and apply the setup proposal, then verify authentication, access and role qualification explicitly' }))) }; }
 export async function cmdSetup(args, io) {
     const [action, ...extra] = args._ ?? [];
+    if (String(action).startsWith('task-')) {
+        const {cmdSetupTask} = await import('./setup-task.mjs');
+        return cmdSetupTask(args, io);
+    }
+    if (String(action).startsWith('controller-')) {
+        const {cmdSetupController} = await import('./setup-controller.mjs');
+        return cmdSetupController(args, io);
+    }
+    if (['repository-smoke','repository-start','repository-run','repository-qualify','repository-qualification','repository-close'].includes(action)) {
+        const {cmdSetupRepositoryController} = await import('./setup-repository-controller.mjs');
+        return cmdSetupRepositoryController(args, io);
+    }
     if (['smoke', 'probe', 'qualify', 'qualification'].includes(action)) {
         const {cmdSetupQualification} = await import('./setup-qualification.mjs');
         return cmdSetupQualification(args, io);

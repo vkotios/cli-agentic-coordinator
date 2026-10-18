@@ -1,7 +1,7 @@
 # cli-agentic-coordinator
 
 One orchestrator agent in your chosen harness coordinating **worker coding CLIs** (opencode, vibe,
-codex, agy) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
+codex, agy, Copilot, Muse) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
 write the code. The `orch` tool is the only way work gets launched, and it keeps the record.
 
 What `orch` enforces:
@@ -52,7 +52,7 @@ escalates.
 
 ## Requirements
 
-- **Windows 10 or 11, or Linux.** macOS and other platforms are not supported yet; `orch` fails fast with a clear platform message there.
+- **Windows 10 or 11, or Linux with procfs and `getconf CLK_TCK`.** Linux process evidence must be readable; missing or denied metadata stays unknown and does not authorize a kill or cleanup. macOS and other platforms are not supported yet; `orch` fails fast with a clear platform message there.
 - **Node.js 22 or newer** (developed and tested on Node 24).
 - **git** on `PATH`.
 - On Windows, Windows PowerShell 5.1 ships with Windows. **Windows Terminal** (`wt.exe`) is optional; when present, each run gets a read-only log window. On Linux, use `orch log <run-id>` to read captured output; no terminal viewer is opened automatically.
@@ -68,9 +68,11 @@ escalates.
   | vibe (Mistral) | cloud implementer / reviewer | the model is selected through the worktree's `.vibe/config.toml` |
   | codex (OpenAI) | cloud implementer / reviewer | `codex exec`, model always pinned |
   | agy (Gemini) | cloud reviewer | print mode, plan mode |
+  | GitHub Copilot CLI | subscription implementer / reviewer | direct native executable; explicit model or Auto access route |
+  | Muse Code (Meta) | subscription implementer / reviewer | native versioned executable; saved device sign-in |
 
-  GitHub Copilot CLI is recognised by the guard but has no orch adapter yet. Per-CLI details and verified
-  quirks: `docs/CLI_GUIDE.md`.
+  Copilot and Muse currently support subscription workers and reviewers; controller support is separate.
+  Per-CLI details and verified quirks: `docs/CLI_GUIDE.md`.
 
 ## Install
 
@@ -81,7 +83,9 @@ npm ci
 node bin\orch.mjs --help
 ```
 
-`orch` has no runtime dependencies; `npm ci` installs only the type checker and the MCP client used by
+Core `orch` commands have no runtime dependencies. The optional measured task-case verifier uses
+the TypeScript parser installed by `npm ci`; keep that installation for task qualification.
+`npm ci` also installs the MCP client used by
 the tests. Optionally make `orch` a command, for example in your PowerShell profile:
 
 ```powershell
@@ -91,7 +95,7 @@ function orch { node "C:\path\to\cli-agentic-coordinator\orch\bin\orch.mjs" @arg
 ## Quick start
 
 For a harness-guided onboarding conversation, use `orch setup start --repo <Git root>
---harness claude|codex|opencode|vibe --session <private directory> --json`.
+--harness claude|codex|opencode|vibe|copilot|muse --session <private directory> --json`.
 It collects resumable choices and returns one question at a time through the CLI or MCP.
 This stage records intent; configuration, adoption and policies remain unchanged.
 Use the separate `setup preview` and exact-approved `setup apply` to prepare private
@@ -100,9 +104,14 @@ route qualification and complete routing/advice policies remain explicit follow-
 Use `setup health` to inspect current configuration, policy completeness and cached
 usage freshness by role without provider calls or configuration changes.
 Use the separate, explicitly approved `setup smoke` / `setup probe` flow to check
-selected Codex/Vibe subscription routes in an owned read-only fixture. A finalized
+selected Codex/Vibe/Copilot/Muse subscription routes in an owned read-only fixture. A finalized
 `setup qualify` receipt can be reused by health until its evidence changes or expires;
 it proves bounded model access and role operation, not coding quality or controller ability.
+Copilot Auto records automatic subscription access and its observed model; it does not
+qualify an exact-model task-fit route. Worker and reviewer must use different actual models.
+The separate controller trial can observe a complete native claim, delegation,
+monitoring, review and cleanup lifecycle in a bound model/tool profile. Its receipt
+keeps task capability and future launch permission separate.
 See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and recovery.
 
 1. **Configure (optional).** Everything has a default (see below). To change one, copy
@@ -118,6 +127,7 @@ See [SETUP.md](docs/SETUP.md) for answer files, privacy, approval, health and re
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo
    # Select only the harnesses you want; repeat --harness to combine them:
    node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --harness opencode --harness vibe
+   node orch\bin\orch.mjs adopt --repo C:\path\to\your-repo --harness copilot --harness muse --dry-run
    ```
 
    Existing UTF-8 instructions (including BOM and line endings) are preserved byte for byte outside
@@ -199,7 +209,8 @@ Notes:
 
 - The review root must be a neutral place: orch refuses one under the temp directory, a path that looks
   like a scratch or temp folder, or one inside the repository under review.
-- The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under the OS temp directory on Linux. Its identifier is derived from your account (not from any setting), so the exclusion is machine-wide whatever the lane directory. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
+- The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under `/tmp/.orch-<uid>` on Linux. Its identifier is derived from your account; inherited temporary-directory settings cannot create another lane. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
+- On Linux, `orch gc` can clear a recorded orphan lane socket, and `orch monitor <run-id>` can recover a recorded orphan monitor socket. Recovery requires the same socket inode, a native owner identity proved gone, and a matching network namespace; a refused connection alone is insufficient. Missing, unreadable or changed receipts remain protected. A crash before the receipt is published, or a legacy socket without one, requires operator inspection rather than automatic removal. Run records and other historical evidence are retained.
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
 
@@ -320,6 +331,19 @@ Successful retention applies to completed, accepted runs; all other terminal dis
 `otherDays`. Age starts at the later terminal/package closure time. Runs need a durable disposition,
 finished package, resolved gates/reviews and confirmed process quiescence. Active or uncertain runs,
 reopened packages, incomplete cleanup, containment incidents and investigation pins remain protected.
+Escaped helpers are rechecked by their recorded PID and creation time during maintenance and
+worktree cleanup. A matching helper or unreadable identity still protects the resource. An absent
+incarnation or a PID reused by a different process resolves that liveness blocker without killing
+anything or rewriting the original monitor audit. Nonempty helper lists need verified ancestry and
+complete recorded identities; a later process query cannot repair unknown historical ancestry.
+Inventories above 60 helpers stay protected pending manual investigation. Unknown ancestry also
+blocks worktree cleanup even with an empty candidate list, for example when a worker exits before
+its creation time is captured. Inspect the retained run and process evidence; there is no bypass
+or automatic repair in this feature. Keep the resources protected pending a separately approved
+evidence-based resolution, and do not clear audit fields to force cleanup.
+Transcript previews expose `helper_reconciliation` separately from the original helper report.
+Metadata archives retain that separate observation, but deletion and recovery always check again.
+These checks do not activate retention or qualify a model, controller or future launch.
 Only stdout, stderr and the run's prompt copy are eligible. Compact final messages (up to 64 KiB,
 with an explicit truncation flag), requested/actual model evidence, run/process records, reviews,
 gates, routing ledger and cleanup receipts remain. `result` reads the compact answer after collection;
@@ -401,7 +425,7 @@ It removes neither worktrees nor provider session caches and installs no schedul
 
 ## Limitations
 
-- **Platform support.** `orch` supports Windows and Linux. Linux uses private per-user Unix-domain sockets and `/proc` process identities; workers run in dedicated sessions so cancellation targets only the worker's process group. The visible Windows Terminal log window is Windows-only; on Linux use `orch log <run-id>`. macOS is not supported yet.
+- **Platform support.** `orch` supports Windows and Linux. Linux uses private per-user Unix-domain sockets and `/proc` identities bound to the boot, PID namespace and process start tick. Older bare-tick records remain retained and unqualified. Workers run in dedicated sessions so cancellation targets the verified worker's process group; descendants that leave that group are outside its scope. A supervisor refuses uncertain keeper identity at startup and does not treat a later unreadable keeper as dead. The visible Windows Terminal log window is Windows-only; on Linux use `orch log <run-id>`. macOS is not supported yet.
 - **The guard reads command text; it is not a sandbox.** It stops the direct forms and the common wrappers
   of a worker launch or a destructive command, but not a launch from a script file, an alias or function,
   or a variable set in an earlier command. It prevents accidents.

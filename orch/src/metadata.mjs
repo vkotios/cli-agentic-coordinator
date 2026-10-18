@@ -11,12 +11,14 @@ import { wpKey, readClaim } from './claims.mjs';
 import { listResources, readClosure, recordsIn, withOperationLock } from './resources.mjs';
 import { readLedger, ledgerPath } from './ledger.mjs';
 import { computeGate } from './gate.mjs';
-import { dependencies, quiescent, timestamp, transcriptEvidence, retentionFile } from './retention.mjs';
+import { dependencies, quiescent, inspectQuiescence, timestamp, transcriptEvidence, retentionFile } from './retention.mjs';
+import { reconcileHelpers } from './helper-reconciliation.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
-import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId } from './archive.mjs';
+import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId, readReviewDocument } from './archive.mjs';
 
 const DAY = 86400000;
-const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json']);
+const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json', 'copilot-usage.json']);
+const allowedRunFile = (name, record) => RUN_FILES.has(name) && (name !== 'copilot-usage.json' || record?.cli === 'copilot');
 const sameWp = (a, b) => !!a && !!b && wpKey(a) === wpKey(b);
 const originalPath = (cfg, kind, id) => kind === 'run' ? paths(cfg, id).dir : path.join(cfg.stateRoot, 'reviews', `${id}.json`);
 const journalFile = (cfg, kind, id) => evidencePath(cfg, 'retired', kind, id);
@@ -37,7 +39,7 @@ export function confirmReviewMetadata(cfg, id) {
   const file = evidencePath(cfg, 'metadata-owned', 'review', id), doc = readDocument(file);
   if (!doc) return; // pre-existing reviews remain explicit-enrollment only
   if (!doc || doc.state !== 'intent' || doc.source !== 'orch-review' || doc.id !== id || doc.state_root !== path.resolve(cfg.stateRoot) || doc.state_identity !== stamp(safe(cfg.stateRoot)) || doc.reviews_identity !== stamp(safe(path.dirname(doc.path)))) throw new OrchError('review ownership intent invalid', 'retirement-unowned');
-  const record = readDocument(safe(doc.path));
+  const record = readReviewDocument(safe(doc.path));
   if (!record || record.id !== id || !record.finished_at) throw new OrchError('review record not finalized', 'retirement-unowned');
   write(file, { ...doc, state: 'confirmed', identity: stamp(doc.path), record_sha256: digest(JSON.stringify(record)) });
 }
@@ -63,8 +65,9 @@ async function snapshotFiles(cfg, kind, id, deadline) {
   const target = safe(originalPath(cfg, kind, id));
   const names = kind === 'run' ? fs.readdirSync(target) : [`${id}.json`];
   const files = {};
+  const record = kind === 'run' ? readDocument(safe(path.join(target, 'run.json'))) : null;
   for (const name of names) {
-    if (kind === 'run' && !RUN_FILES.has(name)) throw new OrchError(`unexpected original file: ${name}`, 'retirement-unsafe');
+    if (kind === 'run' && !allowedRunFile(name, record)) throw new OrchError(`unexpected original file: ${name}`, 'retirement-unsafe');
     const file = kind === 'run' ? path.join(target, name) : target;
     const s = fs.lstatSync(safe(file));
     if (!s.isFile() || s.isSymbolicLink()) throw new OrchError('unexpected directory or linked metadata', 'retirement-unsafe');
@@ -76,8 +79,11 @@ async function snapshotFiles(cfg, kind, id, deadline) {
 async function liveCheck(cfg, kind, record, deadline, archived = null) {
   if (kind === 'run') {
     if (!TERMINAL.has(record.status)) return 'run not terminal';
+    if (record.helper_audit !== undefined && !['observed','not-applicable'].includes(record.helper_audit?.state)) return 'helper ancestry unverified';
     if (!archived) return quiescent(cfg, record, deadline);
-    if (!archived.quiescent || (record.escaped_helpers || []).some((h) => h.verdict !== 'gone' && h.status !== 'gone')) return 'historical process evidence uncertain';
+    if (!archived.quiescent) return 'historical process evidence uncertain';
+    const helpers = await reconcileHelpers(record, deadline);
+    if (helpers.reason) return helpers.reason;
     const checks = archived.processes || [];
     if (checks.length) {
       const left = deadline - Date.now(); if (left <= 0) return 'maintenance time budget reached';
@@ -123,7 +129,7 @@ function dependencyCheck(cfg, kind, record, seal) {
   return { finalized_at: seal.finalized_at };
 }
 async function completeSnapshot(cfg, kind, id, record, deadline) {
-  const runFields = new Set(['id', 'cli', 'lane', 'status', 'reason', 'status_note', 'exit_code', 'created_at', 'started_at', 'ended_at', 'updated_at', 'dir', 'dir_real', 'dir_evidence', 'wp', 'slice', 'role', 'review_of', 'by', 'scope', 'orch_written', 'escaped_helpers', 'keeper_pid', 'keeper_created_at', 'worker_pid', 'last_activity_at', 'last_activity_signal', 'post_exit_warnings', 'routed_default_model', 'quota', 'routing']);
+  const runFields = new Set(['id', 'cli', 'lane', 'status', 'reason', 'status_note', 'exit_code', 'created_at', 'started_at', 'ended_at', 'updated_at', 'dir', 'dir_real', 'dir_evidence', 'wp', 'slice', 'role', 'review_of', 'by', 'scope', 'orch_written', 'escaped_helpers', 'helper_audit', 'keeper_pid', 'keeper_created_at', 'worker_pid', 'last_activity_at', 'last_activity_signal', 'post_exit_warnings', 'routed_default_model', 'quota', 'routing']);
   const reviewFields = new Set(['id', 'implementer_run', 'implementer_models', 'wp', 'slice', 'by', 'reviewer_cli', 'reviewer_model', 'reviewer_canonical', 'reviewer_model_actual', 'reviewer_run_status', 'reviewer_run_reason', 'warnings', 'ref', 'commit', 'source_repo', 'implementer_dir', 'worktree', 'worktree_created', 'worktree_removed', 'worktree_remove_error', 'blinded', 'blinding_verified', 'status', 'outcome', 'containment', 'finished_at', 'created_at', 'run_id', 'breaches', 'unknown', 'admission', 'launch_error', 'setup_error']);
   const compactRecord = Object.fromEntries(Object.entries(record).filter(([k]) => (kind === 'run' ? runFields.has(k) || k.startsWith('model_') : reviewFields.has(k))));
   if (kind === 'review') return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), evidence_hashes: Object.fromEntries(Object.entries(record.evidence || {}).map(([k, v]) => [k, digest(JSON.stringify(v))])), cleanup: listResources(cfg).filter((r) => r.id === id).map((r) => ({ id: r.id, state: r.state, cleanup_error: r.cleanup_error || null })) };
@@ -135,9 +141,9 @@ async function completeSnapshot(cfg, kind, id, record, deadline) {
   const monitor = readDocument(P.monitorAlive) || {};
   const processes = [];
   for (const [pid, at] of [[spawned.monitor_pid, spawned.monitor_created_at], [monitor.pid, monitor.created_at]]) if (pid) processes.push({ pid, created_at: at });
-  const reason = await quiescent(cfg, record, deadline);
-  if (reason) throw new OrchError(reason, 'retirement-protected');
-  return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), facts, spawned, processes, quiescent: true, transcripts: { ...transcripts, snapshot: { ...transcripts.snapshot, run: compactRecord } }, scope: readDocument(path.join(P.dir, 'scope.json')), package: record.wp ? readClosure(cfg, record.wp) : null };
+  const current = await inspectQuiescence(cfg, record, deadline);
+  if (current.reason) throw new OrchError(current.reason, 'retirement-protected');
+  return { record: compactRecord, record_sha256: digest(JSON.stringify(record)), captured_at: nowIso(), facts, spawned, processes, quiescent: true, helper_reconciliation: current.helper_reconciliation, transcripts: { ...transcripts, snapshot: { ...transcripts.snapshot, run: compactRecord } }, scope: readDocument(path.join(P.dir, 'scope.json')), package: record.wp ? readClosure(cfg, record.wp) : null };
 }
 async function prepareSeal(cfg, kind, id, record, authorization, deadline) {
   const reason = await liveCheck(cfg, kind, record, deadline);
@@ -157,7 +163,7 @@ function autoOperator(cfg, kind, id) {
   const owned = readDocument(kind === 'run' ? retentionFile(cfg, 'owned', id) : evidencePath(cfg, 'metadata-owned', kind, id));
   if (!owned || owned.version !== 1 || owned.id !== id || owned.state !== 'confirmed' || owned.state_root !== path.resolve(cfg.stateRoot) || owned.state_identity !== stamp(safe(cfg.stateRoot))) return null;
   if (kind === 'run') { if (owned.source !== 'orch-run' || owned.metadata_version !== 1) return null; }
-  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || owned.reviews_identity !== stamp(safe(path.dirname(owned.path))) || owned.identity !== stamp(safe(owned.path)) || owned.record_sha256 !== digest(JSON.stringify(readDocument(owned.path)))) return null;
+  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || owned.reviews_identity !== stamp(safe(path.dirname(owned.path))) || owned.identity !== stamp(safe(owned.path)) || owned.record_sha256 !== digest(JSON.stringify(readReviewDocument(owned.path)))) return null;
   const record = readEvidence(cfg, kind, id)?.record;
   return record?.wp ? readClosure(cfg, record.wp)?.by : kind === 'run' ? owned.finalization?.by : record?.by;
 }
@@ -212,7 +218,7 @@ async function plan(cfg, kind, id, policy, deadline, prospective = null) {
     const seal = prospective || readDocument(sealFile(cfg, kind, id));
     if (!seal) return { ...base, state: 'legacy', reason: 'explicit metadata enrollment required' };
     const { seal_sha256, ...sealedBody } = seal;
-    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || seal.state_identity !== stamp(safe(cfg.stateRoot)) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !RUN_FILES.has(name) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
+    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || seal.state_identity !== stamp(safe(cfg.stateRoot)) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !allowedRunFile(name, seal.data.record) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
     const journal = readDocument(journalFile(cfg, kind, id));
     base.pending_cleanup = !!journal;
     const record = archived ? archived.record : readEvidence(cfg, kind, id)?.record;

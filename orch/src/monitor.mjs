@@ -22,7 +22,7 @@ import { paths, readRun, writeRun, appendMonitorEvent, TERMINAL, keeperFacts } f
 import { getAdapter } from './adapters/index.mjs';
 import { laneScope } from './lanescope.mjs';
 import { tryListen } from './lanepipe.mjs';
-import { readProcessTable, verifyIdentity, descendantsOf } from './procs.mjs';
+import { readProcessTable, verifyIdentity, observeDescendants, rememberDescendants, classifyObservedHelpers } from './procs.mjs';
 import { Tailer } from './tailer.mjs';
 import { DirectoryEvidence } from './direvidence.mjs';
 import { deriveStatus } from './statusrules.mjs';
@@ -43,6 +43,20 @@ const args = parseArgv(process.argv.slice(2));
 const cfg = loadConfig(args['state-root']);
 const ID = String(args.id || '');
 const P = paths(cfg, ID);
+/** @type {import('node:net').Server|null} */
+let monitorServer = null;
+
+async function exitMonitor(code) {
+  if (process.platform === 'linux' && monitorServer?.listening) {
+    await new Promise(resolve => {
+      const fallback = setTimeout(() => resolve(null), 2000);
+      fallback.unref?.();
+      try { monitorServer.close(() => { clearTimeout(fallback); resolve(null); }); }
+      catch { clearTimeout(fallback); resolve(null); }
+    });
+  }
+  process.exit(code);
+}
 
 /** Nothing in the monitor may throw its way out. A monitor crash is harmless but noisy. */
 function guard(fn, label) {
@@ -52,6 +66,11 @@ function guard(fn, label) {
     appendMonitorEvent(cfg, ID, { type: 'monitor-error', where: label, detail: String((e && e.message) || e) });
     return null;
   }
+}
+
+function auditProcessTable() {
+  return readProcessTable({ deadlineMs: 5000, onFailure: failure =>
+    appendMonitorEvent(cfg, ID, { type: 'process-query-failed', ...failure }) });
 }
 
 // CODE-REVIEW FIX (agy g7): no stray rejection may crash the monitor. A crash is harmless
@@ -68,9 +87,10 @@ async function main() {
   // Single-writer election.
   const bind = await tryListen(scope.monitorPipe(ID));
   if (!bind.ok) {
-    process.exit(3); // another monitor owns this record
+    await exitMonitor(3); // another monitor owns this record
     return;
   }
+  monitorServer = bind.server;
   const hello = Buffer.from(JSON.stringify({ run: ID, monitor: process.pid }) + '\n', 'utf8');
   bind.server.on('error', () => {});
   bind.server.on('connection', (s) => {
@@ -111,6 +131,7 @@ async function main() {
     stderrBytes: 0,
     events: [],
     descendants: new Map(),
+    helperAudit: { state: 'unknown', rootVerified: false, reason: 'not-checked' },
     viewerOpened: false,
     viewerPid: null,
     viewerCreatedAt: null,
@@ -144,7 +165,7 @@ async function main() {
     // record kept coming back from the dead and the process never exited. A monitor
     // owns its record only for as long as that record exists.
     if (!runDirIntact()) {
-      process.exit(0);
+      await exitMonitor(0);
       return;
     }
     if (!fs.existsSync(P.record)) {
@@ -152,7 +173,7 @@ async function main() {
       // Several in a row means it is genuinely gone.
       if (++recordMisses >= 10) {
         appendMonitorEvent(cfg, ID, { type: 'monitor-stop', reason: 'run.json disappeared' });
-        process.exit(0);
+        await exitMonitor(0);
         return;
       }
       await sleep(pollMs);
@@ -240,6 +261,7 @@ async function main() {
     const workerPid = facts.workerPid ?? rec.worker_pid ?? null;
     const workerCreatedAt = facts.workerCreatedAt ?? null;
     let workerVerdict = 'unknown';
+    let processSnapshot = null, processScanned = false;
     // CODE-REVIEW FIX (astra H4): the monitor NEVER fills in a missing creation time.
     // It used to copy the creation time of whatever process held the recorded pid "now";
     // after a pid reuse that made an unrelated process verify `match`, and `orch cancel`
@@ -248,14 +270,9 @@ async function main() {
     // and every kill path refuses.
     if (workerPid && (Date.now() - state.lastProcScan > cfg.procScanMs || finished)) {
       state.lastProcScan = Date.now();
-      const table = await readProcessTable({ deadlineMs: 5000 });
-      if (table) {
-        const id = verifyIdentity(workerPid, workerCreatedAt, table);
-        workerVerdict = id.verdict;
-        for (const d of descendantsOf(workerPid, table)) {
-          if (!state.descendants.has(d.pid)) state.descendants.set(d.pid, { pid: d.pid, name: d.name, createdAt: d.createdAt });
-        }
-      }
+      processSnapshot = await auditProcessTable();
+      processScanned = true;
+      workerVerdict = verifyIdentity(workerPid, workerCreatedAt, processSnapshot).verdict;
     }
 
     const spawnedFile = readJson(P.spawned, null);
@@ -279,6 +296,19 @@ async function main() {
       }
     }
     const finishedNow = !!fresh.workerExit || !!fresh.blocked;
+    // The worker may have exited while CIM was reading. Its keeper-recorded birth
+    // and exit bind a historical root; never borrow the current PID holder's birth.
+    if (finishedNow && fresh.workerPid && (!processScanned || fresh.workerPid !== workerPid || !finished)) {
+      processSnapshot = await auditProcessTable();
+      processScanned = true;
+    }
+    if (processScanned) {
+      const observation = observeDescendants(fresh.workerPid, fresh.workerCreatedAt, processSnapshot, { exitedAt: fresh.workerExit?.process_clock ?? fresh.workerExit?.at });
+      rememberDescendants(state.descendants, observation);
+      state.helperAudit = { state: observation.state, rootVerified: observation.rootVerified, reason: observation.reason };
+    } else if (fresh.blocked && !fresh.workerPid) {
+      state.helperAudit = { state: 'not-applicable', rootVerified: true, reason: 'worker-not-spawned' };
+    }
     if (finishedNow && !finished) {
       // The worker finished while the identity reads were in flight: drain now, so the
       // last bytes of the log still reach the directory evidence (v3 §5 final drain).
@@ -365,7 +395,11 @@ async function main() {
       // Escaped helpers: one final bounded classification. Reported, never killed,
       // never counted for exclusion.
       next.escaped_helpers = await classifyHelpers(state.descendants);
-      if (!runDirIntact()) { process.exit(0); return; }
+      const helperObservationResolved = state.helperAudit.rootVerified && !next.escaped_helpers.some(h => h.state === 'unknown');
+      next.helper_audit = { state: helperObservationResolved
+        ? (state.helperAudit.state === 'not-applicable' ? 'not-applicable' : 'observed') : 'unknown',
+        reason: helperObservationResolved && state.helperAudit.state === 'unknown' ? null : state.helperAudit.reason, checked_at: nowIso() };
+      if (!runDirIntact()) { await exitMonitor(0); return; }
       // Even removal after this check cannot authorize creating the parent again.
       guard(() => writeRun(cfg, next, { createDir: false }), 'final-write');
       appendMonitorEvent(cfg, ID, { type: 'final', status: next.status, reason: next.reason });
@@ -379,18 +413,19 @@ async function main() {
         appendMonitorEvent(cfg, ID, { type: 'viewer-closed', pid: vPid, ...c });
       }
       guard(() => fs.unlinkSync(P.monitorAlive), 'monitor.alive-remove');
-      process.exit(0);
+      await exitMonitor(0);
       return;
     }
 
     if (!TERMINAL.has(next.status)) {
+      next.helper_audit = { state: state.helperAudit.state, reason: state.helperAudit.reason };
       next.status = classifyActivity(cfg, next, state, fresh);
       if (fresh.spawned && !next.started_at) next.started_at = nowIso();
       // Slice-2 fix: writeRun creates missing directories, so a write racing the removal
       // of the run directory used to RE-CREATE it (with only run.json in it), and the
       // "directory is gone" check above never fired again: a monitor leaked for an hour.
       if (!runDirIntact()) {
-        process.exit(0);
+        await exitMonitor(0);
         return;
       }
       guard(() => writeRun(cfg, next, { createDir: false }), 'poll-write');
@@ -436,15 +471,9 @@ function classifyActivity(cfg, rec, state, facts) {
 
 async function classifyHelpers(map) {
   if (!map.size) return [];
-  const pids = [...map.keys()];
+  const pids = [...new Set([...map.values()].map(p => p.pid))];
   const table = await readProcessTable({ deadlineMs: 5000, pids });
-  const out = [];
-  for (const d of map.values()) {
-    const v = verifyIdentity(d.pid, d.createdAt, table);
-    if (v.verdict === 'match') out.push({ pid: d.pid, name: d.name, state: 'alive' });
-    else if (v.verdict === 'unknown') out.push({ pid: d.pid, name: d.name, state: 'unknown' });
-  }
-  return out;
+  return classifyObservedHelpers(map, table);
 }
 
 function sizeOf(f) {
@@ -471,7 +500,7 @@ function safeAdapter(name) {
   }
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   appendMonitorEvent(cfg, ID, { type: 'monitor-fatal', detail: String((e && e.stack) || e) });
-  process.exit(1);
+  await exitMonitor(1);
 });

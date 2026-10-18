@@ -19,17 +19,20 @@ import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
 
 const old = '2026-01-01T00:00:00.000Z';
 const json = (r) => JSON.parse(r.stdout);
-/** @param {any} t @param {string} name @param {any} [metadata] */
-function fixture(t, name, metadata = { enabled: true, successDays: 0, otherDays: 0 }) {
+/** @param {any} t @param {string} name @param {any} [metadata] @param {boolean} [owned] */
+function fixture(t, name, metadata = { enabled: true, successDays: 0, otherDays: 0 }, owned = false) {
   const c = makeCase(name, { config: { retention: { mode: 'manual', successDays: 0, otherDays: 0, maxMs: 10000, metadata } } });
   t.after(() => c.cleanup());
   const id = '20260101-000000-abc123';
   const dir = path.join(c.stateRoot, 'runs', id);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  if (owned) beginRunArtifacts(loadConfig(c.stateRoot), id);
   fs.mkdirSync(dir, { recursive: true });
   const rec = { id, cli: 'fake', lane: 'cloud', status: 'completed', ended_at: old, created_at: old, exit_code: 0, dir: c.work, model_requested: 'fixture-model', model_canonical: 'fixture-model', model_actual: null };
   fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(rec));
   const files = { 'stdout.log': 'original final answer\n', 'stderr.log': '', 'prompt.txt': 'private test handoff', 'keeper.ndjson': [{ event: 'worker-exit', at: old, code: 0 }, { event: 'streams-closed', at: old }, { event: 'keeper-exit', at: old, write_failures: 0 }].map((r) => JSON.stringify(r)).join('\n') + '\n', 'events.monitor.ndjson': '{"event":"finished"}\n' };
   for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), text);
+  if (owned) confirmRunArtifacts(loadConfig(c.stateRoot), id);
   fs.writeFileSync(path.join(c.stateRoot, 'ledger.jsonl'), JSON.stringify({ run_id: id, disposition: 'blocked', model_canonical: 'fixture-model', recorded_at: old }) + '\n');
   return { c, id, dir, rec };
 }
@@ -46,6 +49,20 @@ async function seal(f) {
   return r;
 }
 const collect = (f) => orch(['maintain', '--kind', 'metadata', '--apply', '--run', f.id, '--json'], f.c.env);
+
+test('P04b: native Copilot usage metadata can retire while compact model/result evidence survives',async t=>{
+  const f=fixture(t,'p04b-native-usage');f.rec.cli='copilot';f.rec.model_actual='example-served';fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(f.rec));
+  fs.writeFileSync(path.join(f.dir,'stdout.log'),JSON.stringify({type:'assistant.message',data:{content:'fixture answer'}})+'\n');
+  fs.writeFileSync(path.join(f.dir,'copilot-usage.json'),JSON.stringify({agentMetrics:{main:{modelMetrics:{'example-served':{requests:{count:1}}}}}}));
+  await transcripts(f);await seal(f);const r=await collect(f);assert.equal(r.code,0,r.stderr);assert.equal(json(r).runs[0].state,'collected');assert.equal(fs.existsSync(f.dir),false);
+  const result=await orch(['result',f.id,'--json'],f.c.env);assert.equal(result.code,0,result.stderr);assert.equal(json(result).final_message,'fixture answer');assert.equal(json(result).model_actual,'example-served');
+});
+
+test('P04b repairs: another harness cannot retire an unexpected Copilot usage file',async t=>{
+  const f=fixture(t,'p04b-foreign-usage');fs.writeFileSync(path.join(f.dir,'copilot-usage.json'),'owner file');await transcripts(f);
+  const r=await orch(['maintain','--kind','metadata','--enroll',f.id,'--by','owner','--reason','fixture','--json'],f.c.env);
+  assert.notEqual(r.code,0);assert.match(r.stderr,/unexpected original file/);assert.equal(fs.readFileSync(path.join(f.dir,'copilot-usage.json'),'utf8'),'owner file');
+});
 
 test('P03c: explicit metadata enrollment preserves the original record bytes', async (t) => {
   const f = fixture(t, 'p03c-seal');
@@ -376,16 +393,22 @@ test('P03c: changed collector receipts and concurrent run guards prevent origina
 });
 
 async function ownedFixture(t, name) {
-  const f = fixture(t, name);
-  const backup = path.join(f.c.work, 'original-fixture');
-  fs.renameSync(f.dir, backup);
-  const cfg = loadConfig(f.c.stateRoot);
-  beginRunArtifacts(cfg, f.id);
-  fs.mkdirSync(f.dir);
-  for (const file of fs.readdirSync(backup)) fs.copyFileSync(path.join(backup, file), path.join(f.dir, file));
-  confirmRunArtifacts(cfg, f.id);
-  return f;
+  return fixture(t, name, undefined, true);
 }
+
+test('P03c fixture: owned artifacts are created without moving a populated run directory', async (t) => {
+  const rename = fs.renameSync;
+  fs.renameSync = (from, to) => {
+    if (fs.statSync(from, { throwIfNoEntry: false })?.isDirectory()) throw Object.assign(new Error('fixture directory move refused'), { code: 'EPERM' });
+    return rename(from, to);
+  };
+  let f;
+  try { f = await ownedFixture(t, 'p03c-owned-no-move'); } finally { fs.renameSync = rename; }
+  await transcripts(f);
+  const result = await collect(f);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).runs[0].state, 'collected');
+});
 
 test('P03c: future owned runs seal automatically only after explicit finalization and opt-in', async (t) => {
   const f = await ownedFixture(t, 'p03c-owned'); await transcripts(f);
@@ -488,7 +511,7 @@ test('P03c review: archived PID reuse permits retention while match and unknown 
     }); syncBuiltinESMExports();
   }
   try {
-    const recordedAt = process.platform === 'linux' ? 'ticks:123456' : old;
+    const recordedAt = process.platform === 'linux' ? 'linux:'+fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+/^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'))[1]+':123456' : old;
     fs.writeFileSync(path.join(f.dir, 'spawned.json'), JSON.stringify({ monitor_pid: 424242, monitor_created_at: recordedAt }));
     // In-process calls keep the platform-specific process-query fixture local to this test.
     const cfg = loadConfig(f.c.stateRoot);

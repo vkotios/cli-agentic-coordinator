@@ -18,7 +18,7 @@ import {
   identityOf,
   killOwnedChecked, testReps } from './helpers.mjs';
 import { probeFree } from '../src/lanepipe.mjs';
-import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
+import { readProcessTable, verifyIdentity, observeDescendants } from '../src/procs.mjs';
 
 const REPS = testReps(20, 'ORCH_G5_REPS');
 
@@ -46,6 +46,29 @@ async function launch(c, holdS = 40, extra = []) {
   );
   return { id, workerPid, workerCreatedAt };
 }
+
+function childReceiptPid(work, parentPid) {
+  const file = path.join(work, `fake-child-${parentPid}.json`);
+  try {
+    const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return receipt.parent_pid === parentPid && Number.isSafeInteger(receipt.child_pid) && receipt.child_pid > 0 ? receipt.child_pid : null;
+  } catch (error) {
+    if (error instanceof SyntaxError || ['ENOENT', 'EBUSY'].includes(error.code)) return null;
+    throw error;
+  }
+}
+
+test('G5 fixture: incomplete spawn receipts never supply a child identity', (t) => {
+  const c = makeCase('g5-receipt');
+  t.after(() => c.cleanup());
+  const file = path.join(c.work, 'fake-child-41.json');
+  fs.writeFileSync(file, '{"parent_pid":41,');
+  assert.equal(childReceiptPid(c.work, 41), null);
+  fs.writeFileSync(file, JSON.stringify({ parent_pid: 41, child_pid: 42 }));
+  assert.equal(childReceiptPid(c.work, 41), 42);
+  fs.writeFileSync(file, JSON.stringify({ parent_pid: 40, child_pid: 42 }));
+  assert.equal(childReceiptPid(c.work, 41), null);
+});
 
 test(`G5/TE: cancel at ${REPS} randomised offsets -> never 'cancelled' without a verified-gone worker`, { timeout: 25 * 60 * 1000 }, async (t) => {
   const c = makeCase('g5');
@@ -98,7 +121,7 @@ test('G5: PID-REUSE simulation -> no kill at all, `unconfirmed`, and the worker 
   const keeperFile = path.join(c.stateRoot, 'runs', id, 'keeper.ndjson');
   fs.appendFileSync(
     keeperFile,
-    JSON.stringify({ event: 'worker-identity', worker_pid: workerPid, worker_created_at: 'ms:1', at: new Date().toISOString() }) + '\n',
+    JSON.stringify({ event: 'worker-identity', worker_pid: workerPid, worker_created_at: workerCreatedAt.replace(/:\d+$/, ':1'), at: new Date().toISOString() }) + '\n',
   );
 
   const res = await orch(['cancel', id, '--json'], c.env);
@@ -158,29 +181,57 @@ test('G5: cancel with NO recorded worker identity refuses to kill and says so', 
 test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T reached the tree', { timeout: 180000 }, async (t) => {
   const c = makeCase('g5-tree');
   const strays = [];
+  let fixtureTreeVerified = false;
   t.after(async () => {
-    for (const s of strays) await killOwnedChecked(s.pid, s.createdAt);
+    // If discovery was uncertain, retain evidence and rely on the unchanged fake
+    // workers' self-destruct backstop. Never clean up by an unverified PID.
+    if (!fixtureTreeVerified) return;
+    for (const s of strays) {
+      const result = await killOwnedChecked(s.pid, s.createdAt);
+      const verdict = await identityOf(s.pid, s.createdAt);
+      assert.ok(['gone', 'mismatch'].includes(verdict), `fixture cleanup unconfirmed: ${JSON.stringify({ ...s, result, verdict })}`);
+    }
     c.cleanup();
   });
-  const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild']);
-  // Record the descendants BEFORE the kill, so cleanup can verify them by identity.
-  await new Promise((r) => setTimeout(r, 1500));
+  const spawnReceipt = path.join(c.base, 'worker-spawn.json');
+  const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild', '--flag', '--spawn-receipt', '--flag', spawnReceipt]);
+  const fixture = await waitFor(() => { try { const r=JSON.parse(fs.readFileSync(spawnReceipt,'utf8'));return Number.isSafeInteger(r.worker_pid)&&r.worker_pid>0&&Number.isSafeInteger(r.parent_pid)&&r.parent_pid>0?r:null; } catch { return null; } }, {timeoutMs:5000,what:'the explicit fake worker launch receipt'});
+  const fakePid = fixture.worker_pid;
+  if (process.platform === 'linux') assert.equal(fixture.parent_pid, workerPid, 'the fixture must be the recorded supervisor\'s own child');
+  else assert.equal(fakePid, workerPid, 'the fixture must be the directly recorded worker');
+  // Require the fixture's own spawn receipts, not every PPID neighbour (which also
+  // includes OS console helpers and can refer to an older process incarnation).
+  const childPid = await waitFor(() => childReceiptPid(c.work, fakePid), { timeoutMs: 5000, what: 'the fake worker child spawn receipt' });
+  const grandchildPid = await waitFor(() => childReceiptPid(c.work, childPid), { timeoutMs: 5000, what: 'the fake worker grandchild spawn receipt' });
   const full = await readProcessTable({ deadlineMs: 6000 });
-  const before = full ? full.filter((p) => p.ppid === workerPid) : [];
+  const observed = observeDescendants(workerPid, workerCreatedAt, full);
+  assert.equal(observed.rootVerified, true, JSON.stringify(observed));
+  const before = [childPid, grandchildPid].map(pid => {
+    const entry = observed.candidates.find(p => p.pid === pid && p.ancestry === 'verified');
+    assert.ok(entry, `spawned fixture descendant ${pid} has no verified process ancestry: ${JSON.stringify(observed)}`);
+    return entry;
+  });
   for (const d of before) strays.push({ pid: d.pid, createdAt: d.createdAt });
-  assert.ok(before.length >= 1, 'the fake worker did not produce a descendant to test against');
+  if (process.platform === 'linux') {
+    const launched = observed.candidates.find(p => p.pid === fakePid && p.ancestry === 'verified');
+    assert.ok(launched, 'the fixture launch receipt also needs verified native ancestry');
+    assert.equal(launched.ppid, workerPid);
+  }
+  assert.equal(before[0].ppid, fakePid);
+  assert.equal(before[1].ppid, childPid);
+  fixtureTreeVerified = true;
 
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
   assert.equal(out.cancel_state, 'cancelled', res.stdout);
-  assert.match(String(out.note), /tree kill also ends descendants/, 'the accepted /T conflict must be stated in the output');
+  assert.match(String(out.note), process.platform === 'linux' ? /verified worker process group/ : /tree kill also ends descendants/, 'the platform-specific cancellation scope must be stated in the output');
   const human = await orch(['cancel', id], c.env); // already terminal now, but the text path must carry it too
   assert.equal(human.code, 0);
   assert.ok(['gone', 'mismatch'].includes(await identityOf(workerPid, workerCreatedAt)));
   const after = await readProcessTable({ deadlineMs: 6000, pids: before.map((d) => d.pid) });
   for (const d of before) {
     const v = verifyIdentity(d.pid, d.createdAt, after).verdict;
-    assert.ok(['gone', 'mismatch'].includes(v), `a non-detached descendant survived the tree kill (${d.pid}: ${v})`);
+    assert.ok(['gone', 'mismatch'].includes(v), `a non-detached descendant survived the tree kill: ${JSON.stringify({ workerPid, workerCreatedAt, before, after, cancel: out })}`);
   }
 });
 

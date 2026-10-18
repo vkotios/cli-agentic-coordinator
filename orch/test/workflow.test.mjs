@@ -25,7 +25,7 @@ const CLAIM_REPS = testReps(20);
 test(`S2: 10 separate processes claim one WP at once, ${CLAIM_REPS} repetition(s) -> exactly one holder each time`, { timeout: 600000 }, async (t) => {
   const c = makeCase('s2-race');
   t.after(() => c.cleanup());
-  const BY = ['claude-code', 'codex', 'opencode', 'vibe', 'owner'];
+    const BY = ['claude-code', 'codex', 'opencode', 'vibe', 'copilot', 'muse', 'owner'];
   const winnersPerRep = [];
   const latencies = [];
   for (let rep = 0; rep < CLAIM_REPS; rep++) {
@@ -114,11 +114,14 @@ test('S2: a stale claim is SHOWN with its age and never reclaimed automatically'
 
 /* ---------------------------------------------------------- worktrees ----- */
 
-for (const by of ['opencode', 'vibe']) {
+for (const by of ['opencode', 'vibe', 'copilot', 'muse']) {
   test(`P04: ${by} claims, delegates, records and finishes without cross-harness takeover`, { timeout: 180000 }, async (t) => {
     const c = makeCase(`p04-${by}`);
+    const releaseWorker = path.join(c.base, 'release-worker');
     let runId;
     t.after(async () => {
+      // Release the owned fixture even when an assertion fails before its audit.
+      fs.writeFileSync(releaseWorker, 'release\n');
       if (runId) await waitFor(() => fs.existsSync(path.join(c.stateRoot, 'runs', runId, 'keeper.ndjson')) && fs.readFileSync(path.join(c.stateRoot, 'runs', runId, 'keeper.ndjson'), 'utf8').includes('keeper-exit'), { timeoutMs: 120000, what: 'P04 keeper exit' });
       c.cleanup();
     });
@@ -141,15 +144,24 @@ for (const by of ['opencode', 'vibe']) {
     const created = await orch(['worktree', 'create', '--repo', repo, '--wp', wp, '--slice', 's1', '--by', by, '--json'], c.env);
     assert.equal(created.code, 0, created.stderr);
     const w = json(created);
-    const args = ['run', '--cli', 'fake', '--dir', w.path, '--handoff', c.handoffPath, '--wp', wp, '--slice', 's1', '--allow', 'a.txt', '--no-window'];
+    // Keep the fixture alive until OS birth/ancestry evidence is actually captured.
+    // A fixed hold can end before the bounded Windows process query completes.
+    const args = ['run', '--cli', 'fake', '--dir', w.path, '--handoff', c.handoffPath, '--wp', wp, '--slice', 's1', '--allow', 'a.txt', '--no-window', '--flag', '--wait-for-file', '--flag', releaseWorker];
     const wrongRun = await orch([...args, '--by', other], c.env);
     assert.equal(wrongRun.code, 2);
     assert.match(wrongRun.stderr, new RegExp(`held by ${by}`));
     const launched = await orch([...args, '--by', by], c.env);
     assert.equal(launched.code, 0, launched.stderr);
     runId = idFrom(launched.stdout);
+    await waitFor(() => {
+      const current = readRunRecord(c.stateRoot, runId);
+      return current?.worker_created_at && current.helper_audit?.state === 'observed';
+    }, { timeoutMs: 45000, what: `P04 ${by} captured worker identity and helper audit` });
+    fs.writeFileSync(releaseWorker, 'release\n');
     await waitForStatus(c.stateRoot, runId, ['completed'], { timeoutMs: 60000 });
     const run = readRunRecord(c.stateRoot, runId);
+    assert.ok(run.worker_created_at, 'cleanup must use the keeper-captured worker identity');
+    assert.equal(run.helper_audit.state, 'observed');
     assert.equal(run.by, by);
     assert.equal(run.scope.worktree_id, w.id);
     assert.equal((await orch(['record', runId, '--disposition', 'blocked', '--notes', 'claim lifecycle fixture; no implementation accepted', '--json'], c.env)).code, 0);
