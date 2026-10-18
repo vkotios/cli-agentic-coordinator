@@ -43,6 +43,20 @@ const args = parseArgv(process.argv.slice(2));
 const cfg = loadConfig(args['state-root']);
 const ID = String(args.id || '');
 const P = paths(cfg, ID);
+/** @type {import('node:net').Server|null} */
+let monitorServer = null;
+
+async function exitMonitor(code) {
+  if (process.platform === 'linux' && monitorServer?.listening) {
+    await new Promise(resolve => {
+      const fallback = setTimeout(() => resolve(null), 2000);
+      fallback.unref?.();
+      try { monitorServer.close(() => { clearTimeout(fallback); resolve(null); }); }
+      catch { clearTimeout(fallback); resolve(null); }
+    });
+  }
+  process.exit(code);
+}
 
 /** Nothing in the monitor may throw its way out. A monitor crash is harmless but noisy. */
 function guard(fn, label) {
@@ -73,9 +87,10 @@ async function main() {
   // Single-writer election.
   const bind = await tryListen(scope.monitorPipe(ID));
   if (!bind.ok) {
-    process.exit(3); // another monitor owns this record
+    await exitMonitor(3); // another monitor owns this record
     return;
   }
+  monitorServer = bind.server;
   const hello = Buffer.from(JSON.stringify({ run: ID, monitor: process.pid }) + '\n', 'utf8');
   bind.server.on('error', () => {});
   bind.server.on('connection', (s) => {
@@ -150,7 +165,7 @@ async function main() {
     // record kept coming back from the dead and the process never exited. A monitor
     // owns its record only for as long as that record exists.
     if (!runDirIntact()) {
-      process.exit(0);
+      await exitMonitor(0);
       return;
     }
     if (!fs.existsSync(P.record)) {
@@ -158,7 +173,7 @@ async function main() {
       // Several in a row means it is genuinely gone.
       if (++recordMisses >= 10) {
         appendMonitorEvent(cfg, ID, { type: 'monitor-stop', reason: 'run.json disappeared' });
-        process.exit(0);
+        await exitMonitor(0);
         return;
       }
       await sleep(pollMs);
@@ -288,7 +303,7 @@ async function main() {
       processScanned = true;
     }
     if (processScanned) {
-      const observation = observeDescendants(fresh.workerPid, fresh.workerCreatedAt, processSnapshot, { exitedAt: fresh.workerExit?.at });
+      const observation = observeDescendants(fresh.workerPid, fresh.workerCreatedAt, processSnapshot, { exitedAt: fresh.workerExit?.process_clock ?? fresh.workerExit?.at });
       rememberDescendants(state.descendants, observation);
       state.helperAudit = { state: observation.state, rootVerified: observation.rootVerified, reason: observation.reason };
     } else if (fresh.blocked && !fresh.workerPid) {
@@ -384,7 +399,7 @@ async function main() {
       next.helper_audit = { state: helperObservationResolved
         ? (state.helperAudit.state === 'not-applicable' ? 'not-applicable' : 'observed') : 'unknown',
         reason: helperObservationResolved && state.helperAudit.state === 'unknown' ? null : state.helperAudit.reason, checked_at: nowIso() };
-      if (!runDirIntact()) { process.exit(0); return; }
+      if (!runDirIntact()) { await exitMonitor(0); return; }
       // Even removal after this check cannot authorize creating the parent again.
       guard(() => writeRun(cfg, next, { createDir: false }), 'final-write');
       appendMonitorEvent(cfg, ID, { type: 'final', status: next.status, reason: next.reason });
@@ -398,7 +413,7 @@ async function main() {
         appendMonitorEvent(cfg, ID, { type: 'viewer-closed', pid: vPid, ...c });
       }
       guard(() => fs.unlinkSync(P.monitorAlive), 'monitor.alive-remove');
-      process.exit(0);
+      await exitMonitor(0);
       return;
     }
 
@@ -410,7 +425,7 @@ async function main() {
       // of the run directory used to RE-CREATE it (with only run.json in it), and the
       // "directory is gone" check above never fired again: a monitor leaked for an hour.
       if (!runDirIntact()) {
-        process.exit(0);
+        await exitMonitor(0);
         return;
       }
       guard(() => writeRun(cfg, next, { createDir: false }), 'poll-write');
@@ -485,7 +500,7 @@ function safeAdapter(name) {
   }
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   appendMonitorEvent(cfg, ID, { type: 'monitor-fatal', detail: String((e && e.stack) || e) });
-  process.exit(1);
+  await exitMonitor(1);
 });

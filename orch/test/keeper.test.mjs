@@ -23,6 +23,7 @@ import {
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { connectHello, probeFree } from '../src/lanepipe.mjs';
+import { readProcessTable } from '../src/procs.mjs';
 
 const KEEPER_SRC = path.resolve(fileURLToPath(new URL('../src/keeper.mjs', import.meta.url)));
 
@@ -61,14 +62,24 @@ async function launchHeld(c, holdSeconds = 25) {
 }
 
 test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bindable, status says why`, { timeout: 25 * 60 * 1000 }, async (t) => {
-  const c = makeCase('g4-keeperdeath');
+  const c = makeCase('g4-keeperdeath', { laneId: process.env.ORCH_G4_LANE_ID || undefined });
   t.after(() => c.cleanup());
 
   const dist = { rebindMs: [], workerGoneAt2s: 0, workerGoneAt10s: 0, reps: 0, refusedKills: 0 };
 
   for (let rep = 0; rep < KEEPER_REPS; rep++) {
     const { id, spawned, workerPid } = await launchHeld(c, 30);
-    assert.match(String(spawned.keeper_created_at), /^ms:\d+$/, 'the spawner must have captured the keeper identity');
+    assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'the spawner must have captured the keeper identity');
+
+    // On Linux the keeper starts a supervisor process which must in turn start the
+    // actual CLI inside its session. Checking only the supervisor pid can pass while
+    // the lane is held by a keeper whose worker never started.
+    const supervisedWorker = process.platform === 'linux'
+      ? await waitFor(async () => {
+        const table = await readProcessTable({ deadlineMs: 3000 });
+        return table?.find((p) => p.ppid === workerPid && p.pgrp === workerPid && p.session === workerPid) || null;
+      }, { timeoutMs: 5000, what: 'the Linux supervisor to start the CLI in its verified process group' })
+      : null;
 
     // The worker's OS creation time must be knowable WITHOUT a monitor (A2 / agy H4).
     const workerCreatedAt = await waitFor(
@@ -99,12 +110,19 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
       }
     })();
     await new Promise((r) => setTimeout(r, 2000));
-    const at2 = await identityOf(workerPid, workerCreatedAt);
+    const mainWorkerPid = supervisedWorker?.pid ?? workerPid;
+    const mainWorkerCreatedAt = supervisedWorker?.createdAt ?? workerCreatedAt;
+    const at2 = await identityOf(mainWorkerPid, mainWorkerCreatedAt);
+    const supervisorAt2 = process.platform === 'linux' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
     if (at2 === 'gone' || at2 === 'mismatch') dist.workerGoneAt2s++;
     await new Promise((r) => setTimeout(r, 8000));
-    const at10 = await identityOf(workerPid, workerCreatedAt);
+    const at10 = await identityOf(mainWorkerPid, mainWorkerCreatedAt);
+    const supervisorAt10 = process.platform === 'linux' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
     if (at10 === 'gone' || at10 === 'mismatch') dist.workerGoneAt10s++;
     assert.ok(at10 === 'gone' || at10 === 'mismatch', `rep ${rep}: the MAIN worker survived the keeper at t+10s (${at10})`);
+    if (process.platform === 'linux') {
+      assert.ok(supervisorAt10 === 'gone' || supervisorAt10 === 'mismatch', `rep ${rep}: the worker supervisor survived the keeper at t+10s (${supervisorAt10})`);
+    }
 
     // The pipe must have become bindable, and quickly (X3 D/E and K3 measured ~0.2 s).
     await pipeSampler;
@@ -267,7 +285,9 @@ test('G8: an async error event with no prior spawn event is treated exactly like
 async function runKeeperDirect(c, label, mutate) {
   const runDir = path.join(c.stateRoot, 'runs', `direct-${label}`);
   fs.mkdirSync(runDir, { recursive: true });
-  const pipe = `\\\\.\\pipe\\orch-lane-${c.laneId}-d${label}`;
+  const pipe = process.platform === 'linux'
+    ? c.lanePipe.replace(/-local\.sock$/, `-d${label}.sock`)
+    : `\\\\.\\pipe\\orch-lane-${c.laneId}-d${label}`;
   fs.writeFileSync(path.join(runDir, 'prompt.txt'), 'x');
   fs.writeFileSync(path.join(runDir, 'stdout.log'), '');
   fs.writeFileSync(path.join(runDir, 'stderr.log'), '');
@@ -322,7 +342,7 @@ async function runKeeperDirect(c, label, mutate) {
   });
 }
 
-test('G8: a non-.exe entrypoint is REFUSED before anything is spawned (X1 cmdwrap)', { timeout: 120000 }, async (t) => {
+test('G8: Windows shell entrypoints are refused; Linux launches a direct executable script', { timeout: 120000 }, async (t) => {
   const c = makeCase('g8-cmd');
   t.after(() => c.cleanup());
   const shim = path.join(c.base, 'worker.cmd');
@@ -332,11 +352,21 @@ test('G8: a non-.exe entrypoint is REFUSED before anything is spawned (X1 cmdwra
   const id = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
   const blocked = keeperLines(c.stateRoot, id).find((l) => l.blocked);
   assert.equal(blocked.blocked, 'no-exe-entrypoint');
-  // cmd.exe itself is refused by name for the same reason.
-  const r2 = await orch(runArgs(c), { ...c.env, ORCH_FAKE_EXE: 'C:\\Windows\\System32\\cmd.exe' });
-  assert.notEqual(r2.code, 0);
-  const id2 = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
-  assert.equal(keeperLines(c.stateRoot, id2).find((l) => l.blocked).blocked, 'no-exe-entrypoint');
+  if (process.platform === 'win32') {
+    // cmd.exe itself is refused by name for the same reason.
+    const r2 = await orch(runArgs(c), { ...c.env, ORCH_FAKE_EXE: 'C:\\Windows\\System32\\cmd.exe' });
+    assert.notEqual(r2.code, 0);
+    const id2 = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
+    assert.equal(keeperLines(c.stateRoot, id2).find((l) => l.blocked).blocked, 'no-exe-entrypoint');
+  } else {
+    const direct = path.join(c.base, 'worker.sh');
+    fs.writeFileSync(direct, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(direct, 0o755);
+    const r2 = await orch(runArgs(c), { ...c.env, ORCH_FAKE_EXE: direct });
+    assert.equal(r2.code, 0, `${r2.stdout}${r2.stderr}`);
+    const id2 = idFrom(r2.stdout);
+    assert.ok(keeperLines(c.stateRoot, id2).some((l) => l.event === 'spawned'), 'a directly executable Linux script must launch');
+  }
 });
 
 test('agy M2: a worker that exits INSTANTLY is still reaped and recorded (no lost exit event)', { timeout: 120000 }, async (t) => {

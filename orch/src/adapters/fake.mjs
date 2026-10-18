@@ -1,6 +1,7 @@
 // Test-only adapter. Runs `node <ORCH_FAKE_WORKER> <flags...>` so the automated
 // tests can exercise the job core (stdin fidelity, lanes, cancel, stalls,
 // reconciliation) without calling a model. Never used by a real dispatch.
+import path from 'node:path';
 import { OrchError } from '../errors.mjs';
 
 export default {
@@ -14,7 +15,7 @@ export default {
   directoryEvidence: process.env.ORCH_FAKE_DIR_EVIDENCE === '1',
   /** Opt-in (slice 2): a per-run heartbeat log, like agy's --log-file, so the monitor's
    *  heartbeat-file path and its keepalive filter can be exercised end to end. */
-  heartbeatFile: process.env.ORCH_FAKE_HEARTBEAT === '1' ? (runDir) => `${runDir}\\fake-heartbeat.log` : undefined,
+  heartbeatFile: process.env.ORCH_FAKE_HEARTBEAT === '1' ? (runDir) => path.join(runDir, 'fake-heartbeat.log') : undefined,
   isKeepalive: (line) => /KEEPALIVE/.test(String(line)),
 
   canonicalModel(model) {

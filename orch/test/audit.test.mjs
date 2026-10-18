@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
@@ -40,7 +41,7 @@ const readCode = (f) => codeOnly(read(f));
 
 /* ------------------------------------------------------------- G7 -------- */
 
-test('G7: kill helpers are defined only in procs and reached only by cancel, viewer and owned telemetry cleanup', () => {
+test('G7: kill helpers are private; defined only in procs; Linux supervision may only tear down its verified session', () => {
   const offenders = [];
   for (const f of sourceFiles()) {
     if (f === 'procs.mjs') continue;
@@ -49,8 +50,15 @@ test('G7: kill helpers are defined only in procs and reached only by cancel, vie
     if (/\bkillChecked\b|\btreeKillChecked\b/.test(text) && !['commands.mjs', 'viewer.mjs', 'usage-collector.mjs'].includes(f)) {
       offenders.push(`${f}: reaches a kill helper`);
     }
-    // process.kill() as a signal-sender is forbidden outside procs.mjs entirely.
-    if (/process\.kill\s*\(/.test(text)) offenders.push(`${f}: calls process.kill`);
+    if (f === 'linux-worker-supervisor.mjs') {
+      assert.equal((text.match(/process\.kill\s*\(/g) || []).length, 1, 'Linux supervisor has exactly one signal site');
+      assert.ok(text.indexOf('self.pgrp !== process.pid') < text.indexOf("process.kill(-process.pid, 'SIGKILL')"), 'session-leader proof must precede group signaling');
+      assert.match(text, /self\.session !== process\.pid/, 'the supervisor must verify its isolated session');
+      assert.match(text, /current\.identity !== keeperStart/, 'keeper PID reuse must be rejected');
+      assert.match(text, /removeOwnPipe\(pipeIdentity\)/, 'only the verified socket inode may be unlinked');
+    } else if (/process\.kill\s*\(/.test(text)) {
+      offenders.push(`${f}: calls process.kill`);
+    }
   }
   // adapters must not be able to kill anything either
   for (const f of fs.readdirSync(path.join(SRC, 'adapters'))) {
@@ -180,12 +188,21 @@ test('TG: the keeper has no process.exit between the spawn and the keeper-exit l
   assert.equal((tail.match(/process\.exit\(/g) || []).length, 1, 'exactly one exit in the final teardown');
 });
 
-test('TG: server.close() happens only after the worker exit is observed (v3 H1)', () => {
+test('TG: server.close() is limited to pre-worker admission/identity failure and post-worker teardown (v3 H1)', () => {
   const src = readCode('keeper.mjs');
-  assert.equal((src.match(/server\.close\(/g) || []).length, 1);
-  const closeIdx = src.indexOf('server.close(');
+  assert.equal(src.split('server.close(').length - 1, 3);
+  const admissionCloseIdx = src.indexOf('server.close(');
+  const blockedStart = src.indexOf('function blockedExit('), blockedEnd = src.indexOf('let launch;');
+  assert.ok(admissionCloseIdx > blockedStart && admissionCloseIdx < blockedEnd, 'admission cleanup belongs only to the pre-worker failure helper');
+  assert.match(src.slice(blockedStart, blockedEnd), /process\.platform === 'linux' && server\?\.listening/);
+  const preWorkerCloseIdx = src.indexOf('server.close(', admissionCloseIdx + 1);
+  const spawnIdx = src.indexOf('child = spawn(');
+  assert.ok(preWorkerCloseIdx > src.indexOf('function onBound()') && preWorkerCloseIdx < spawnIdx);
+  assert.ok(src.slice(preWorkerCloseIdx, preWorkerCloseIdx + 180).includes('lane-socket-identity-unavailable'));
+  const closeIdx = src.lastIndexOf('server.close(');
   const exitLineIdx = src.indexOf("append(F.keeper, { event: 'worker-exit'");
   assert.ok(closeIdx > exitLineIdx, 'the lane must not be released before the worker exit is recorded');
+  assert.ok(!src.slice(src.indexOf('function phaseB('), src.indexOf('function closeFds(')).includes('server.close('), 'the worker-running path cannot close the lane');
   // agy L2: the process exit happens in the close callback, not on the next line.
   assert.match(src, /server\.close\(go\)/);
 });
@@ -248,7 +265,7 @@ test('T1: the prompt reaches the worker BYTE-EXACT from a file descriptor', { ti
 
 test('T1: the prompt is delivered as a FILE DESCRIPTOR, not written to a pipe', () => {
   const src = readCode('keeper.mjs');
-  assert.match(src, /stdio: \[fdIn, fdOut, fdErr\]/, 'all three streams must be file descriptors (K1)');
+  assert.match(src, /stdio: linux \? \[fdIn, fdOut, fdErr, 'pipe'\] : \[fdIn, fdOut, fdErr\]/, 'worker streams remain file descriptors; only the private status channel is a pipe');
   assert.ok(!/stdin\.write|stdin\.end/.test(src), 'the write-then-close stdin path is deleted');
 });
 
@@ -297,7 +314,10 @@ test('the run record carries every field an operator needs, and the launch block
   assert.equal(typeof rec.launch.exe, 'string');
   assert.ok(Array.isArray(rec.launch.args));
   assert.deepEqual(rec.launch.env_set, { PWD: c.work });
-  assert.equal(rec.launch.pipe_name, `\\\\.\\pipe\\orch-lane-${c.laneId}-${rec.lane}`);
+  const expectedPipe = process.platform === 'linux'
+    ? path.join('/tmp', `.orch-${process.getuid()}`, `lane-${rec.lane_id}-${rec.lane}.sock`)
+    : `\\\\.\\pipe\\orch-lane-${rec.lane_id}-${rec.lane}`;
+  assert.equal(rec.launch.pipe_name, expectedPipe);
   await waitForStatus(c.stateRoot, id, ['completed', 'failed'], { timeoutMs: 60000 });
 });
 

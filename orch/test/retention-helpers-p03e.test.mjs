@@ -14,11 +14,12 @@ import { readArchived } from '../src/archive.mjs';
 import { ownChildCreationTime } from '../src/procs.mjs';
 import { once } from 'node:events';
 
-const old='2026-01-01T00:00:00.000Z',pid=424242;
+const old='2026-01-01T00:00:00.000Z',pid=424242,boot='00000000-0000-4000-8000-000000000001';
+const recordedBirth=process.platform==='linux'?'linux:'+boot+':123:100':old;
 function fixture(t,name){
   const c=makeCase(name,{config:{retention:{mode:'manual',successDays:0,otherDays:0,maxMs:10000,metadata:{enabled:true,successDays:0,otherDays:0}}}});t.after(()=>c.cleanup());
   const id='20260101-000000-abc123',dir=path.join(c.stateRoot,'runs',id);fs.mkdirSync(dir,{recursive:true});
-  const rec={id,cli:'fake',lane:'cloud',status:'completed',exit_code:0,created_at:old,ended_at:old,dir:c.work,helper_audit:{state:'observed',checked_at:old},escaped_helpers:[{pid,created_at:old,ancestry:'verified',state:'alive',name:'fixture-helper'}]};
+  const rec={id,cli:'fake',lane:'cloud',status:'completed',exit_code:0,created_at:old,ended_at:old,dir:c.work,helper_audit:{state:'observed',checked_at:old},escaped_helpers:[{pid,created_at:recordedBirth,ancestry:'verified',state:'alive',name:'fixture-helper'}]};
   fs.writeFileSync(path.join(dir,'run.json'),JSON.stringify(rec));
   for(const [file,text] of Object.entries({'stdout.log':'fixture final answer\n','stderr.log':'','prompt.txt':'fixture handoff','events.monitor.ndjson':'{}\n','keeper.ndjson':[{event:'worker-exit',at:old,code:0},{event:'streams-closed',at:old},{event:'keeper-exit',at:old,write_failures:0}].map(v=>JSON.stringify(v)).join('\n')+'\n'}))fs.writeFileSync(path.join(dir,file),text);
   fs.writeFileSync(path.join(c.stateRoot,'ledger.jsonl'),JSON.stringify({run_id:id,disposition:'blocked',recorded_at:old})+'\n');
@@ -26,6 +27,19 @@ function fixture(t,name){
 }
 function processFixture(t){
   const original=cp.execFile,state={mode:'gone',queries:[],unexpected:[]};
+  if(process.platform==='linux'){
+    const read=fs.promises.readFile.bind(fs.promises),link=fs.promises.readlink.bind(fs.promises);
+    fs.promises.readlink=async(file,...args)=>String(file)==='/proc/self/ns/pid'?'pid:[123]':link(file,...args);
+    fs.promises.readFile=async(file,...args)=>{
+      if(String(file)==='/proc/sys/kernel/random/boot_id')return boot;
+      if(String(file)!=='/proc/'+pid+'/stat')return read(file,...args);
+      state.queries.push(String(file));
+      if(state.mode==='gone'||state.mode==='unknown')throw Object.assign(Error('fixture procfs result'),{code:state.mode==='gone'?'ENOENT':'EACCES'});
+      const ticks=state.mode==='missing-birth'?'':state.mode==='invalid-birth'?'broken':state.mode==='padded-birth'?'0100':state.mode==='mismatch'?'200':'100';
+      return (state.mode==='invalid-pid'?'broken':pid)+' (fixture-helper) '+['S','1','1','1',...Array(15).fill('0'),ticks].join(' ');
+    };
+    t.after(()=>{fs.promises.readFile=read;fs.promises.readlink=link;});return state;
+  }
   cp.execFile=/** @type {any} */((exe,args,opts,cb)=>{
     if(exe!=='powershell.exe'||!String(args.at(-1)).includes('Get-CimInstance Win32_Process')){state.unexpected.push(exe);return original(exe,args,opts,cb);}
     state.queries.push(String(args.at(-1)));const child=/** @type {any} */(new EventEmitter());child.kill=()=>true;
@@ -37,7 +51,7 @@ async function enroll(f){return maintain(f,{enroll:f.id,by:'fixture-owner',reaso
 
 for(const mode of ['gone','mismatch'])test(`P03e: ${mode} helper incarnation permits quiescence without rewriting original audit`,async t=>{
   const f=fixture(t,'p03e-'+mode),state=processFixture(t);state.mode=mode;const before=fs.readFileSync(path.join(f.dir,'run.json'));
-  assert.equal(await quiescent(f.cfg,f.rec,Date.now()+4000),null);assert.ok(state.queries.length);assert.match(state.queries[0],/ProcessId=424242/);assert.deepEqual(state.unexpected,[]);assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);assert.equal(f.rec.escaped_helpers[0].state,'alive');
+  assert.equal(await quiescent(f.cfg,f.rec,Date.now()+4000),null);assert.ok(state.queries.length);assert.match(state.queries[0],process.platform==='linux'?new RegExp('424242/stat$'):/ProcessId=424242/);assert.deepEqual(state.unexpected,[]);assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);assert.equal(f.rec.escaped_helpers[0].state,'alive');
 });
 for(const mode of ['match','unknown','missing-birth','invalid-birth','invalid-pid'])test(`P03e: ${mode} helper protects transcripts and worktree cleanup`,async t=>{
   const f=fixture(t,'p03e-protect-'+mode),state=processFixture(t);state.mode=mode;
@@ -56,7 +70,7 @@ test('P03e: spent maintenance budget defers helper reads',async t=>{
 test('P03e: padded epoch strings cannot fabricate PID reuse',async t=>{
   const f=fixture(t,'p03e-padded'),state=processFixture(t);
   for(const variant of ['recorded','current']){
-    const rec={...f.rec,escaped_helpers:[{...f.rec.escaped_helpers[0],created_at:variant==='recorded'?'ms:0'+Date.parse(old):old}]};state.mode=variant==='current'?'padded-birth':'match';fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(rec));
+    const rec={...f.rec,escaped_helpers:[{...f.rec.escaped_helpers[0],created_at:variant==='recorded'?'ms:0'+Date.parse(old):recordedBirth}]};state.mode=variant==='current'?'padded-birth':'match';fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(rec));
     assert.match(await quiescent(f.cfg,rec,Date.now()+4000),/helper/i);assert.match(await dependentRunBlock(f.cfg,f.resource),/helper/i);
   }
 });
@@ -100,7 +114,12 @@ test('P03e: an owned real helper stays protected until its exit is actually read
   child.send('stop');await closed;
   // An exited helper is disposable only when the bounded OS query can establish it.
   // Record the real transport result: cold CIM startup may exceed its one-second cap.
-  const queries=[],original=cp.execFile;
+  const queries=[],original=cp.execFile,originalRead=fs.promises.readFile.bind(fs.promises);
+  if(process.platform==='linux')fs.promises.readFile=async(file,...args)=>{
+    if(String(file)!=='/proc/'+child.pid+'/stat')return originalRead(file,...args);
+    try{const raw=await originalRead(file,...args);queries.push({unreadable:!String(raw).includes(')'),pidPresent:true});return raw;}
+    catch(error){queries.push({unreadable:!['ENOENT','ESRCH'].includes(error.code),pidPresent:false});throw error;}
+  };
   cp.execFile=/** @type {any} */((exe,args,opts,cb)=>original(exe,args,opts,(error,stdout,stderr)=>{
     if(exe==='powershell.exe'&&String(args.at(-1)).includes(`ProcessId=${child.pid}`)){
       let rows;try{rows=JSON.parse(String(stdout||'null'));}catch{rows=undefined;}
@@ -109,7 +128,7 @@ test('P03e: an owned real helper stays protected until its exit is actually read
     }
     cb(error,stdout,stderr);
   }));syncBuiltinESMExports();
-  t.after(()=>{cp.execFile=original;syncBuiltinESMExports();});
+  t.after(()=>{cp.execFile=original;fs.promises.readFile=originalRead;syncBuiltinESMExports();});
   const result=await quiescent(f.cfg,f.rec,Date.now()+4000);
   assert.ok(queries.length,'the real helper query must execute');
   if(result===null)assert.ok(queries.some(q=>!q.unreadable&&!q.pidPresent),'quiescence requires an actual readable absent PID');

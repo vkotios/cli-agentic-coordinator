@@ -68,6 +68,9 @@ setTimeout(() => {
   process.exit(97);
 }, selfDestructS * 1000).unref();
 
+// Explicit fixture-owned launch receipt; never infer the worker from a PPID neighbor.
+const spawnReceipt = opt('--spawn-receipt', null);
+if (typeof spawnReceipt === 'string') fs.writeFileSync(spawnReceipt, JSON.stringify({ parent_pid: process.ppid, worker_pid: process.pid }));
 let markerFile = null;
 if (has('--alive-marker')) {
   markerFile = path.join(process.cwd(), `alive-${process.pid}`);

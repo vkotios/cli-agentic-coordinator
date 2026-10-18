@@ -10,7 +10,78 @@
 // second server instance can answer on the same name. A hello therefore corroborates,
 // and never authorises.
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { readProcessTable, verifyIdentity } from './procs.mjs';
+import { creationPoint } from './process-time.mjs';
+
+/** Keep Linux socket endpoints private to this account, matching named-pipe user scope. */
+function prepareLinuxSocketDir(name) {
+  if (process.platform !== 'linux') return;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid)) throw new Error('cannot determine the Linux uid for the lane socket');
+  // Lane exclusion must not change with inherited TMPDIR/TMP/TEMP settings.
+  const expected = path.join('/tmp', `.orch-${uid}`);
+  if (path.dirname(name) !== expected || !path.isAbsolute(name)) throw new Error('unsafe Linux lane socket path');
+  try {
+    fs.mkdirSync(expected, { mode: 0o700 });
+  } catch (e) {
+    if (e?.code !== 'EEXIST') throw e;
+  }
+  const st = fs.lstatSync(expected);
+  if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== uid || (st.mode & 0o077) !== 0) {
+    throw new Error(`unsafe Linux lane socket directory: ${expected}`);
+  }
+}
+
+/** A receipt binds a socket inode to the native incarnation that actually bound it. */
+function recordLinuxSocket(name) {
+  const socket = fs.lstatSync(name, { bigint: true });
+  const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+  const namespace = /^pid:\[([1-9]\d*)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'));
+  const raw = fs.readFileSync('/proc/self/stat', 'utf8'), ticks = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
+  if (!namespace || !/^\d+$/.test(ticks)) throw new Error('socket owner identity unavailable');
+  const receipt = { token: crypto.randomUUID(), pid: process.pid, createdAt: `linux:${boot}:${namespace[1]}:${ticks}`,
+    netns: fs.readlinkSync('/proc/self/ns/net'), dev: String(socket.dev), ino: String(socket.ino), uid: String(socket.uid) };
+  const temporary = name + '.owner-' + receipt.token;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(receipt), { flag: 'wx', mode: 0o600 });
+    fs.renameSync(temporary, name + '.owner.json');
+  } finally { try { fs.unlinkSync(temporary); } catch { /* already published */ } }
+  return receipt;
+}
+
+function forgetLinuxSocket(name, receipt) {
+  try {
+    if (JSON.parse(fs.readFileSync(name + '.owner.json', 'utf8')).token === receipt.token) fs.unlinkSync(name + '.owner.json');
+  } catch { /* a successor or uncertain receipt is never removed */ }
+}
+
+/** Explicit recovery only: a refused connection alone never authorizes unlinking. */
+export async function recoverLinuxSocket(name, { readTable = readProcessTable } = {}) {
+  if (process.platform !== 'linux') return { state: 'not-applicable', removed: [] };
+  try {
+    prepareLinuxSocketDir(name);
+    const socket = fs.lstatSync(name, { bigint: true }), ownerFile = name + '.owner.json', ownerStat = fs.lstatSync(ownerFile);
+    if (!socket.isSocket() || socket.uid !== BigInt(process.getuid()) || !ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.uid !== process.getuid() || ownerStat.size > 4096) return { state: 'unknown', removed: [] };
+    const raw = fs.readFileSync(ownerFile, 'utf8'), owner = JSON.parse(raw);
+    if (creationPoint(owner.createdAt)?.kind !== 'linux') return { state: 'unknown', removed: [] };
+    if (owner.uid !== String(socket.uid) || owner.dev !== String(socket.dev) || owner.ino !== String(socket.ino) || owner.netns !== fs.readlinkSync('/proc/self/ns/net')) return { state: 'unknown', removed: [] };
+    const table = await readTable({ deadlineMs: 3000, pids: [owner.pid] }), verdict = verifyIdentity(owner.pid, owner.createdAt, table).verdict;
+    if (!['gone', 'mismatch'].includes(verdict)) return { state: verdict === 'match' ? 'held' : 'unknown', removed: [] };
+    const current = fs.lstatSync(name, { bigint: true });
+    if (!current.isSocket() || current.uid !== socket.uid || current.dev !== socket.dev || current.ino !== socket.ino || fs.readFileSync(ownerFile, 'utf8') !== raw) return { state: 'unknown', removed: [] };
+    fs.unlinkSync(name);
+    forgetLinuxSocket(name, owner);
+    return { state: 'recovered', removed: [name] };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      try { fs.lstatSync(name); } catch (missing) { if (missing?.code === 'ENOENT') return { state: 'absent', removed: [] }; }
+    }
+    return { state: 'unknown', removed: [] };
+  }
+}
 
 /**
  * One atomic bind attempt.
@@ -18,6 +89,12 @@ import { performance } from 'node:perf_hooks';
  */
 export function tryListen(name) {
   return new Promise((resolve) => {
+    try {
+      prepareLinuxSocketDir(name);
+    } catch (e) {
+      resolve({ ok: false, code: e?.code || 'UNSAFE-SOCKET-PATH' });
+      return;
+    }
     let settled = false;
     const server = net.createServer();
     server.on('error', (/** @type {any} */ e) => {
@@ -33,6 +110,15 @@ export function tryListen(name) {
     server.listen(name, () => {
       if (settled) return;
       settled = true;
+      if (process.platform === 'linux') {
+        try {
+          const receipt = recordLinuxSocket(name);
+          server.once('close', () => forgetLinuxSocket(name, receipt));
+        } catch {
+          server.close(() => resolve({ ok: false, code: 'SOCKET-OWNER-UNAVAILABLE' }));
+          return;
+        }
+      }
       resolve({ ok: true, server });
     });
   });
@@ -50,7 +136,7 @@ export async function probeFree(name) {
  * Connect once, read one line, hang up. Never binds, never writes, never waits past
  * the deadline.
  *
- * @returns {Promise<{state:'free'|'held'|'held-unresponsive', code:string|null,
+ * @returns {Promise<{state:'free'|'held'|'held-unresponsive'|'unknown', code:string|null,
  *                    hello:string|null, ms:number}>}
  */
 export function connectHello(name, { deadlineMs = 2000 } = {}) {

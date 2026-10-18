@@ -52,12 +52,10 @@ escalates.
 
 ## Requirements
 
-- **Windows 10 or 11.** macOS and Linux are not supported yet: every `orch` command stops with a
-  "Windows only for now" message on other platforms.
+- **Windows 10 or 11, or Linux with procfs and `getconf CLK_TCK`.** Linux process evidence must be readable; missing or denied metadata stays unknown and does not authorize a kill or cleanup. macOS and other platforms are not supported yet; `orch` fails fast with a clear platform message there.
 - **Node.js 22 or newer** (developed and tested on Node 24).
 - **git** on `PATH`.
-- Windows PowerShell 5.1 (ships with Windows). **Windows Terminal** (`wt.exe`) is optional: when present,
-  each run gets a read-only log window.
+- On Windows, Windows PowerShell 5.1 ships with Windows. **Windows Terminal** (`wt.exe`) is optional; when present, each run gets a read-only log window. On Linux, use `orch log <run-id>` to read captured output; no terminal viewer is opened automatically.
 - An orchestrator host: **Claude Code**, **Codex**, **OpenCode** or **Vibe**, with the native
   instructions and tools configured. Qualify the controller lifecycle on your installed harness,
   model and profile; instruction adoption and claim support alone do not establish readiness.
@@ -190,7 +188,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 |---|---|---|---|
 | state root (runs, claims, reviews records, ledger) | `stateRoot` | `ORCH_STATE_ROOT` (flag `--state-root`) | `orch/.state` |
 | lane directory (advisory lane holder files) | `laneRoot` | `ORCH_LANE_HOME` | `orch/.lane` |
-| review root (throwaway review worktrees) | `reviewRoot` | `ORCH_REVIEW_ROOT` (flag `--review-root`) | `%LOCALAPPDATA%\cli-agentic-coordinator\reviews` |
+| review root (throwaway review worktrees) | `reviewRoot` | `ORCH_REVIEW_ROOT` (flag `--review-root`) | Windows: `%LOCALAPPDATA%\cli-agentic-coordinator\reviews`; Linux: `$XDG_DATA_HOME/cli-agentic-coordinator/reviews`, else `~/.local/share/cli-agentic-coordinator/reviews` |
 | roster | `roster` | `ORCH_ROSTER` (flag `--roster`) | `orch/roster.json` |
 | ledger | `ledger` | `ORCH_LEDGER` (flag `--ledger`) | `<state root>/ledger.jsonl` |
 | subscription telemetry configuration | `usageConfig` | `ORCH_USAGE_CONFIG` (`usage --config`) | disabled |
@@ -201,19 +199,18 @@ resolve against the directory the file is in. An invalid file is an error, never
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE` | found on `PATH` / the npm global prefix at run time |
-| Windows Terminal / PowerShell for the log window | `exe.wt`, `exe.powershell` | `ORCH_WT_EXE`, `ORCH_PS_EXE` | `wt.exe`, `powershell.exe` |
-| codex session rollouts (model attribution) | `codexSessionsDir` | `ORCH_CODEX_SESSIONS` | `$CODEX_HOME\sessions`, else `%USERPROFILE%\.codex\sessions` |
-| vibe logs | `vibeLogDir` | `ORCH_VIBE_LOG_DIR` | `%USERPROFILE%\.vibe\logs` |
+| Windows Terminal / PowerShell for the log window (Windows only) | `exe.wt`, `exe.powershell` | `ORCH_WT_EXE`, `ORCH_PS_EXE` | `wt.exe`, `powershell.exe` |
+| codex session rollouts (model attribution) | `codexSessionsDir` | `ORCH_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else Windows: `%USERPROFILE%\.codex\sessions`; Linux: `~/.codex/sessions` |
+| vibe logs | `vibeLogDir` | `ORCH_VIBE_LOG_DIR` | `~/.vibe/logs` |
 | queue driver worker model (only `orch/tools/queue-driver.mjs`, see `docs/QUEUE_DRIVER.md`) | `queueDriver.model` | `ORCH_QUEUE_MODEL` (flag `--model`) | none: required by the queue driver |
-| queue driver handoff files | `queueDriver.handoffDir` | `ORCH_QUEUE_HANDOFF_DIR` | `<state root>\queue-handoffs` |
+| queue driver handoff files | `queueDriver.handoffDir` | `ORCH_QUEUE_HANDOFF_DIR` | `<state root>/queue-handoffs` |
 
 Notes:
 
 - The review root must be a neutral place: orch refuses one under the temp directory, a path that looks
   like a scratch or temp folder, or one inside the repository under review.
-- The lane itself is a per-user named pipe, derived from your account (not from any setting), so the
-  exclusion is machine-wide whatever the lane directory. Use the same `laneRoot` for every orch invocation
-  anyway, so `orch wait-lane` and `orch gc` see the holder file.
+- The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under `/tmp/.orch-<uid>` on Linux. Its identifier is derived from your account; inherited temporary-directory settings cannot create another lane. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
+- On Linux, `orch gc` can clear a recorded orphan lane socket, and `orch monitor <run-id>` can recover a recorded orphan monitor socket. Recovery requires the same socket inode, a native owner identity proved gone, and a matching network namespace; a refused connection alone is insufficient. Missing, unreadable or changed receipts remain protected. A crash before the receipt is published, or a legacy socket without one, requires operator inspection rather than automatic removal. Run records and other historical evidence are retained.
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
 
@@ -428,8 +425,7 @@ It removes neither worktrees nor provider session caches and installs no schedul
 
 ## Limitations
 
-- **Windows only for now.** Named pipes, `taskkill`, the process-table snapshots and the PowerShell log
-  viewer are Windows mechanisms.
+- **Platform support.** `orch` supports Windows and Linux. Linux uses private per-user Unix-domain sockets and `/proc` identities bound to the boot, PID namespace and process start tick. Older bare-tick records remain retained and unqualified. Workers run in dedicated sessions so cancellation targets the verified worker's process group; descendants that leave that group are outside its scope. A supervisor refuses uncertain keeper identity at startup and does not treat a later unreadable keeper as dead. The visible Windows Terminal log window is Windows-only; on Linux use `orch log <run-id>`. macOS is not supported yet.
 - **The guard reads command text; it is not a sandbox.** It stops the direct forms and the common wrappers
   of a worker launch or a destructive command, but not a launch from a script file, an alias or function,
   or a variable set in an earlier command. It prevents accidents.

@@ -72,6 +72,13 @@ test('normalizeCreationTime accepts the CIM /Date(n)/ form, ISO strings and numb
   assert.equal(normalizeCreationTime(null), null);
 });
 
+test('Linux legacy bare start-time ticks stay retained and unqualified', () => {
+  const table = [{ pid: 123, ppid: 1, name: 'fixture', createdAt: 'ticks:123456' }];
+  assert.equal(normalizeCreationTime('ticks:123456'), 'ticks:123456');
+  assert.equal(verifyIdentity(123, 'ticks:123456', table).verdict, 'unknown');
+  assert.equal(verifyIdentity(123, 'ticks:123457', table).verdict, 'unknown');
+});
+
 test('descendantsOf walks a snapshot without touching the OS', () => {
   const table = [
     { pid: 1, ppid: 0, name: 'root', createdAt: null },
@@ -123,7 +130,8 @@ test('r2-4: the lane pipe and the lane directory come from ONE identifier, never
   delete process.env.ORCH_LANE_ID;
   const s = laneScope('local');
   assert.equal(s.laneId, userLaneIdentifier());
-  assert.match(s.pipeName, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
+  if (process.platform === 'linux') assert.match(path.basename(s.pipeName), /^lane-[0-9a-f]{12}-local\.sock$/);
+  else assert.match(s.pipeName, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
   assert.equal(s.laneDir, path.join(laneHome(), `${s.laneId}-local`));
   // Not inside the state root in effect (whatever ORCH_STATE_ROOT / the config say).
   const rel = path.relative(resolveStateRoot(), s.laneDir);
@@ -144,7 +152,13 @@ test('local and cloud are different lanes; the override is sanitised', () => {
   const c = laneScope('cloud');
   assert.notEqual(l.pipeName, c.pipeName);
   assert.equal(l.laneId, 'test..weird'.replace(/[^A-Za-z0-9_-]/g, ''));
-  assert.ok(!l.pipeName.includes('/'));
+  if (process.platform === 'linux') {
+    assert.equal(path.basename(l.pipeName), `lane-${l.laneId}-local.sock`);
+    assert.equal(path.basename(c.pipeName), `lane-${c.laneId}-cloud.sock`);
+    assert.equal(path.dirname(l.pipeName), path.dirname(c.pipeName));
+  } else {
+    assert.ok(!l.pipeName.includes('/'));
+  }
   if (before === undefined) delete process.env.ORCH_LANE_ID;
   else process.env.ORCH_LANE_ID = before;
 });
@@ -340,7 +354,8 @@ test('T-v2-7: path identity over case differences, measured not assumed', () => 
   // Record what realpathSync.native() actually does on this filesystem. Both outcomes
   // are acceptable to the design; what is NOT acceptable is a silent assumption.
   console.log(`measured: realpath case-normalisation on this filesystem -> "${upper}" vs "${WT_REAL}" = ${verdict}`);
-  assert.ok(['match', 'mismatch'].includes(verdict));
+  if (process.platform === 'linux') assert.equal(verdict, 'unresolved');
+  else assert.ok(['match', 'mismatch'].includes(verdict));
 });
 
 test('parseSessionLine requires the FULL line shape; parseBootstrapLine is informational', () => {

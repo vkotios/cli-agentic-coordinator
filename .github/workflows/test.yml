@@ -17,8 +17,11 @@ permissions:
 
 jobs:
   test:
-    # Windows only for now: orch relies on named pipes, process-tree termination and PowerShell.
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
       run:

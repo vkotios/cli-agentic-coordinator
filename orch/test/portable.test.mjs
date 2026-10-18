@@ -60,26 +60,26 @@ function runNode(args, env) {
 
 /* ------------------------------------------------------------ platform -- */
 
-test('P1: the platform guard refuses every non-Windows platform with a clear message', () => {
+test('P1: the platform guard supports Windows and Linux, and clearly refuses unsupported platforms', () => {
   assert.doesNotThrow(() => assertSupportedPlatform('win32'));
-  for (const p of ['linux', 'darwin', 'freebsd']) {
-    assert.throws(() => assertSupportedPlatform(p), (/** @type {any} */ e) => e.code === 'unsupported-platform' && /Windows only for now/.test(e.message) && e.message.includes(p));
+  assert.doesNotThrow(() => assertSupportedPlatform('linux'));
+  for (const p of ['darwin', 'freebsd']) {
+    assert.throws(() => assertSupportedPlatform(p), (/** @type {any} */ e) => e.code === 'unsupported-platform' && /not supported yet/.test(e.message) && e.message.includes(p));
   }
 });
 
-test('P1: on a simulated non-win32 platform, orch --help / adopt / mcp stop before doing anything (exit 2)', { timeout: 120000 }, async () => {
+test('P1: unsupported platforms fail closed while simulated Linux can run the CLI', { timeout: 120000 }, async () => {
   const pre = pathToFileURL(FAKE_PLATFORM).href;
-  for (const [platform, args] of /** @type {[string, string[]][]} */ ([['linux', ['--help']], ['darwin', ['adopt', '--repo', '.', '--dry-run']], ['linux', ['mcp']], ['darwin', ['status', '--all']]])) {
-    const r = await runNode(['--import', pre, ORCH_BIN, ...args], { ...process.env, ORCH_FAKE_PLATFORM: platform });
-    assert.equal(r.code, 2, `${platform} ${args.join(' ')}: ${r.stderr}`);
-    assert.match(r.stderr, /Windows only for now/);
-    assert.ok(r.stderr.includes(`this platform: ${platform}`), r.stderr);
+  for (const args of [['--help'], ['adopt', '--repo', '.', '--dry-run'], ['mcp'], ['status', '--all']]) {
+    const r = await runNode(['--import', pre, ORCH_BIN, ...args], { ...process.env, ORCH_FAKE_PLATFORM: 'darwin' });
+    assert.equal(r.code, 2, `${args.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, /supports Windows and Linux/);
+    assert.ok(r.stderr.includes('this platform: darwin'), r.stderr);
     assert.equal(r.stdout, '', 'nothing is printed on stdout');
   }
-  // and on this (Windows) machine the same entry point works
-  const ok = await runNode([ORCH_BIN, '--help'], process.env);
-  assert.equal(ok.code, 0, ok.stderr);
-  assert.match(ok.stdout, /orch run --cli/);
+  const linux = await runNode(['--import', pre, ORCH_BIN, '--help'], { ...process.env, ORCH_FAKE_PLATFORM: 'linux' });
+  assert.equal(linux.code, 0, linux.stderr);
+  assert.match(linux.stdout, /orch run --cli/);
 });
 
 /* -------------------------------------------------------- configuration -- */
@@ -140,9 +140,18 @@ test('P2: the default review root is per-user and neutral (not temp, not a repo)
   assert.ok(root.toLowerCase().startsWith(path.resolve(process.env.LOCALAPPDATA || '').toLowerCase()) || !process.env.LOCALAPPDATA, root);
   assert.match(root, /cli-agentic-coordinator[\\/]reviews$/);
   assert.doesNotThrow(() => assertNeutralRoot(root, [KIT]));
-  await withEnv({ LOCALAPPDATA: undefined }, () => {
-    assert.equal(defaultReviewRoot(), path.join(os.userInfo().homedir, 'AppData', 'Local', 'cli-agentic-coordinator', 'reviews'));
+  await withEnv({ LOCALAPPDATA: undefined, XDG_DATA_HOME: undefined }, () => {
+    const dataHome = process.platform === 'win32'
+      ? path.join(os.userInfo().homedir, 'AppData', 'Local')
+      : path.join(os.homedir(), '.local', 'share');
+    assert.equal(defaultReviewRoot(), path.join(dataHome, 'cli-agentic-coordinator', 'reviews'));
   });
+  if (process.platform !== 'win32') {
+    const xdg = path.join(os.tmpdir(), 'orch-xdg-test');
+    await withEnv({ LOCALAPPDATA: undefined, XDG_DATA_HOME: xdg }, () => {
+      assert.equal(defaultReviewRoot(), path.join(xdg, 'cli-agentic-coordinator', 'reviews'));
+    });
+  }
 });
 
 /* -------------------------------------------------------------- roster -- */
@@ -202,7 +211,7 @@ test('P3: requires_permission comes from the roster, for every CLI; no roster bl
 
 /* ------------------------------------------------------- CLI discovery -- */
 
-test('P4: opencode.exe is found behind the npm shim on PATH and in the npm prefix, never as the .cmd shim', async (t) => {
+test('P4: opencode.exe is found behind the npm shim on PATH and in the npm prefix, never as the .cmd shim', { skip: process.platform !== 'win32' }, async (t) => {
   const d = tmpDir(t, 'exe');
   const prefix = path.join(d, 'npm prefix');
   const real = path.join(prefix, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
@@ -238,7 +247,7 @@ test('P4: opencode.exe is found behind the npm shim on PATH and in the npm prefi
   });
 });
 
-test('P4: codex / agy / vibe are found on PATH at run time; a missing CLI is a clear error', async (t) => {
+test('P4: codex / agy / vibe are found on PATH at run time; a missing CLI is a clear error', { skip: process.platform !== 'win32' }, async (t) => {
   const d = tmpDir(t, 'exe2');
   const bin = path.join(d, 'bin dir');
   fs.mkdirSync(bin);

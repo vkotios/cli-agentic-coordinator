@@ -121,7 +121,7 @@ test('G5: PID-REUSE simulation -> no kill at all, `unconfirmed`, and the worker 
   const keeperFile = path.join(c.stateRoot, 'runs', id, 'keeper.ndjson');
   fs.appendFileSync(
     keeperFile,
-    JSON.stringify({ event: 'worker-identity', worker_pid: workerPid, worker_created_at: 'ms:1', at: new Date().toISOString() }) + '\n',
+    JSON.stringify({ event: 'worker-identity', worker_pid: workerPid, worker_created_at: workerCreatedAt.replace(/:\d+$/, ':1'), at: new Date().toISOString() }) + '\n',
   );
 
   const res = await orch(['cancel', id, '--json'], c.env);
@@ -193,10 +193,15 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
     }
     c.cleanup();
   });
-  const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild']);
+  const spawnReceipt = path.join(c.base, 'worker-spawn.json');
+  const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild', '--flag', '--spawn-receipt', '--flag', spawnReceipt]);
+  const fixture = await waitFor(() => { try { const r=JSON.parse(fs.readFileSync(spawnReceipt,'utf8'));return Number.isSafeInteger(r.worker_pid)&&r.worker_pid>0&&Number.isSafeInteger(r.parent_pid)&&r.parent_pid>0?r:null; } catch { return null; } }, {timeoutMs:5000,what:'the explicit fake worker launch receipt'});
+  const fakePid = fixture.worker_pid;
+  if (process.platform === 'linux') assert.equal(fixture.parent_pid, workerPid, 'the fixture must be the recorded supervisor\'s own child');
+  else assert.equal(fakePid, workerPid, 'the fixture must be the directly recorded worker');
   // Require the fixture's own spawn receipts, not every PPID neighbour (which also
   // includes OS console helpers and can refer to an older process incarnation).
-  const childPid = await waitFor(() => childReceiptPid(c.work, workerPid), { timeoutMs: 5000, what: 'the fake worker child spawn receipt' });
+  const childPid = await waitFor(() => childReceiptPid(c.work, fakePid), { timeoutMs: 5000, what: 'the fake worker child spawn receipt' });
   const grandchildPid = await waitFor(() => childReceiptPid(c.work, childPid), { timeoutMs: 5000, what: 'the fake worker grandchild spawn receipt' });
   const full = await readProcessTable({ deadlineMs: 6000 });
   const observed = observeDescendants(workerPid, workerCreatedAt, full);
@@ -207,14 +212,19 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
     return entry;
   });
   for (const d of before) strays.push({ pid: d.pid, createdAt: d.createdAt });
-  assert.equal(before[0].ppid, workerPid);
+  if (process.platform === 'linux') {
+    const launched = observed.candidates.find(p => p.pid === fakePid && p.ancestry === 'verified');
+    assert.ok(launched, 'the fixture launch receipt also needs verified native ancestry');
+    assert.equal(launched.ppid, workerPid);
+  }
+  assert.equal(before[0].ppid, fakePid);
   assert.equal(before[1].ppid, childPid);
   fixtureTreeVerified = true;
 
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
   assert.equal(out.cancel_state, 'cancelled', res.stdout);
-  assert.match(String(out.note), /tree kill also ends descendants/, 'the accepted /T conflict must be stated in the output');
+  assert.match(String(out.note), process.platform === 'linux' ? /verified worker process group/ : /tree kill also ends descendants/, 'the platform-specific cancellation scope must be stated in the output');
   const human = await orch(['cancel', id], c.env); // already terminal now, but the text path must carry it too
   assert.equal(human.code, 0);
   assert.ok(['gone', 'mismatch'].includes(await identityOf(workerPid, workerCreatedAt)));

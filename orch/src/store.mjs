@@ -149,7 +149,8 @@ export function keeperFacts(lines) {
         facts.workerCreatedAt = o.worker_created_at ?? facts.workerCreatedAt;
         break;
       case 'worker-exit':
-        facts.workerExit = { code: o.code ?? null, signal: o.signal ?? null, at: o.at || null };
+          facts.workerExit = { code: o.code ?? null, signal: o.signal ?? null, at: o.at || null,
+            ...(o.process_clock !== undefined ? { process_clock: o.process_clock } : {}) };
         break;
       case 'streams-closed':
       case 'streams-close-timeout':

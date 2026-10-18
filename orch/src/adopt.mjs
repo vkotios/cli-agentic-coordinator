@@ -101,10 +101,11 @@ const hasNull = v => v === null || typeof v === 'object' && Object.values(v).som
 /** A command hook handler that runs the kit guard. */
 function runsGuard(handler, roots = [KIT_ROOT]) {
   if (!isObj(handler) || (handler.type !== undefined && handler.type !== 'command')) return false;
-  const command = fwd(String(handler.command || '')).toLowerCase();
+  const normalize = value => process.platform === 'win32' ? fwd(String(value)).toLowerCase() : String(value);
+  const command = normalize(handler.command || '');
   return roots.some((root) => {
-    const want = `${fwd(root).replace(/\/$/, '')}/hooks/guard.mjs`.toLowerCase();
-    if (Array.isArray(handler.args)) return /^(node|node\.exe)$/.test(command) && handler.args.length === 1 && fwd(String(handler.args[0])).toLowerCase() === want;
+    const want = normalize(root).replace(/\/$/, '')+'/hooks/guard.mjs';
+    if (Array.isArray(handler.args)) return /^(node|node\.exe)$/.test(command) && handler.args.length === 1 && normalize(handler.args[0]) === want;
     // Exact invocation only. A suffix/substring in echo, a wrapper, or another command
     // is not authority to replace an owner's handler.
     return command === `node "${want}"` || (!/\s/.test(want) && command === `node ${want}`);

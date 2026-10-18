@@ -1,14 +1,8 @@
-// Worker CLI executables, resolved at run time on the current machine.
-//
 // Order for every CLI: its environment override (ORCH_<CLI>_EXE) > `exe.<cli>` in
-// orch.config.json > the real `.exe` found on PATH (`where.exe`, bounded) > CLI-specific
-// fallbacks. Nothing assumes one user's profile: the npm global prefix is found from the
-// PATH entry holding the npm shim, from `npm_config_prefix`, or from the CURRENT user's
-// `%APPDATA%\npm`. A CLI that is not installed is a clear `cli-not-found` error.
-//
-// `.cmd` / `.ps1` shims are never returned: cmd.exe in the process chain destroys tree
-// containment (opencode, see docs/CLI_GUIDE.md), and Node refuses to spawn a .cmd with
-// shell:false anyway.
+// orch.config.json > the platform's real executable found on PATH > CLI-specific
+// fallbacks. On Windows `.cmd` / `.ps1` launchers are excluded to preserve containment.
+// On Linux, native executables and shebang scripts are launched directly with shell:false.
+// A CLI that is not installed is a clear `cli-not-found` error.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,21 +10,42 @@ import { execFileSync } from 'node:child_process';
 import { OrchError } from './errors.mjs';
 import { setting } from './config.mjs';
 
-/**
- * Every match `where.exe <name>` reports on PATH (bounded: an unreachable UNC entry on
- * PATH can stall where.exe, agy g12). Empty when there is none or where.exe fails.
- * @param {string} name e.g. `codex.exe` or `opencode.cmd`
- * @param {NodeJS.ProcessEnv} [env]
- */
+/** Find executable matches on PATH using the platform's path delimiter and launch rules. */
 export function whereAll(name, env = process.env) {
-  try {
-    return execFileSync('where.exe', [name], { encoding: 'utf8', timeout: 3000, windowsHide: true, env, stdio: ['ignore', 'pipe', 'ignore'] })
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
+  if (process.platform === 'win32') {
+    try {
+      return execFileSync('where.exe', [name], { encoding: 'utf8', timeout: 3000, windowsHide: true, env, stdio: ['ignore', 'pipe', 'ignore'] })
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
   }
+  const found = [];
+  for (const dir of String(env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    const candidate = path.resolve(dir, name);
+    try {
+      if (fs.statSync(candidate).isFile()) {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        found.push(candidate);
+      }
+    } catch {
+      // Missing or non-executable PATH entries are not candidates.
+    }
+  }
+  return found;
+}
+
+/** Inspect a direct executable only; discovery never invokes it. */
+export function isNativeExecutable(file) {
+  try {
+    if (typeof file !== 'string' || !file || !fs.statSync(file).isFile()) return false;
+    if (process.platform === 'win32') return /\.exe$/i.test(file);
+    if (/\.(cmd|bat|ps1)$/i.test(file)) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch { return false; }
 }
 
 /** The explicit override for a CLI, or null. */
@@ -39,9 +54,10 @@ export function exeOverride(cli) {
   return setting(env, `exe.${cli}`, null, { isPath: true }) || null;
 }
 
-/** The first real `.exe` for `<cli>.exe` on PATH, or null. */
+/** The first direct executable for `<cli>` on PATH, or null. */
 export function exeOnPath(cli, env = process.env) {
-  return whereAll(`${cli}.exe`, env).find((p) => /\.exe$/i.test(p)) || null;
+  const name = process.platform === 'win32' ? `${cli}.exe` : cli;
+  return whereAll(name, env).find((p) => process.platform !== 'win32' || /\.exe$/i.test(p)) || null;
 }
 
 /**
@@ -51,10 +67,17 @@ export function exeOnPath(cli, env = process.env) {
  */
 export function npmPrefixes(shimName, env = process.env) {
   const out = [];
-  for (const p of whereAll(`${shimName}.cmd`, env)) out.push(path.dirname(p));
-  if (env.npm_config_prefix) out.push(env.npm_config_prefix);
-  const appData = env.APPDATA || path.join(os.userInfo().homedir, 'AppData', 'Roaming');
-  out.push(path.join(appData, 'npm'));
+  const suffix = process.platform === 'win32' ? '.cmd' : '';
+  for (const p of whereAll(`${shimName}${suffix}`, env)) out.push(path.dirname(p));
+  if (env.npm_config_prefix) {
+    out.push(process.platform === 'win32' ? env.npm_config_prefix : path.join(env.npm_config_prefix, 'bin'));
+  }
+  if (process.platform === 'win32') {
+    const appData = env.APPDATA || path.join(os.userInfo().homedir, 'AppData', 'Roaming');
+    out.push(path.join(appData, 'npm'));
+  } else {
+    out.push(path.join(env.HOME || os.homedir(), '.local', 'bin'));
+  }
   return [...new Set(out.map((p) => path.resolve(p)))];
 }
 
@@ -69,14 +92,15 @@ export function resolveCliExe(cli, opts = {}) {
   if (explicit) return explicit;
   const onPath = exeOnPath(cli, env);
   if (onPath) return onPath;
-  const tried = [`${cli}.exe on PATH`];
+  const tried = [`${process.platform === 'win32' ? `${cli}.exe` : cli} on PATH`];
   for (const cand of opts.fallbacks ? opts.fallbacks(env) : []) {
     tried.push(cand);
     if (fs.existsSync(cand)) return cand;
   }
+  const pathHint = process.platform === 'win32' ? '<path to the real .exe>' : '<path to the executable>';
   throw new OrchError(
     `${cli} is not installed or not found (looked for: ${tried.join('; ')}). Install it and log in, ` +
-      `or set ORCH_${cli.toUpperCase()}_EXE / "exe": {"${cli}": "<path to the real .exe>"} in orch.config.json.` +
+      `or set ORCH_${cli.toUpperCase()}_EXE / "exe": {"${cli}": "${pathHint}"} in orch.config.json.` +
       (opts.hint ? ` ${opts.hint}` : ''),
     'cli-not-found',
   );

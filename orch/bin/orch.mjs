@@ -99,7 +99,7 @@ Integration (slice 3)
 
 Common: --state-root <dir>   (default: orch/.state; or $ORCH_STATE_ROOT / "stateRoot" in orch.config.json)
 Configuration: orch.config.json at the repository root (see orch.config.example.json and README.md).
-Platform: Windows 10/11 only for now.
+Platform: Windows 10/11 and Linux (macOS is not supported yet).
 Local gateway benchmark: node orch/tools/bench-gateway.mjs --help
 
 Exit codes

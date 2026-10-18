@@ -1,3 +1,4 @@
+import {isNativeExecutable} from './exe.mjs';
 // Repeatable, read-only setup health. Preferences and declarations never grant access.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,11 +28,11 @@ function input(file){const x=readSetupInput(file,{max:MAX}).raw;if(!x||typeof x!
 function reference(value,repo,session){const file=path.resolve(localPath(value,repo));if(isInside(file,session))fail();return file;}
 function existing(file){try{checkedSetupPath(file);return true;}catch{return false;}}
 // Discovery only inspects executable files, never runs the harness or login commands.
-function discover(config,base){return Object.fromEntries(HARNESSES.map(h=>{
+export function discoverExecutables(config,base){return Object.fromEntries(HARNESSES.map(h=>{
   const override=process.env[`ORCH_${h.toUpperCase()}_EXE`]||config.exe?.[h];
-  const fallback=override?[]:['claude','vibe'].includes(h)?[path.join(process.env.USERPROFILE||os.homedir(),'.local','bin',h+'.exe')]:h==='opencode'?npmPrefixes('opencode').map(p=>path.join(p,...OPENCODE_EXE_IN_PREFIX)):h==='muse'?whereAll('muse.cmd').map(f=>museBinaryInDirectory(path.dirname(f))).filter(Boolean):h==='copilot'?copilotStoreCandidates():[];
-  const files=override?[typeof override==='string'?path.resolve(process.env[`ORCH_${h.toUpperCase()}_EXE`]?process.cwd():base,override):'']:[...(h==='muse'?[]:whereAll(h+'.exe')),...fallback];
-  return [h,files.some(f=>{try{return /\.exe$/i.test(f)&&fs.statSync(f).isFile();}catch{return false;}})];
+  const fallback=override?[]:['claude','vibe'].includes(h)?[path.join(process.env.USERPROFILE||os.homedir(),'.local','bin',h+(process.platform==='win32'?'.exe':''))]:h==='opencode'?npmPrefixes('opencode').map(p=>process.platform==='win32'?path.join(p,...OPENCODE_EXE_IN_PREFIX):path.join(p,'opencode')):h==='muse'?whereAll('muse.cmd').map(f=>museBinaryInDirectory(path.dirname(f))).filter(Boolean):h==='copilot'?copilotStoreCandidates():[];
+  const files=override?[typeof override==='string'?path.resolve(process.env[`ORCH_${h.toUpperCase()}_EXE`]?process.cwd():base,override):'']:[...(h==='muse'?[]:whereAll(h+(process.platform==='win32'?'.exe':''))),...fallback];
+  return [h,files.some(f=>{try{return isNativeExecutable(f);}catch{return false;}})];
 }));}
 /** @param {any} options @param {any} seams */
 export async function setupHealth(session,options,seams={}){
@@ -80,7 +81,7 @@ export async function setupHealth(session,options,seams={}){
   let rosterEvidence='historical';
   if(roster){try{const raw=input(reference(path.resolve(process.env.ORCH_ROSTER?process.cwd():base,roster),repo,session));if(!Array.isArray(raw.models)||raw.models.length>64||raw.models.some(m=>!m||typeof m.cli!=='string'||typeof m.model!=='string'||m.model.length>200))fail();models=raw.models;rosterEvidence='current';finding('roster','ok','roster-readable','Roster availability and permissions remain explicit owner declarations');}catch{finding('roster','blocked','roster-unreadable','Inspect the private roster before launch');}}
   else finding('roster','pending','roster-evidence-historical','Supply the current private roster through configuration or ORCH_ROSTER; original discovery is historical');
-  let installed={};try{const active=configFilePath();const activeConfig=configuration.selected?config:fs.existsSync(active)?input(active):process.env.ORCH_CONFIG?fail():{};installed=(seams.discover??discover)(activeConfig,path.dirname(active));}catch{finding('executables','blocked','discovery-unavailable','Inspect effective runtime executable configuration; no harness was run');}
+  let installed={};try{const active=configFilePath();const activeConfig=configuration.selected?config:fs.existsSync(active)?input(active):process.env.ORCH_CONFIG?fail():{};installed=(seams.discover??discoverExecutables)(activeConfig,path.dirname(active));}catch{finding('executables','blocked','discovery-unavailable','Inspect effective runtime executable configuration; no harness was run');}
   try{const plan=await planAdopt(repo,{harness:[p.harness],update:false});const actions=plan.items.map(i=>i.action);finding('adoption',actions.some(x=>['conflict','refused','stale'].includes(x))?'blocked':actions.some(x=>x==='create')?'pending':'ok',actions.some(x=>x==='create')?'adoption-incomplete':actions.some(x=>['conflict','refused','stale'].includes(x))?'adoption-needs-attention':'adoption-present','Inspect setup preview or adopt dry-run; health never writes instruction files');}catch{finding('adoption','blocked','adoption-unreadable','Inspect repository instruction routing; health attempted no repair');}
   let access={routes:[],status:'unavailable'};
   try{access=await qualificationStatus(session,{configFile:file},seams);}catch{ /* Invalid evidence grants no readiness. */ }

@@ -16,7 +16,7 @@ import { getAdapter, PUBLIC_ADAPTERS } from './adapters/index.mjs';
 import { assertModelPermitted } from './models.mjs';
 import { OrchError } from './errors.mjs';
 import { laneScope, assertLaneOverrideAllowed } from './lanescope.mjs';
-import { connectHello } from './lanepipe.mjs';
+import { connectHello, recoverLinuxSocket } from './lanepipe.mjs';
 import { readProcessTable, verifyIdentity, creationTimesOf, ownChildCreationTime, killChecked, treeKillChecked } from './procs.mjs';
 import { deriveStatus } from './statusrules.mjs';
 import { closeViewer } from './viewer.mjs';
@@ -1091,8 +1091,9 @@ function cancelText(o) {
 }
 
 /** The accepted, documented conflict with "escaped helpers are never killed" (v4 §6 H6). */
-export const TREE_KILL_NOTE =
-  'a tree kill also ends descendants the worker spawned detached. This is accepted and documented, not claimed away.';
+export const TREE_KILL_NOTE = process.platform === 'linux'
+  ? 'Linux cancellation targets the verified worker process group. Descendants that leave that group are outside this kill scope; retained helper evidence still governs finalization.'
+  : 'a tree kill also ends descendants the worker spawned detached. This is accepted and documented, not claimed away.';
 
 /**
  * `orch cancel --keeper <id>` — explicit operator escalation for a frozen keeper.
@@ -1204,6 +1205,15 @@ async function monitorLocked(cfg, id, args, io) {
     return { ...out, exitCode: 3 };
   }
 
+  if (process.platform === 'linux' && probe.state === 'free') {
+    const recovery = await recoverLinuxSocket(scope.monitorPipe(id));
+    if (!['absent', 'recovered'].includes(recovery.state)) {
+      const out = { id, monitor: 'not-started', reason: `socket owner ${recovery.state}; inspect retained evidence` };
+      emit(args, io, out, `${id}: no monitor started (${out.reason})`);
+      return { ...out, exitCode: 3 };
+    }
+  }
+
   const child = spawn(process.execPath, [MONITOR, '--state-root', cfg.stateRoot, '--id', id, '--run-dir', P.dir], {
     detached: true,
     shell: false,
@@ -1219,14 +1229,19 @@ async function monitorLocked(cfg, id, args, io) {
 
 /* ------------------------------------------------------------------- gc ---- */
 
-/** Removes only advisory lane files whose run is terminal. Kills nothing. */
+/** Removes stale advisory files and verified Linux orphan sockets. Kills nothing. */
 export async function cmdGc(args, io = console) {
   const cfg = loadConfig(args['state-root']);
   const scope = laneScope(args.lane || 'local');
   const holder = readJson(scope.holderFile, null);
   const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
   const out = { lane: scope.lane, lane_state: probe.state, holder_run: holder ? holder.run_id : null, removed: [] };
-  if (holder && probe.state === 'free') {
+  if (process.platform === 'linux' && probe.state === 'free') {
+    const recovery = await recoverLinuxSocket(scope.pipeName);
+    out.removed.push(...recovery.removed);
+    if (!['absent', 'recovered'].includes(recovery.state)) out.lane_state = 'unknown';
+  }
+  if (holder && out.lane_state === 'free') {
     const rec = readRun(cfg, holder.run_id);
     if (!rec || TERMINAL.has(rec.status)) {
       try {
@@ -1237,7 +1252,7 @@ export async function cmdGc(args, io = console) {
       }
     }
   }
-  emit(args, io, out, `lane ${scope.lane}: ${probe.state}; removed ${out.removed.length} stale advisory file(s)`);
+  emit(args, io, out, `lane ${scope.lane}: ${out.lane_state}; removed ${out.removed.length} stale lane file(s)`);
   return { ...out, exitCode: 0 };
 }
 

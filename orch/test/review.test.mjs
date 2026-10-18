@@ -8,8 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   KIT,
@@ -89,7 +90,8 @@ test('astra H1: the lane id does not depend on inheritable environment (USERPROF
     });
   const normal = await run({});
   const skewed = await run({ USERPROFILE: 'C:\\Elsewhere\\profile', HOMEDRIVE: 'D:', HOMEPATH: '\\other', USERNAME: 'mallory' });
-  assert.match(normal, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/, normal);
+  if (process.platform === 'linux') assert.match(path.basename(normal), /^lane-[0-9a-f]{12}-local\.sock$/);
+  else assert.match(normal, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
   assert.equal(skewed, normal, 'a shell with a different profile environment derived a DIFFERENT lane - two local lanes');
 });
 
@@ -159,7 +161,7 @@ test('astra H3: an `undetermined` admission still records the keeper identity, s
   const id = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
   const spawned = spawnedIdentity(c.stateRoot, id);
   assert.ok(spawned, 'spawned.json was not written on the undetermined path');
-  assert.match(String(spawned.keeper_created_at), /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
+  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
   await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'worker-identity'), { timeoutMs: 20000, what: 'worker identity' });
 
   const res = await orch(['cancel', '--keeper', id, '--json'], c.env);
@@ -187,7 +189,7 @@ test('astra H4: the monitor never adopts the identity of whatever process holds 
       '\n' +
       JSON.stringify({ event: 'spawned', worker_pid: decoy.pid, at: new Date().toISOString() }) +
       '\n',
-    spawned: { run_id: id, keeper_pid: 999999, keeper_created_at: 'ms:1' },
+    spawned: { run_id: id, keeper_pid: 999999, keeper_created_at: process.platform === 'linux' ? decoy.createdAt : 'ms:1' },
   });
   const m = await orch(['monitor', id, '--json'], c.env);
   assert.equal(m.code, 0, m.stdout + m.stderr);
@@ -219,12 +221,17 @@ test('astra M5: status and wait-lane use no synchronous fs call on a path that c
   }
 });
 
-test('astra M5: a stuck read cannot hold a command open - the deadline answers and the process exits', { timeout: 60000 }, async () => {
-  // The child blocks an async read on a pipe server that accepts and never writes, then
-  // does what the CLI does: answer under a deadline and arm the exit guard.
+test('astra M5: a stuck read cannot hold a command open - the deadline answers and the process exits', { timeout: 60000 }, async (t) => {
+  // POSIX uses an unwritten FIFO; Windows uses the named-pipe server in the child.
+  const fifoDir = process.platform === 'win32' ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'orch-stall-'));
+  const fifoPath = fifoDir ? path.join(fifoDir, 'cancel-result.fifo') : null;
+  if (fifoDir) {
+    t.after(() => fs.rmSync(fifoDir, { recursive: true, force: true }));
+    execFileSync('mkfifo', [fifoPath], { stdio: 'ignore' });
+  }
   const t0 = Date.now();
   const res = await new Promise((resolve) => {
-    execFile(process.execPath, [STALL_CHILD], { encoding: 'utf8', windowsHide: true, timeout: 30000 }, (err, stdout) =>
+    execFile(process.execPath, [STALL_CHILD], { encoding: 'utf8', windowsHide: true, timeout: 30000, env: fifoPath ? { ...process.env, ORCH_STALL_PIPE: fifoPath } : process.env }, (err, stdout) =>
       resolve({ err, stdout }),
     );
   });
@@ -245,12 +252,21 @@ test('astra M6: concurrent cancels - exactly one kills, the other serves that re
   const [a, b] = await Promise.all([orch(['cancel', id, '--json'], c.env), orch(['cancel', id, '--json'], c.env)]);
   const outs = [JSON.parse(a.stdout), JSON.parse(b.stdout)];
   const killers = outs.filter((o) => o.kill_performed === true);
-  const served = outs.filter((o) => o.served_from === 'concurrent-cancel');
+  const observers = outs.filter((o) => o.kill_performed !== true);
   assert.equal(killers.length, 1, `exactly one cancel may perform the kill: ${JSON.stringify(outs)}`);
-  assert.equal(served.length, 1, 'the other must serve the result, not repeat the kill');
-  assert.equal(served[0].kill_performed, false);
-  assert.equal(served[0].attempt, killers[0].attempt, 'both callers must report the SAME attempt');
-  assert.equal(served[0].cancel_state, killers[0].cancel_state);
+  assert.equal(observers.length, 1, 'the other caller must not repeat the kill');
+  const observer = observers[0];
+  assert.equal(a.code, 0, a.stderr);assert.equal(b.code, 0, b.stderr);
+  if (observer.cancel_state === 'already-terminal') {
+    // Process starts can overlap while a fast Linux cancellation finishes before
+    // the second handler's first read. Its terminal answer needs real exit proof.
+    assert.ok(keeperLines(c.stateRoot, id).some(line => line.event === 'worker-exit'));
+  } else {
+    assert.equal(observer.served_from, 'concurrent-cancel');
+    assert.equal(observer.kill_performed, false);
+    assert.equal(observer.attempt, killers[0].attempt, 'overlapping attempts must report the SAME attempt');
+    assert.equal(observer.cancel_state, killers[0].cancel_state);
+  }
   const result = JSON.parse(fs.readFileSync(path.join(c.stateRoot, 'runs', id, 'cancel-result.json'), 'utf8'));
   assert.equal(result.attempt, killers[0].attempt, 'cancel-result.json was overwritten by a second attempt');
   assert.ok(!fs.existsSync(path.join(c.stateRoot, 'runs', id, 'cancel.lock')), 'the attempt lock was not released');
@@ -265,7 +281,7 @@ test('astra M6: a stale attempt lock (its holder is gone) is taken over, so a re
   // A cancel process that died holding the lock: its recorded identity is not running.
   fs.writeFileSync(
     path.join(c.stateRoot, 'runs', id, 'cancel.lock'),
-    JSON.stringify({ pid: 999999, created_at: 'ms:1', attempt: 'deadbeef0000', at: new Date().toISOString() }),
+    JSON.stringify({ pid: 999999, created_at: process.platform === 'linux' ? keeperLines(c.stateRoot,id).find(l=>l.event==='worker-identity').worker_created_at : 'ms:1', attempt: 'deadbeef0000', at: new Date().toISOString() }),
   );
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
@@ -292,7 +308,7 @@ async function cleanupViewers(logFile) {
   for (const p of alive) await killOwnedChecked(p.pid, p.createdAt); // identity read just now
 }
 
-test('astra M7: a viewer still starting when a short run ends is waited for and closed, not leaked', { timeout: 180000 }, async (t) => {
+test('astra M7: a viewer still starting when a short run ends is waited for and closed, not leaked', { timeout: 180000, skip: process.platform !== 'win32' ? 'Windows GUI viewer lifecycle' : false }, async (t) => {
   const c = makeCase('m7-fast');
   const log = path.join(c.base, 'viewers.log');
   t.after(async () => {
@@ -321,7 +337,7 @@ test('astra M7: a viewer still starting when a short run ends is waited for and 
   assert.deepEqual(alive.map((p) => p.pid), [], `viewer(s) left running after the run: ${alive.map((p) => p.pid)}`);
 });
 
-test('astra M7: a replacement monitor re-uses the open viewer and closes it; no second tab is leaked', { timeout: 180000 }, async (t) => {
+test('astra M7: a replacement monitor re-uses the open viewer and closes it; no second tab is leaked', { timeout: 180000, skip: process.platform !== 'win32' ? 'Windows GUI viewer lifecycle' : false }, async (t) => {
   const c = makeCase('m7-restart');
   const log = path.join(c.base, 'viewers.log');
   t.after(async () => {
@@ -371,8 +387,8 @@ test('astra M8: two cloud runs at once are both admitted - a non-serial lane nev
     const lines = keeperLines(c.stateRoot, id);
     assert.ok(lines.some((l) => l.event === 'lane-acquired' && l.exclusive === false), `cloud keeper bound the pipe: ${JSON.stringify(lines)}`);
   }
-  // and the local lane is still exclusive
-  assert.equal(laneScope('cloud').pipeName.endsWith('-cloud'), true);
+  // local and cloud addresses remain distinct even when neither lane is being bound here.
+  assert.notEqual(laneScope('cloud').pipeName, laneScope('local').pipeName);
 });
 
 /* ================================================================= M9 ==== */
@@ -424,7 +440,7 @@ test('agy g2: cancel --keeper does not count an identity MISMATCH as the worker 
     keeperLinesText: [
       { event: 'lane-acquired', at: now },
       { event: 'spawned', worker_pid: workerDecoy.pid, at: now },
-      { event: 'worker-identity', worker_pid: workerDecoy.pid, worker_created_at: 'ms:1', at: now },
+      { event: 'worker-identity', worker_pid: workerDecoy.pid, worker_created_at: workerDecoy.createdAt.replace(/:\d+$/, ':1'), at: now },
     ].map((o) => JSON.stringify(o)).join('\n') + '\n',
     spawned: { run_id: id, keeper_pid: keeperDecoy.pid, keeper_created_at: keeperDecoy.createdAt },
   });
@@ -439,7 +455,9 @@ test('agy g2: cancel --keeper does not count an identity MISMATCH as the worker 
 
 test('agy g3: a probe that times out before connecting is `unknown`, never `free`', { timeout: 60000 }, async () => {
   const { tryListen, connectHello } = await import('../src/lanepipe.mjs');
-  const name = `\\\\.\\pipe\\orch-g3-${process.pid}`;
+  const name = process.platform === 'linux'
+    ? path.join(path.dirname(laneScope('local').pipeName), `lane-g3-${process.pid}.sock`)
+    : `\\\\.\\pipe\\orch-g3-${process.pid}`;
   const held = await tryListen(name);
   assert.ok(held.ok);
   held.server.on('connection', (s) => s.on('error', () => {})); // accept, say nothing

@@ -1,14 +1,12 @@
 // Current liveness is separate from the immutable monitor ancestry observation.
 // No names, kill operations, run writes or cached deletion authority.
 import { normalizeCreationTime, readProcessTable, verifyIdentity } from './procs.mjs';
+import { creationPoint } from './process-time.mjs';
 
 const readableBirth = value => {
   if (typeof value !== 'string') return false;
-  const at = normalizeCreationTime(value);
-  const epoch = Number(at.slice(3));
-  // verifyIdentity compares normalized strings. A padded epoch must not look
-  // like a different incarnation of the same live process.
-  return /^ms:\d+$/.test(at) && Number.isSafeInteger(epoch) && epoch <= 8640000000000000 && at === `ms:${epoch}`;
+  const point = creationPoint(normalizeCreationTime(value));
+  return point !== null && (point.kind !== 'wall' || point.value >= 0);
 };
 
 export async function reconcileHelpers(record, deadline) {

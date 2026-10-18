@@ -26,7 +26,7 @@ function fixture(t, name, policy = { mode: 'manual', successDays: 30, otherDays:
     fs.utimesSync(path.join(dir, file), new Date(old), new Date(old));
   }
   fs.mkdirSync(path.join(c.stateRoot, 'finishes'));
-  fs.writeFileSync(path.join(c.stateRoot, 'finishes', 'WP-retain.json'), JSON.stringify({ wp: 'WP-retain', state: 'finished', closed_at: old, run_ids: [id], claim_token: 'fixture-token' }));
+  fs.writeFileSync(path.join(c.stateRoot, 'finishes', 'wp-retain.json'), JSON.stringify({ wp: 'WP-retain', state: 'finished', closed_at: old, run_ids: [id], claim_token: 'fixture-token' }));
   fs.writeFileSync(path.join(c.stateRoot, 'ledger.jsonl'), JSON.stringify({ run_id: id, disposition: 'blocked', model_canonical: 'fixture-model', wp: 'WP-retain', recorded_at: old }) + '\n');
   return { c, id, dir, rec };
 }
@@ -35,6 +35,27 @@ async function enroll(f) {
   assert.equal(r.code, 0, r.stderr);
 }
 const collect = (f) => orch(['maintain', '--apply', '--json'], f.c.env);
+function failOneUnlink(f, target) {
+  const marker = path.join(f.c.base, 'fail-unlink-once');
+  const preload = path.join(f.c.base, 'fail-unlink-preload.mjs');
+  fs.writeFileSync(marker, '1');
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    'const unlink = fs.unlinkSync.bind(fs);',
+    'fs.unlinkSync = (p, ...args) => {',
+    '  if (process.env.ORCH_TEST_FAIL_UNLINK_PATH && path.resolve(String(p)) === path.resolve(process.env.ORCH_TEST_FAIL_UNLINK_PATH) && fs.existsSync(process.env.ORCH_TEST_FAIL_UNLINK_MARKER)) {',
+    '    unlink(process.env.ORCH_TEST_FAIL_UNLINK_MARKER);',
+    "    const error = new Error('simulated transient sharing violation'); error.code = 'EBUSY'; throw error;",
+    '  }',
+    '  return unlink(p, ...args);',
+    '};',
+  ].join('\n'));
+  f.c.env.ORCH_TEST_FAIL_UNLINK_PATH = target;
+  f.c.env.ORCH_TEST_FAIL_UNLINK_MARKER = marker;
+  f.c.env.NODE_OPTIONS = [f.c.env.NODE_OPTIONS, `--import=${preload}`].filter(Boolean).join(' ');
+  return () => assert.equal(fs.existsSync(marker), false, 'transient unlink failure fixture was exercised');
+}
 function fingerprint(dir) {
   return fs.readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((rel) => fs.statSync(path.join(dir, rel)).isFile()).map((rel) => [rel, fs.readFileSync(path.join(dir, rel)).toString('base64')]);
 }
@@ -362,12 +383,17 @@ test('P03: corrupt compact evidence is never treated as an empty or valid result
   assert.match(r.stderr, /invalid|unreadable/);
 });
 
-test('P03: Windows sharing failure leaves a compact result and retry completes exact files', async (t) => {
+test('P03: a transient sharing-style unlink failure leaves a compact result and retry completes exact files', async (t) => {
   const f = fixture(t, 'p03-partial');
   await enroll(f);
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$f=[IO.File]::Open($env:ORCH_FIXTURE_LOCK,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); [Console]::WriteLine('ready'); [Console]::ReadLine() | Out-Null; $f.Dispose()"], { env: { ...process.env, ORCH_FIXTURE_LOCK: path.join(f.dir, 'stderr.log') }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-  t.after(() => child.stdin.end('\n'));
-  await new Promise((resolve, reject) => { let ready = ''; const timer = setTimeout(() => reject(new Error('fixture not ready')), 10000); child.stdout.on('data', (b) => { ready += b; if (ready.includes('ready')) { clearTimeout(timer); resolve(null); } }); });
+  const target = path.join(f.dir, 'stderr.log');
+  let unlock;
+  if (process.platform === 'win32') {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$f=[IO.File]::Open($env:ORCH_FIXTURE_LOCK,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); [Console]::WriteLine('ready'); [Console]::ReadLine() | Out-Null; $f.Dispose()"], { env: { ...process.env, ORCH_FIXTURE_LOCK: target }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    t.after(() => child.stdin.end('\n'));
+    await new Promise((resolve, reject) => { let ready = ''; const timer = setTimeout(() => reject(new Error('fixture not ready')), 10000); child.stdout.on('data', (b) => { ready += b; if (ready.includes('ready')) { clearTimeout(timer); resolve(null); } }); });
+    unlock = async () => { const closed = new Promise((resolve) => child.once('close', resolve)); child.stdin.end('\n'); await closed; };
+  } else unlock = failOneUnlink(f, target);
   let r = await collect(f);
   assert.equal(r.code, 3, r.stderr);
   assert.equal(output(r).runs[0].state, 'pending');
@@ -380,7 +406,7 @@ test('P03: Windows sharing failure leaves a compact result and retry completes e
   r = await orch(['status', f.id, '--json'], f.c.env);
   assert.equal(output(r).runs[0].transcripts.stdout.state, 'purged');
   assert.equal(output(r).runs[0].derived_status, 'completed', 'missing logs must not change the terminal classification');
-  const closed = new Promise((resolve) => child.once('close', resolve)); child.stdin.end('\n'); await closed;
+  await unlock();
   r = await collect(f);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(output(r).runs[0].state, 'collected');

@@ -96,6 +96,7 @@ test(`G3: the monitor is killed mid-run, ${REPS}x -> the worker still finishes a
       { timeoutMs: 20000, what: 'the worker OS creation time' },
     );
 
+    await waitFor(() => { try { return JSON.parse(readRunFile(c.stateRoot, id, 'monitor.alive')).pid; } catch { return null; } }, { timeoutMs: 20000, what: 'the monitor to bind its single-writer lock' });
     // Kill the monitor, identity-checked, mid-run (K2's measured property).
     const mon = await monitorIdentity(c, id);
     const kill = await killOwnedChecked(mon.pid, mon.createdAt);

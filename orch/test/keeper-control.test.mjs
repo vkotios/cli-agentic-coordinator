@@ -6,6 +6,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 import * as helpers from './helpers.mjs';
+const windowsTest = (name, fn) => test(name, { skip: process.platform !== 'win32' && 'Windows native process-control API' }, fn);
 
 function mockedControl(t, native) {
   mock.method(childProcess, 'execFile', (_exe, args, options, callback) => {
@@ -18,7 +19,7 @@ function mockedControl(t, native) {
   t.after(() => {mock.restoreAll();syncBuiltinESMExports();});
 }
 
-test('keeper fixture: cold compilation is outside the bounded suspend/resume command', async t => {
+windowsTest('keeper fixture: cold compilation is outside the bounded suspend/resume command', async t => {
   const c = helpers.makeCase('keeper-control-cold');t.after(() => c.cleanup());
   const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath, 'fixture');
   const scripts = [];
@@ -37,7 +38,7 @@ test('keeper fixture: cold compilation is outside the bounded suspend/resume com
   assert.match(scripts[1], /NtResumeProcess/);
 });
 
-test('keeper fixture: an uncertain control result retains error category and stderr', async t => {
+windowsTest('keeper fixture: an uncertain control result retains error category and stderr', async t => {
   const c = helpers.makeCase('keeper-control-error');t.after(() => c.cleanup());
   const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath, 'fixture');
   mockedControl(t, (_script, _options, done) => done(Object.assign(Error('deadline'), {killed:true, signal:'SIGTERM',code:null}), 'partial output', 'diagnostic stderr'));
@@ -47,14 +48,14 @@ test('keeper fixture: an uncertain control result retains error category and std
   assert.match(out.output, /partial output/);assert.match(out.output, /diagnostic stderr/);assert.match(out.output, /SIGTERM/);
 });
 
-test('keeper fixture: an identity mismatch refuses control before the native command', async t => {
+windowsTest('keeper fixture: an identity mismatch refuses control before the native command', async t => {
   let calls = 0;
   mockedControl(t, () => {calls++;throw Error('must not control an unrelated incarnation');});
   const out = await helpers.suspendProcess(77, 'ms:3000', false, {assemblyPath:'unused'});
   assert.equal(out.ok, false);assert.equal(out.verdict, 'mismatch');assert.equal(calls, 0);
 });
 
-test('keeper fixture: preparation has a separate bounded compilation budget', async t => {
+windowsTest('keeper fixture: preparation has a separate bounded compilation budget', async t => {
   const c = helpers.makeCase('keeper-control-prepare');t.after(() => c.cleanup());
   let preparations = 0;
   mockedControl(t, (script, options, done) => {
@@ -70,7 +71,7 @@ test('keeper fixture: preparation has a separate bounded compilation budget', as
   assert.equal(preparations, 1);
 });
 
-test('keeper fixture: native mismatch and nonzero NTSTATUS never report success', async t => {
+windowsTest('keeper fixture: native mismatch and nonzero NTSTATUS never report success', async t => {
   const c = helpers.makeCase('keeper-control-native-refusal');t.after(() => c.cleanup());
   const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath, 'fixture');
   let code = 4;
@@ -83,7 +84,7 @@ test('keeper fixture: native mismatch and nonzero NTSTATUS never report success'
   }
 });
 
-test('keeper fixture: absent preparation refuses without a native control command', async t => {
+windowsTest('keeper fixture: absent preparation refuses without a native control command', async t => {
   let controls = 0;mockedControl(t, () => {controls++;throw Error('must not execute');});
   for (const options of [{}, {assemblyPath:'missing-fixture.dll'}]) {
     const out = await helpers.suspendProcess(77, 'ms:2000', false, options);
@@ -109,7 +110,7 @@ test('keeper fixture: unknown cleanup remains uncertain; successful resume never
   assert.equal(resumed.ok,true);assert.equal(resumed.method,'resumed');
 });
 
-test('keeper fixture: timeout recovery uses the prepared resume and missing confirmation stays unknown', async t => {
+windowsTest('keeper fixture: timeout recovery uses the prepared resume and missing confirmation stays unknown', async t => {
   const c = helpers.makeCase('keeper-control-recovery');t.after(() => c.cleanup());
   const assemblyPath = path.join(c.base, 'control.dll');fs.writeFileSync(assemblyPath,'fixture');
   let unconfirmed = false, resumed = 0;
@@ -126,7 +127,7 @@ test('keeper fixture: timeout recovery uses the prepared resume and missing conf
   assert.equal(out.ok,false);assert.equal(out.failure,'control-unconfirmed');
 });
 
-test('keeper fixture: compilation failure reports its cause and never retries a partial assembly', async t => {
+windowsTest('keeper fixture: compilation failure reports its cause and never retries a partial assembly', async t => {
   const c = helpers.makeCase('keeper-control-preparation-failure');t.after(() => c.cleanup());
   let calls = 0;
   mockedControl(t, (_script, _options, done) => {

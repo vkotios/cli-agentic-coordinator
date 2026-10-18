@@ -104,7 +104,7 @@ test('P04b repairs: Copilot preflight validates delivered prompt, effort, option
   });
 });
 
-test('P04b repairs: marker case and native resolution exclude an unverified muse.exe wrapper',t=>{
+test('P04b repairs: marker case and native resolution exclude an unverified muse.exe wrapper',{skip:process.platform!=='win32'&&'Windows Muse marker and launcher layout'},t=>{
   const ctx=context(t);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'1.4.4-r5419.1\n');const exe=path.join(ctx.dir,'muse-bin-1.4.4-r5419.1.exe');fs.writeFileSync(exe,'fixture');assert.equal(modules[1].museBinaryInDirectory(ctx.dir),exe);
   fs.writeFileSync(path.join(ctx.dir,'muse.exe'),'unverified wrapper');fs.writeFileSync(path.join(ctx.dir,'muse.cmd'),'fixture shim');
   env({ORCH_MUSE_EXE:'',PATH:ctx.dir+';'+path.join(process.env.SystemRoot,'System32')},()=>assert.equal(modules[1].resolveMuseExe(),exe));
