@@ -14,7 +14,7 @@ import { computeGate } from './gate.mjs';
 import { dependencies, quiescent, inspectQuiescence, timestamp, transcriptEvidence, retentionFile } from './retention.mjs';
 import { reconcileHelpers } from './helper-reconciliation.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
-import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId } from './archive.mjs';
+import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId, readReviewDocument } from './archive.mjs';
 
 const DAY = 86400000;
 const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json', 'copilot-usage.json']);
@@ -39,7 +39,7 @@ export function confirmReviewMetadata(cfg, id) {
   const file = evidencePath(cfg, 'metadata-owned', 'review', id), doc = readDocument(file);
   if (!doc) return; // pre-existing reviews remain explicit-enrollment only
   if (!doc || doc.state !== 'intent' || doc.source !== 'orch-review' || doc.id !== id || doc.state_root !== path.resolve(cfg.stateRoot) || doc.state_identity !== stamp(safe(cfg.stateRoot)) || doc.reviews_identity !== stamp(safe(path.dirname(doc.path)))) throw new OrchError('review ownership intent invalid', 'retirement-unowned');
-  const record = readDocument(safe(doc.path));
+  const record = readReviewDocument(safe(doc.path));
   if (!record || record.id !== id || !record.finished_at) throw new OrchError('review record not finalized', 'retirement-unowned');
   write(file, { ...doc, state: 'confirmed', identity: stamp(doc.path), record_sha256: digest(JSON.stringify(record)) });
 }
@@ -163,7 +163,7 @@ function autoOperator(cfg, kind, id) {
   const owned = readDocument(kind === 'run' ? retentionFile(cfg, 'owned', id) : evidencePath(cfg, 'metadata-owned', kind, id));
   if (!owned || owned.version !== 1 || owned.id !== id || owned.state !== 'confirmed' || owned.state_root !== path.resolve(cfg.stateRoot) || owned.state_identity !== stamp(safe(cfg.stateRoot))) return null;
   if (kind === 'run') { if (owned.source !== 'orch-run' || owned.metadata_version !== 1) return null; }
-  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || owned.reviews_identity !== stamp(safe(path.dirname(owned.path))) || owned.identity !== stamp(safe(owned.path)) || owned.record_sha256 !== digest(JSON.stringify(readDocument(owned.path)))) return null;
+  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || owned.reviews_identity !== stamp(safe(path.dirname(owned.path))) || owned.identity !== stamp(safe(owned.path)) || owned.record_sha256 !== digest(JSON.stringify(readReviewDocument(owned.path)))) return null;
   const record = readEvidence(cfg, kind, id)?.record;
   return record?.wp ? readClosure(cfg, record.wp)?.by : kind === 'run' ? owned.finalization?.by : record?.by;
 }
