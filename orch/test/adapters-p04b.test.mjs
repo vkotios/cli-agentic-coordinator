@@ -6,7 +6,8 @@ import {makeCase,waitForStatus,waitFor,readRunFile} from './helpers.mjs';
 import {checkCommand} from '../../hooks/rules.mjs';
 import {deriveStatus} from '../src/statusrules.mjs';
 import {makeRepo} from './wf-helpers.mjs';
-const modules=await Promise.all(['copilot','muse'].map(n=>import(`../src/adapters/${n}.mjs`).catch(()=>({default:null}))));
+/** @type {any[]} */
+const modules=await Promise.all([import('../src/adapters/copilot.mjs').catch(()=>({default:null})),import('../src/adapters/muse.mjs').catch(()=>({default:null}))]);
 const [copilot,muse]=modules.map(m=>m.default);
 const context=t=>{const c=makeCase('p04b-adapter');t.after(()=>c.cleanup());const promptPath=path.join(c.base,'prompt.txt');fs.writeFileSync(promptPath,'Unicode handoff: café $() & "quoted"\n');return {dir:c.base,runDir:c.base,promptPath,role:'implement',model:'example-exact-model',flags:[],effort:'medium'};};
 function env(vars,fn){const before={};for(const[k,v]of Object.entries(vars)){before[k]=process.env[k];process.env[k]=v;}try{return fn();}finally{for(const[k,v]of Object.entries(before))if(v===undefined)delete process.env[k];else process.env[k]=v;}}

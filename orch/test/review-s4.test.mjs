@@ -1,3 +1,4 @@
+import {observedFixture as orch} from "./observed-worker.mjs";
 // Slice 2, gate S4: `orch review` - canonical-model refusal, blinding, containment.
 // Fake reviewers (test-only adapter), real git, no model calls.
 import { test } from 'node:test';
@@ -5,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { makeCase, orch, idFrom, waitForStatus, waitFor, readRunRecord, readRunFile, identityOf, spawnedIdentity } from './helpers.mjs';
+import { makeCase, idFrom, waitForStatus, waitFor, readRunRecord, readRunFile, identityOf, spawnedIdentity } from './helpers.mjs';
 import { g, makeRepo, commitAll, repoFingerprint } from './wf-helpers.mjs';
 import { globToRegex, compareSourceStatus } from '../src/review.mjs';
 import vibe from '../src/adapters/vibe.mjs';

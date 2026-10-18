@@ -1,3 +1,4 @@
+import {observedFixture as orch} from "./observed-worker.mjs";
 // Slice-2 code-review fix round: one test per finding (c1-c4, a1-a5) and per smoke
 // follow-up (F1-F3). Every test here FAILS on 8413ba6 and passes after the fix; the report
 // maps each to the assertion that fails on the old tree. Fake workers, real git, no models.
@@ -6,11 +7,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { KIT, makeCase, orch, idFrom, waitForStatus } from './helpers.mjs';
+import { KIT, makeCase, idFrom, waitForStatus } from './helpers.mjs';
 import { g, makeRepo, commitAll, craftFinishedRun, repoFingerprint } from './wf-helpers.mjs';
 
 const FIX = path.join(KIT, 'test', 'fixtures');
-const SRC = (f) => new URL(`../src/${f}`, import.meta.url).href;
 const json = (r) => {
   try {
     return JSON.parse(r.stdout);
@@ -60,7 +60,7 @@ test('c1: a crash between the marker and the append never blocks the run silentl
   fs.appendFileSync(ledger, '{"run_id":"torn-frag');
   const id2 = craftFinishedRun(c.stateRoot, { dir: c.work, baseline: null, allow: [], extra: { model_requested: 'm2', scope: null } });
   assert.equal((await orch(['record', id2, '--disposition', 'rejected', '--ledger', ledger], c.env)).code, 0);
-  const { readLedger } = await import(SRC('ledger.mjs'));
+  const { readLedger } = await import('../src/ledger.mjs');
   const { rows, bad } = readLedger(ledger);
   assert.ok(rows.some((r) => r.run_id === id2), 'the new row is intact on its own line');
   assert.equal(bad, 1, 'only the fragment is unreadable');
@@ -170,7 +170,7 @@ test('a2: overlapping --blind globs delete each file once; no crash, no leaked w
 /* ------------------------------------------------------------------ a3 ---- */
 
 test('a3: a backslash provider separator cannot bypass the same-model refusal', { timeout: 120000 }, async (t) => {
-  const { canonicalId } = await import(SRC('models.mjs'));
+  const { canonicalId } = await import('../src/models.mjs');
   assert.equal(canonicalId('localai\\qwen3-coder-30b'), 'qwen3-coder-30b');
   assert.equal(canonicalId('a\\b/QWEN3-coder-30b'), 'qwen3-coder-30b');
   const c = makeCase('fx-a3');
@@ -214,7 +214,7 @@ test('a5: pick --for-run falls back to the ledger row when the run directory is 
 /* ------------------------------------------------------------------ F1 ---- */
 
 test('F1: codex model-used from THIS run\'s session rollout (recorded --json review run, no header); ambiguity = unknown', async () => {
-  const mod = await import(SRC('adapters/codex.mjs'));
+  const mod = await import('../src/adapters/codex.mjs');
   const THREAD = '00000000-0000-7000-8000-000000000003';
   const DIR = 'C:\\work\\sandbox\\reviews\\rv-20260101-000000-aaaaaa';
   const START = Date.parse('2026-09-23T16:16:01.652Z');
@@ -263,7 +263,7 @@ test('F1: codex model-used from THIS run\'s session rollout (recorded --json rev
 /* ------------------------------------------------------------------ F2 ---- */
 
 test('F2: agy "not in local config, defaulting" / "resolved via default" -> model used UNKNOWN, never the requested id', async () => {
-  const mod = await import(SRC('adapters/agy.mjs'));
+  const mod = await import('../src/adapters/agy.mjs');
   const log = fs.readFileSync(path.join(FIX, 'agy-defaulting.log.txt'), 'utf8');
   const got = mod.extractAgyModel(log);
   assert.equal(got.model, null, 'the recorded run logged the defaulting lines: the model used is unknown');

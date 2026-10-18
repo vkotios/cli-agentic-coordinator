@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "critical": [
+    "orch/src/keeper.mjs",
+    "orch/src/monitor.mjs",
+    "orch/src/procs.mjs",
+    "orch/src/process-time.mjs",
+    "orch/src/linux-worker-supervisor.mjs",
+    "orch/src/lanepipe.mjs",
+    "orch/src/lanescope.mjs",
+    "orch/src/claims.mjs",
+    "orch/src/exclusive.mjs",
+    "orch/src/helper-reconciliation.mjs"
+  ],
+  "shared": [
+    ".github/**",
+    "orch/package*.json",
+    "package*.json",
+    "orch/tsconfig.json",
+    "orch/tools/**",
+    "orch/test/helpers.mjs",
+    "orch/test/wf-helpers.mjs",
+    "orch/test/observed-worker.mjs",
+    "orch/test/fake-worker.mjs",
+    "orch/test/contender.mjs",
+    "orch/test/fixtures/**",
+    "orch/src/commands.mjs",
+    "orch/src/cli.mjs",
+    "orch/bin/**",
+    "orch/src/config.mjs",
+    "orch/src/errors.mjs",
+    "orch/src/util.mjs",
+    "orch/src/store.mjs"
+  ],
+  "ignored": [
+    "README.md",
+    "LICENSE",
+    "docs/**"
+  ],
+  "groups": {
+    "contracts": {
+      "stage": "commit",
+      "execution": "parallel",
+      "files": [
+        "orch/test/unit.test.mjs",
+        "orch/test/process-query.test.mjs",
+        "orch/test/keeper-control.test.mjs",
+        "orch/test/queuedriver.test.mjs",
+        "orch/test/usage-p08b.test.mjs",
+        "orch/test/catalog-p06a.test.mjs",
+        "orch/test/adviser-p05b.test.mjs",
+        "orch/test/linux-process-evidence.test.mjs",
+        "orch/test/linux-portability.test.mjs",
+        "orch/test/kitfiles.test.mjs",
+        "orch/test/review-record-compat.test.mjs",
+        "orch/test/gate.test.mjs",
+        "orch/test/ledger.test.mjs",
+        "orch/test/routing-p05a.test.mjs",
+        "orch/test/portable.test.mjs",
+        "orch/test/ci-policy.test.mjs",
+        "orch/test/ci-fixtures.test.mjs"
+      ],
+      "inputs": []
+    },
+    "native": {
+      "stage": "commit",
+      "execution": "serial",
+      "files": [
+        "orch/test/lane.test.mjs",
+        "orch/test/keeper.test.mjs",
+        "orch/test/monitor.test.mjs",
+        "orch/test/cancel.test.mjs",
+        "orch/test/waitlane.test.mjs",
+        "orch/test/linux-runtime.test.mjs",
+        "orch/test/audit.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/keeper.mjs",
+        "orch/src/procs.mjs",
+        "orch/src/monitor.mjs",
+        "orch/src/claims.mjs"
+      ]
+    },
+    "review": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/review.test.mjs",
+        "orch/test/review-s4.test.mjs",
+        "orch/test/fixround.test.mjs",
+        "orch/test/s3fix.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/review.mjs",
+        "orch/src/review-header.mjs",
+        "orch/src/scope.mjs",
+        "orch/src/worktrees.mjs",
+        "orch/src/git.mjs",
+        "orch/src/direvidence.mjs"
+      ]
+    },
+    "workflow": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/workflow.test.mjs",
+        "orch/test/repository-controller-p04i.test.mjs",
+        "orch/test/controller-p04g.test.mjs",
+        "orch/test/qualification-p04c.test.mjs",
+        "orch/test/task-p04d.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/repository-controller*.mjs",
+        "orch/src/controller-*.mjs",
+        "orch/src/setup-controller.mjs",
+        "orch/src/setup-qualification.mjs",
+        "orch/src/setup-repository-controller.mjs",
+        "orch/src/setup-task.mjs",
+        "orch/src/task-cases.mjs",
+        "orch/src/role-packet.mjs"
+      ]
+    },
+    "setup": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/setup-p07a.test.mjs",
+        "orch/test/setup-p07b.test.mjs",
+        "orch/test/setup-p07c.test.mjs",
+        "orch/test/setup-p07d.test.mjs",
+        "orch/test/setup-p07e.test.mjs",
+        "orch/test/setup-p07f.test.mjs",
+        "orch/test/setup-p07g.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/setup*.mjs",
+        "orch/src/exe.mjs",
+        "orch/src/instructions.mjs"
+      ]
+    },
+    "cleanup": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/cleanup-p02.test.mjs",
+        "orch/test/retention-p03.test.mjs",
+        "orch/test/retirement-p03c.test.mjs",
+        "orch/test/retention-helpers-p03e.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/cleanup.mjs",
+        "orch/src/retention.mjs",
+        "orch/src/archive.mjs",
+        "orch/src/metadata.mjs",
+        "orch/src/helper-reconciliation.mjs",
+        "orch/src/resources.mjs"
+      ]
+    },
+    "adoption": {
+      "stage": "integration",
+      "execution": "parallel",
+      "files": [
+        "orch/test/adopt.test.mjs",
+        "orch/test/adoption-p01.test.mjs",
+        "orch/test/adoption-p04h.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/adopt.mjs",
+        "orch/src/instructions.mjs",
+        ".agents/**",
+        "templates/**"
+      ]
+    },
+    "usage": {
+      "stage": "integration",
+      "execution": "parallel",
+      "files": [
+        "orch/test/usage-p08a.test.mjs",
+        "orch/test/quota-p08c.test.mjs",
+        "orch/test/catalog-p06b.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/usage*.mjs",
+        "orch/src/subscription-collectors.mjs",
+        "orch/src/quota.mjs",
+        "orch/src/routing.mjs",
+        "orch/src/adviser.mjs",
+        "orch/src/catalog*.mjs",
+        "orch/src/models.mjs"
+      ]
+    },
+    "adapters": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/adapters.test.mjs",
+        "orch/test/adapters-p04b.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/adapters/**",
+        "orch/src/exe.mjs"
+      ]
+    },
+    "mcp": {
+      "stage": "integration",
+      "execution": "serial",
+      "files": [
+        "orch/test/mcp.test.mjs"
+      ],
+      "inputs": [
+        "orch/src/mcp.mjs"
+      ]
+    },
+    "guard": {
+      "stage": "integration",
+      "execution": "parallel",
+      "files": [
+        "orch/test/guard.test.mjs"
+      ],
+      "inputs": [
+        "hooks/**"
+      ]
+    }
+  }
+}
