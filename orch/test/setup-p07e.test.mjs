@@ -39,6 +39,16 @@ test('P07e: actual hook protocol permits an exact command, audits decisions and 
   assert.equal(call('{malformed'),'deny');fs.appendFileSync(file,' ');assert.equal(call(request(policy.commands[0])),'deny');
 });
 test('P07e: native runner preflight obtains its own real creation time without launching a model',async()=>{const createdAt=await nativeControllerIdentity();assert.equal(typeof createdAt,'string');assert.match(createdAt,process.platform==='linux'?/^linux:[0-9a-f-]{36}:\d+:\d+$/:/^ms:\d+$/);});
+test('P07e: Windows self identity survives PowerShell startup beyond five seconds', {skip:process.platform!=='win32',timeout:45000}, async t=>{
+  const expected=await nativeControllerIdentity();assert.equal(typeof expected,'string');
+  const nativeExec=childProcess.execFile,started=Date.now(),queries=[];
+  mock.method(childProcess,'execFile',(exe,args,options,done)=>nativeExec(exe,[...args.slice(0,-1),'Start-Sleep -Milliseconds 6000; '+args.at(-1)],options,(error,stdout,stderr)=>{
+    queries.push({timeout:options.timeout,elapsedMs:Date.now()-started});done(error,stdout,stderr);
+  }));
+  syncBuiltinESMExports();t.after(()=>{mock.restoreAll();syncBuiltinESMExports();});
+  assert.equal(await nativeControllerIdentity(),expected);
+  assert.equal(queries.length,1);assert.equal(queries[0].timeout,15000);assert.ok(queries[0].elapsedMs>=6000);
+});
 function mockIdentityQuery(t, answer) {
   mock.method(childProcess, 'execFile', (exe,args,options,callback) => {
     const child=/** @type {any} */(new EventEmitter());child.kill=()=>true;
@@ -50,7 +60,7 @@ function mockIdentityQuery(t, answer) {
 test('P07e: Windows self identity bypasses an unavailable CIM provider', {skip:process.platform!=='win32'}, async t=>{
   const calls=[];
   mockIdentityQuery(t,(exe,script,options,done)=>{
-    calls.push(script);assert.equal(exe,'powershell.exe');assert.ok(options.timeout>0&&options.timeout<=5000);
+    calls.push(script);assert.equal(exe,'powershell.exe');assert.equal(options.timeout,15000);
     if(script.includes('Get-CimInstance')){done(Object.assign(Error('controlled CIM timeout'),{killed:true,signal:'SIGTERM'}),'','');return;}
     assert.ok(script.includes('[Diagnostics.Process]::GetProcessById('+process.pid+')'));
     assert.match(script,/StartTime/);assert.match(script,/ToUnixTimeMilliseconds/);assert.match(script,/Dispose/);
@@ -74,7 +84,7 @@ test('P07e: Windows self identity bounds a hung query and refuses launch failure
   mock.method(childProcess,'execFile',()=>({kill(){killed++;return true;}}));
   syncBuiltinESMExports();t.after(()=>{mock.restoreAll();syncBuiltinESMExports();});
   t.mock.timers.enable({apis:['setTimeout']});
-  const pending=nativeControllerIdentity();t.mock.timers.tick(5250);
+  const pending=nativeControllerIdentity();t.mock.timers.tick(15250);
   assert.equal(await pending,null);assert.equal(killed,1);
   mock.restoreAll();mock.method(childProcess,'execFile',()=>{throw Error('spawn refused');});syncBuiltinESMExports();
   assert.equal(await nativeControllerIdentity(),null);assert.equal(killed,1);

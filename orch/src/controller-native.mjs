@@ -4,7 +4,7 @@ import path from 'node:path';
 import {spawn,spawnSync,execFileSync,execFile} from 'node:child_process';
 import {controllerExecutionSpec} from './setup-controller.mjs';
 import {subscriptionEnvironment} from './setup-qualification.mjs';
-import {ownChildCreationTime,creationTimesOf} from './procs.mjs';
+import {ownChildCreationTime,creationTimesOf,IDENTITY_QUERY_MS} from './procs.mjs';
 import {creationPoint} from './process-time.mjs';
 import {fileURLToPath} from 'node:url';
 import {controllerWorkdir,controllerLocalEnvironment} from './controller-profiles.mjs';
@@ -25,14 +25,14 @@ export async function nativeControllerIdentity(){
     let settled=false,timer,child;
     const finish=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);};
     try{child=execFile('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
-      {encoding:'utf8',windowsHide:true,timeout:5000,maxBuffer:4096},(error,stdout)=>{
+      {encoding:'utf8',windowsHide:true,timeout:IDENTITY_QUERY_MS,maxBuffer:4096},(error,stdout)=>{
         if(error){finish(null);return;}
         try{const row=JSON.parse(stdout),point=creationPoint(row?.createdAt);
           finish(row?.pid===process.pid&&point?.kind==='wall'&&point.value>=0?row.createdAt:null);
         }catch{finish(null);}
       });
     }catch{finish(null);return;}
-    if(!settled){timer=setTimeout(()=>{try{child.kill();}catch{}finish(null);},5250);timer.unref?.();}
+    if(!settled){timer=setTimeout(()=>{try{child.kill();}catch{}finish(null);},IDENTITY_QUERY_MS+250);timer.unref?.();}
   });
 }
 export function controllerFailureState(stage){const attempted=['spawn','controller-identity','completion','native-export'].includes(stage);return {state:attempted?'uncertain':'preflight-refused',controllerLaunchAttempted:attempted};}

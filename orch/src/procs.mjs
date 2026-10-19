@@ -16,6 +16,10 @@ import fs from 'node:fs/promises';
 import { creationPoint, tableClockScope } from './process-time.mjs';
 
 const PS = 'powershell.exe';
+// One-shot identity reads at spawn get one shared bound. A freshly booted hosted Windows
+// runner was observed to need more than 5 s just to start powershell.exe; a timed-out
+// read leaves identity `unknown` for good, since it is never adopted later.
+export const IDENTITY_QUERY_MS = 15000;
 const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
 
 /** Normalise whatever CIM hands back into a stable comparable string. */
@@ -468,7 +472,7 @@ export function terminateSelf() {
  * or not at all, never adopted from whoever holds the pid now).
  * @returns {Promise<string|null>}
  */
-export async function ownChildCreationTime(pid, { deadlineMs = 4000 } = {}) {
+export async function ownChildCreationTime(pid, { deadlineMs = IDENTITY_QUERY_MS } = {}) {
   const t = await readProcessTable({ deadlineMs, pids: [pid] });
   const hit = t && t.find((p) => p.pid === Number(pid));
   if (!hit || hit.ppid !== process.pid) return null;
