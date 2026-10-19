@@ -630,7 +630,9 @@ public static class OrchWorkerIdentity {
     const ps = execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd],
-      { encoding: 'utf8', windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 },
+      // A hosted Windows run exhausted the former 5s bound before identity returned.
+      // Allow one 15s query; the same-handle/parent and exited-child checks still gate evidence.
+      { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
       (err, stdout) => {
         if (err) {
           append(F.keeper, { event: 'worker-identity-unavailable', reason: err.killed ? 'query-timeout' : 'query-error', at: nowIso() });

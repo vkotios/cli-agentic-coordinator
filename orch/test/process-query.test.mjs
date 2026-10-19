@@ -8,15 +8,15 @@ import {execFile,spawn} from 'node:child_process';
 // Exercise the keeper's real narrow function without executing its admission loop.
 const keeperSource=fs.readFileSync(new URL('../src/keeper.mjs',import.meta.url),'utf8');
 const captureSource=keeperSource.slice(keeperSource.indexOf('function captureWorkerIdentity('),keeperSource.indexOf('\nfunction closeFds('));
-async function captureIdentity({stdout='',error=null,exited=false,pid=42,parent=43,native=false,spawnFailure=false}={}){
+async function captureIdentity({stdout='',error=null,exited=false,pid=42,parent=43,native=false,nativeDelayMs=0,spawnFailure=false}={}){
   const events=[];let command;
   await new Promise(resolve=>{
     const context=vm.createContext({process:{platform:'win32',pid:parent},workerExited:exited,F:{keeper:'keeper.ndjson'},nowIso:()=>new Date().toISOString(),
       append:(_file,event)=>events.push(event),execFile:(exe,args,options,callback)=>{
         command=args.at(-1);
-        assert.equal(options.timeout,5000,'the identity read must stay bounded');
+        assert.equal(options.timeout,15000,'the one-shot identity read must stay bounded at fifteen seconds');
         if(spawnFailure){queueMicrotask(()=>resolve());throw Error('spawn unavailable');}
-        if(native)return execFile(exe,[...args.slice(0,-1),"function Get-CimInstance { throw 'CIM deliberately unavailable' }; "+command],options,(err,out)=>{callback(err,out);resolve();});
+        if(native)return execFile(exe,[...args.slice(0,-1),`Start-Sleep -Milliseconds ${nativeDelayMs}; function Get-CimInstance { throw 'CIM deliberately unavailable' }; `+command],options,(err,out)=>{callback(err,out);resolve();});
         queueMicrotask(()=>{callback(error,stdout);resolve();});return {on(){}};
       }});
     vm.runInContext(captureSource+'\ncaptureWorkerIdentity('+pid+');',context);
@@ -42,8 +42,8 @@ test('keeper never records foreign, malformed, failed or exited-child identity e
   assert.equal((await captureIdentity({spawnFailure:true})).events.length,0);
 });
 
-test('keeper reads a genuine Windows child birth and parent with CIM unavailable',{skip:process.platform!=='win32',timeout:15000},async()=>{
-  const child=spawn(process.execPath,['-e',"process.stdin.resume();process.stdin.on('end',()=>process.exit(0));setTimeout(()=>process.exit(1),12000).unref()"],{windowsHide:true});
+test('keeper reads a genuine Windows child birth and parent with CIM unavailable',{skip:process.platform!=='win32',timeout:45000},async()=>{
+  const child=spawn(process.execPath,['-e',"process.stdin.resume();process.stdin.on('end',()=>process.exit(0));setTimeout(()=>process.exit(1),40000).unref()"],{windowsHide:true});
   const closed=new Promise(resolve=>child.once('close',resolve));
   try{
     const result=await captureIdentity({pid:child.pid,parent:process.pid,native:true});
@@ -74,4 +74,15 @@ test('a failed query can recover within its existing budget and diagnostics cann
   const table=await readProcessTable({onFailure:f=>failures.push(f)},{query:async()=>++calls===1?{raw:null,failure:{reason:'query-error',code:1,signal:null}}:{raw:'{"ProcessId":42,"ParentProcessId":1,"Name":"test","CreationDate":"ms:1"}',failure:null}});
   assert.equal(calls,2);assert.equal(failures.length,1);assert.equal(verifyIdentity(42,'ms:1',table).verdict,'match');
   assert.equal(await readProcessTable({attempts:1,onFailure:()=>{throw Error('diagnostics unavailable');}},{query:async()=>({raw:null,failure:{reason:'query-timeout'}})}),null);
+});
+
+test('keeper captures a genuine child when native startup exceeds five seconds',{skip:process.platform!=='win32',timeout:35000},async()=>{
+  const child=spawn(process.execPath,['-e',"process.stdin.resume();process.stdin.on('end',()=>process.exit(0));setTimeout(()=>process.exit(1),25000).unref()"],{windowsHide:true});
+  const closed=new Promise(resolve=>child.once('close',resolve));
+  try{
+    const result=await captureIdentity({pid:child.pid,parent:process.pid,native:true,nativeDelayMs:6000});
+    assert.equal(result.events.length,1,'one still-bounded native query must allow startup beyond the observed five-second hosted deadline');
+    const observed=await readProcessTable({pids:[child.pid]});
+    assert.equal(verifyIdentity(child.pid,result.events[0].worker_created_at,observed).verdict,'match','delayed native evidence must still equal the independent OS birth');
+  }finally{child.stdin.end();await closed;}
 });

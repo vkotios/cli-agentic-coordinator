@@ -7,7 +7,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Failure evidence stays small and contains only identity/status categories.
 const short = value => typeof value === 'string' ? value.slice(0, 160) : null;
-function fixtureQueryFailures(dir) {
+export function fixtureQueryFailures(dir) {
     const failures = [];
     for (const [source, name, kind, field] of [
         ['keeper', 'keeper.ndjson', 'worker-identity-unavailable', 'event'],

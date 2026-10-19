@@ -8,6 +8,7 @@ import path from 'node:path';
 import { makeCase, orch, idFrom, waitFor, waitForStatus, readRunRecord, testReps } from './helpers.mjs';
 import { g, makeRepo, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { normalizeRepoPath, parseAllowBlock } from '../src/scope.mjs';
+import { fixtureQueryFailures } from './observed-worker.mjs';
 import { wpKey, ageText, assertClaimant } from '../src/claims.mjs';
 
 const json = (r) => {
@@ -160,7 +161,7 @@ for (const by of ['opencode', 'vibe', 'copilot', 'muse']) {
       }, { timeoutMs: 45000, what: `P04 ${by} captured worker identity and helper audit` });
     } catch (error) {
       const current = readRunRecord(c.stateRoot, runId);
-      error.message += `; observed ${JSON.stringify({ status: current?.status, worker_pid: current?.worker_pid, worker_created_at: current?.worker_created_at, helper_audit: current?.helper_audit })}`;
+      error.message += `; observed ${JSON.stringify({ status: current?.status, worker_pid: current?.worker_pid, worker_created_at: current?.worker_created_at, helper_audit: current?.helper_audit, query_failures: fixtureQueryFailures(path.join(c.stateRoot, 'runs', runId)) })}`;
       throw error;
     }
     fs.writeFileSync(releaseWorker, 'release\n');
