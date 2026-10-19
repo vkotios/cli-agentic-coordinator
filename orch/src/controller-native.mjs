@@ -1,10 +1,11 @@
 // One ephemeral, approved native controller process. No scheduler, retry or tree kill.
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn,spawnSync,execFileSync} from 'node:child_process';
+import {spawn,spawnSync,execFileSync,execFile} from 'node:child_process';
 import {controllerExecutionSpec} from './setup-controller.mjs';
 import {subscriptionEnvironment} from './setup-qualification.mjs';
-import {ownChildCreationTime,creationTimesOf} from './procs.mjs';
+import {ownChildCreationTime,creationTimesOf,IDENTITY_QUERY_MS} from './procs.mjs';
+import {creationPoint} from './process-time.mjs';
 import {fileURLToPath} from 'node:url';
 import {controllerWorkdir,controllerLocalEnvironment} from './controller-profiles.mjs';
 import {aliasFor} from './adapters/vibe.mjs';
@@ -13,7 +14,27 @@ import {subscriptionControllerSpec} from './controller-subscriptions.mjs';
 import {validateMuseSubscription} from './adapters/muse.mjs';
 import {readBounded} from './adapters/subscription-cli.mjs';
 
-export async function nativeControllerIdentity(){const observed=await creationTimesOf([process.pid]);return observed.times[process.pid]??null;}
+export async function nativeControllerIdentity(){
+  if(process.platform!=='win32'){const observed=await creationTimesOf([process.pid]);return observed.times[process.pid]??null;}
+  // This Node process stays alive while awaiting its own birth time, so its PID cannot
+  // be reused. Read the OS process directly; do not depend on the CIM provider here.
+  const script=["$ErrorActionPreference='Stop'",
+    `$p=[Diagnostics.Process]::GetProcessById(${process.pid})`,
+    "try { $at=([DateTimeOffset]$p.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds(); [pscustomobject]@{pid=$p.Id;createdAt=('ms:'+$at)} | ConvertTo-Json -Compress } finally { $p.Dispose() }"].join('; ');
+  return new Promise(resolve=>{
+    let settled=false,timer,child;
+    const finish=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);};
+    try{child=execFile('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
+      {encoding:'utf8',windowsHide:true,timeout:IDENTITY_QUERY_MS,maxBuffer:4096},(error,stdout)=>{
+        if(error){finish(null);return;}
+        try{const row=JSON.parse(stdout),point=creationPoint(row?.createdAt);
+          finish(row?.pid===process.pid&&point?.kind==='wall'&&point.value>=0?row.createdAt:null);
+        }catch{finish(null);}
+      });
+    }catch{finish(null);return;}
+    if(!settled){timer=setTimeout(()=>{try{child.kill();}catch{}finish(null);},IDENTITY_QUERY_MS+250);timer.unref?.();}
+  });
+}
 export function controllerFailureState(stage){const attempted=['spawn','controller-identity','completion','native-export'].includes(stage);return {state:attempted?'uncertain':'preflight-refused',controllerLaunchAttempted:attempted};}
 async function main(){
 const [session,id]=process.argv.slice(2);

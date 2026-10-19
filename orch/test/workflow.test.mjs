@@ -8,6 +8,7 @@ import path from 'node:path';
 import { makeCase, orch, idFrom, waitFor, waitForStatus, readRunRecord, testReps } from './helpers.mjs';
 import { g, makeRepo, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { normalizeRepoPath, parseAllowBlock } from '../src/scope.mjs';
+import { fixtureQueryFailures } from './observed-worker.mjs';
 import { wpKey, ageText, assertClaimant } from '../src/claims.mjs';
 
 const json = (r) => {
@@ -153,10 +154,16 @@ for (const by of ['opencode', 'vibe', 'copilot', 'muse']) {
     const launched = await orch([...args, '--by', by], c.env);
     assert.equal(launched.code, 0, launched.stderr);
     runId = idFrom(launched.stdout);
-    await waitFor(() => {
+    try {
+      await waitFor(() => {
+        const current = readRunRecord(c.stateRoot, runId);
+        return current?.worker_created_at && current.helper_audit?.state === 'observed';
+      }, { timeoutMs: 45000, what: `P04 ${by} captured worker identity and helper audit` });
+    } catch (error) {
       const current = readRunRecord(c.stateRoot, runId);
-      return current?.worker_created_at && current.helper_audit?.state === 'observed';
-    }, { timeoutMs: 45000, what: `P04 ${by} captured worker identity and helper audit` });
+      error.message += `; observed ${JSON.stringify({ status: current?.status, worker_pid: current?.worker_pid, worker_created_at: current?.worker_created_at, helper_audit: current?.helper_audit, query_failures: fixtureQueryFailures(path.join(c.stateRoot, 'runs', runId)) })}`;
+      throw error;
+    }
     fs.writeFileSync(releaseWorker, 'release\n');
     await waitForStatus(c.stateRoot, runId, ['completed'], { timeoutMs: 60000 });
     const run = readRunRecord(c.stateRoot, runId);

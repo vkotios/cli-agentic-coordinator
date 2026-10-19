@@ -2,8 +2,11 @@
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
 import {REPO_ROOT} from './config.mjs';import {OrchError} from './errors.mjs';
 import {validateCatalog,previewCatalogUpdate} from './catalog.mjs';
-import {resolvedPath,withOperationLock} from './resources.mjs';import {samePath,pathKey} from './git.mjs';
+import {resolvedPath,withOperationLock} from './resources.mjs';import {samePath,pathKey} from './git.mjs';import {sleep} from './util.mjs';
 const MAX_BYTES=1048576,MAX_TRANSACTIONS=64,HEX=/^[a-f0-9]{64}$/,SNAPSHOT=/^[a-f0-9]{32}$/;
+// Windows refuses to replace a file another process holds open (even a brief read).
+// Retry the one publishing rename for about 1.6 s, then abort with the catalogue unchanged.
+const SHARING_CODES=new Set(['EPERM','EACCES','EBUSY']),PUBLISH_RETRY_MS=[25,50,100,200,400,800];
 const authority={rosterChanges:false,policyChanges:false,launchChanges:false};
 const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const token=values=>hash(JSON.stringify(values));
@@ -73,16 +76,27 @@ export function catalogHistory(file){
 function ready(file,kind='update'){const rows=entries(file);if(rows.some(e=>e.status==='prepared'))fail('An interrupted catalogue transaction needs explicit recovery');if(rows.length>=MAX_TRANSACTIONS-(kind==='update'?1:0))fail('Catalogue history is full for this operation; the last slot is reserved for rollback');}
 function approval(expected,actual){if(typeof expected!=='string'||!HEX.test(expected)||expected!==actual)fail('Catalogue approval is missing or stale; preview again');}
 function outcome(e,status){exclusive(path.join(e.dir,'outcome.json'),jsonBytes({version:1,id:e.id,recordHash:e.record.sha,status,at:new Date().toISOString()}));}
-function publish(file,current,next,kind,origin,approvalHash,recheck=()=>{}){
+async function publish(file,current,next,kind,origin,approvalHash,recheck=()=>{}){
   target(file);ready(file,kind);if(next.length>MAX_BYTES)fail('Resulting catalogue exceeds byte limit');const nextCatalog=validateCatalog(JSON.parse(next.toString('utf8').replace(/^\uFEFF/,'')));
   const id=crypto.randomBytes(16).toString('hex'),root=historyRoot(file),transactions=path.join(root,'transactions');safePath(transactions,true);fs.mkdirSync(transactions,{recursive:true,mode:0o700});safePath(transactions,true);
   const dir=path.join(transactions,id);fs.mkdirSync(dir,{mode:0o700});const directoryStamp=stamp(safePath(dir,true));
   const record={version:1,id,target:fileKey(file),kind,beforeHash:current.sha,afterHash:hash(next),beforeVersion:current.catalog.catalogVersion,afterVersion:nextCatalog.catalogVersion,at:new Date().toISOString(),origin,approvalHash};
   exclusive(path.join(dir,'record.json'),jsonBytes(record));exclusive(path.join(dir,'before.json'),current.bytes);exclusive(path.join(dir,'after.json'),next);exclusive(path.join(dir,'stage.json'),next,current.mode);
   const prepared=entry(file,id),stage=input(path.join(dir,'stage.json'),{protectedFile:true});
-  recheck();const fresh=active(file,true);target(file);if(fresh.sha!==current.sha||fresh.identity!==current.identity||fresh.revision!==current.revision||stage.sha!==record.afterHash||stamp(safePath(dir,true))!==directoryStamp)fail('Catalogue or transaction changed before publication');
-  // One rename only: Windows sharing violations leave the old catalogue and journal.
-  fs.renameSync(path.join(dir,'stage.json'),path.resolve(file));
+  const unchanged=()=>{recheck();const fresh=active(file,true);target(file);if(fresh.sha!==current.sha||fresh.identity!==current.identity||fresh.revision!==current.revision||stage.sha!==record.afterHash||stamp(safePath(dir,true))!==directoryStamp)fail('Catalogue or transaction changed before publication');};
+  // A refused rename leaves the old catalogue in place. Every attempt rechecks first, so a
+  // retry never overwrites an edit made while it waited.
+  for(let attempt=0;;attempt++){
+    unchanged();
+    try{fs.renameSync(path.join(dir,'stage.json'),path.resolve(file));break;}
+    catch(e){
+      if(!SHARING_CODES.has(e?.code))throw e;
+      if(attempt<PUBLISH_RETRY_MS.length){await sleep(PUBLISH_RETRY_MS[attempt]);continue;}
+      if(active(file,true).sha!==record.beforeHash)fail('Catalogue publication is uncertain; inspect history and recover explicitly');
+      outcome(prepared,'aborted');
+      fail('The catalogue file is in use by another process, so nothing was changed; close it and apply again');
+    }
+  }
   if(active(file,true).sha!==record.afterHash)fail('Catalogue publication is uncertain; inspect history and recover explicitly');
   outcome(prepared,'committed');return {mode:kind==='update'?'applied':'rolled-back',snapshot:id,origin,beforeVersion:record.beforeVersion,catalogVersion:record.afterVersion,currentHash:record.afterHash,authority};
 }

@@ -17,7 +17,7 @@ import { assertModelPermitted } from './models.mjs';
 import { OrchError } from './errors.mjs';
 import { laneScope, assertLaneOverrideAllowed } from './lanescope.mjs';
 import { connectHello, recoverLinuxSocket } from './lanepipe.mjs';
-import { readProcessTable, verifyIdentity, creationTimesOf, ownChildCreationTime, killChecked, treeKillChecked } from './procs.mjs';
+import { readProcessTable, verifyIdentity, creationTimesOf, ownChildCreationTime, killChecked, treeKillChecked, IDENTITY_QUERY_MS } from './procs.mjs';
 import { deriveStatus } from './statusrules.mjs';
 import { closeViewer } from './viewer.mjs';
 import { newRunId, nowIso, writeJsonAtomic, readJson, readJsonAsync, readTailLines, readTailLinesAsync, sleep, Deadline, withDeadline } from './util.mjs';
@@ -250,7 +250,7 @@ async function runLocked(args, io, opts) {
   // `undetermined` answer (a keeper frozen after its bind) left only a bare pid, and
   // `cancel --keeper` then refused forever. Identity is recorded here, at spawn, and
   // nowhere else (never adopted later from whatever process holds the pid).
-  const keeperIdentity = ownChildCreationTime(keeper.pid, { deadlineMs: 4000 });
+  const keeperIdentity = ownChildCreationTime(keeper.pid, { deadlineMs: IDENTITY_QUERY_MS });
   const admission = await readAdmission(keeper, P.admission, ADMISSION_TIMEOUT_MS);
   try {
     keeper.stdout.destroy();
@@ -337,7 +337,7 @@ async function runLocked(args, io, opts) {
   // having run (agy H4, codex H2). The keeper's identity is already on disk.
   if (monitor) {
     spawned.monitor_pid = monitor.pid;
-    spawned.monitor_created_at = await ownChildCreationTime(monitor.pid, { deadlineMs: 4000 });
+    spawned.monitor_created_at = await ownChildCreationTime(monitor.pid, { deadlineMs: IDENTITY_QUERY_MS });
     writeJsonAtomic(P.spawned, spawned); // atomic rewrite by the same sole writer
   }
 

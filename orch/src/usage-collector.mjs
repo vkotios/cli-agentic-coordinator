@@ -1,6 +1,6 @@
 // Bounded telemetry helpers, never worker/model inference launches.
 import { spawn } from 'node:child_process';
-import { ownChildCreationTime, treeKillChecked } from './procs.mjs';
+import { ownChildCreationTime, treeKillChecked, IDENTITY_QUERY_MS } from './procs.mjs';
 
 // Runtime/profile paths only. Arbitrary provider credentials and credential pointers
 // never cross this boundary, including names not anticipated by a blacklist.
@@ -36,7 +36,7 @@ function invokeOne(pool,args,format,spawnHelper) {
     const closeWaiters=[];
     child.on('close',()=>{closed=true;for(const resolve of closeWaiters)resolve();});
     const waitForClose=()=>closed?Promise.resolve():new Promise(resolve=>{const timer=setTimeout(resolve,250);closeWaiters.push(()=>{clearTimeout(timer);resolve();});});
-    const identity=process.platform==='win32' && child.pid?ownChildCreationTime(child.pid,{deadlineMs:4000}):Promise.resolve(null);
+    const identity=process.platform==='win32' && child.pid?ownChildCreationTime(child.pid,{deadlineMs:IDENTITY_QUERY_MS}):Promise.resolve(null);
     const finish=result=>{
       if(settled)return;
       settled=true;clearTimeout(timer);

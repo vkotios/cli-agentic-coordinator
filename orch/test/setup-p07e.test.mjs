@@ -1,4 +1,7 @@
-import {test} from 'node:test';
+import {test, mock} from 'node:test';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {EventEmitter} from 'node:events';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,6 +39,56 @@ test('P07e: actual hook protocol permits an exact command, audits decisions and 
   assert.equal(call('{malformed'),'deny');fs.appendFileSync(file,' ');assert.equal(call(request(policy.commands[0])),'deny');
 });
 test('P07e: native runner preflight obtains its own real creation time without launching a model',async()=>{const createdAt=await nativeControllerIdentity();assert.equal(typeof createdAt,'string');assert.match(createdAt,process.platform==='linux'?/^linux:[0-9a-f-]{36}:\d+:\d+$/:/^ms:\d+$/);});
+test('P07e: Windows self identity survives PowerShell startup beyond five seconds', {skip:process.platform!=='win32',timeout:45000}, async t=>{
+  const expected=await nativeControllerIdentity();assert.equal(typeof expected,'string');
+  const nativeExec=childProcess.execFile,started=Date.now(),queries=[];
+  mock.method(childProcess,'execFile',(exe,args,options,done)=>nativeExec(exe,[...args.slice(0,-1),'Start-Sleep -Milliseconds 6000; '+args.at(-1)],options,(error,stdout,stderr)=>{
+    queries.push({timeout:options.timeout,elapsedMs:Date.now()-started});done(error,stdout,stderr);
+  }));
+  syncBuiltinESMExports();t.after(()=>{mock.restoreAll();syncBuiltinESMExports();});
+  assert.equal(await nativeControllerIdentity(),expected);
+  assert.equal(queries.length,1);assert.equal(queries[0].timeout,15000);assert.ok(queries[0].elapsedMs>=6000);
+});
+function mockIdentityQuery(t, answer) {
+  mock.method(childProcess, 'execFile', (exe,args,options,callback) => {
+    const child=/** @type {any} */(new EventEmitter());child.kill=()=>true;
+    setImmediate(()=>{answer(exe,String(args.at(-1)),options,callback);child.emit('close',0);});
+    return child;
+  });
+  syncBuiltinESMExports();t.after(()=>{mock.restoreAll();syncBuiltinESMExports();});
+}
+test('P07e: Windows self identity bypasses an unavailable CIM provider', {skip:process.platform!=='win32'}, async t=>{
+  const calls=[];
+  mockIdentityQuery(t,(exe,script,options,done)=>{
+    calls.push(script);assert.equal(exe,'powershell.exe');assert.equal(options.timeout,15000);
+    if(script.includes('Get-CimInstance')){done(Object.assign(Error('controlled CIM timeout'),{killed:true,signal:'SIGTERM'}),'','');return;}
+    assert.ok(script.includes('[Diagnostics.Process]::GetProcessById('+process.pid+')'));
+    assert.match(script,/StartTime/);assert.match(script,/ToUnixTimeMilliseconds/);assert.match(script,/Dispose/);
+    done(null,JSON.stringify({pid:process.pid,createdAt:'ms:1790000000123'}),'');
+  });
+  assert.equal(await nativeControllerIdentity(),'ms:1790000000123');
+  assert.equal(calls.length,1);assert.ok(calls.every(s=>!s.includes('Get-CimInstance')));
+});
+test('P07e: Windows self identity refuses unreadable, malformed and foreign process evidence', {skip:process.platform!=='win32'}, async t=>{
+  let reply='',error=null,calls=0;
+  mockIdentityQuery(t,(_exe,_script,_options,done)=>{calls++;done(error,reply,'private stderr must not become identity');});
+  for(const value of ['', 'invalid JSON', 'null', JSON.stringify({pid:process.pid+1,createdAt:'ms:1790000000123'}), JSON.stringify({pid:process.pid,createdAt:null}), JSON.stringify({pid:process.pid,createdAt:'ms:01790000000123'}), JSON.stringify({pid:process.pid,createdAt:'ms:999999999999999999999'}), JSON.stringify({pid:process.pid,createdAt:'ticks:12'})]){
+    reply=value;assert.equal(await nativeControllerIdentity(),null);
+  }
+  reply=JSON.stringify({pid:process.pid,createdAt:'ms:1790000000123'});
+  for(const failure of [Object.assign(Error('timeout'),{killed:true,signal:'SIGTERM'}),Object.assign(Error('access denied'),{code:'EACCES'})]){error=failure;assert.equal(await nativeControllerIdentity(),null);}
+  assert.equal(calls,10,'one bounded native query per read; no fallback or relaunch');
+});
+test('P07e: Windows self identity bounds a hung query and refuses launch failure', {skip:process.platform!=='win32'}, async t=>{
+  let killed=0;
+  mock.method(childProcess,'execFile',()=>({kill(){killed++;return true;}}));
+  syncBuiltinESMExports();t.after(()=>{mock.restoreAll();syncBuiltinESMExports();});
+  t.mock.timers.enable({apis:['setTimeout']});
+  const pending=nativeControllerIdentity();t.mock.timers.tick(15250);
+  assert.equal(await pending,null);assert.equal(killed,1);
+  mock.restoreAll();mock.method(childProcess,'execFile',()=>{throw Error('spawn refused');});syncBuiltinESMExports();
+  assert.equal(await nativeControllerIdentity(),null);assert.equal(killed,1);
+});
 test('P07e: native controller launch is exact-approved once, and never repeats an uncertain spawn',async t=>{assert.equal(typeof api.runController,'function');const c=await fixture(t,'run-once'),o=await offer(c);await api.prepareController(c.session,{offerHash:o.offerHash,approve:true},{binding});let calls=0;await assert.rejects(api.runController(c.session,{offerHash:o.offerHash,approve:false},{binding,spawn:()=>{calls++;}}));await assert.rejects(api.runController(c.session,{offerHash:o.offerHash,approve:true},{binding,spawn:()=>{calls++;throw Error('spawn failure');}}));await assert.rejects(api.runController(c.session,{offerHash:o.offerHash,approve:true},{binding,spawn:()=>{calls++;}}));assert.equal(calls,1);});
 const write=(file,value)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(value));};
 async function completedController(t,name){

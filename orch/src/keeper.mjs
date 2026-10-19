@@ -601,23 +601,34 @@ function captureWorkerIdentity(pid) {
     return;
   }
   try {
+    // Birth and parent come from one CIM row. The parent check and live-child guard
+    // remain mandatory: never bind a replacement PID or fill a missing identity from a
+    // monitor's later snapshot.
     const cmd =
       `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | ` +
       'Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress -Depth 2';
     const ps = execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd],
-      { encoding: 'utf8', windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 },
+      // Starting powershell.exe alone took more than 5 s on freshly booted hosted runners.
+      // Same bound as procs.mjs IDENTITY_QUERY_MS (this file imports only Node built-ins).
+      { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
       (err, stdout) => {
-        if (err && !stdout) return;
+        if (err) {
+          append(F.keeper, { event: 'worker-identity-unavailable', reason: err.killed ? 'query-timeout' : 'query-error', at: nowIso() });
+          return;
+        }
         // Record ONLY while this is provably still our child: the worker has not exited
         // (so its pid cannot have been reused) and the process answering is parented by
         // this keeper. Otherwise record nothing - an absent identity stays `unknown`, and
         // every kill path refuses on `unknown` (astra H4).
         if (workerExited) return;
-        const pp = /"ParentProcessId":(\d+)/.exec(String(stdout || ''));
+        const out = String(stdout || '');
+        const id = /"ProcessId":(\d+)/.exec(out);
+        if (!id || Number(id[1]) !== Number(pid)) return;
+        const pp = /"ParentProcessId":(\d+)/.exec(out);
         if (!pp || Number(pp[1]) !== process.pid) return;
-        const m = /\/Date\((-?\d+)/.exec(String(stdout || ''));
+        const m = /\/Date\((-?\d+)/.exec(out);
         if (!m) return;
         append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: `ms:${m[1]}`, at: nowIso() });
       },

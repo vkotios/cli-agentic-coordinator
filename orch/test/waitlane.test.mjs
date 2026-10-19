@@ -73,6 +73,16 @@ test(`G6/TD: wait-lane against held / free / frozen holders, ${REPS}x each`, { t
     const run = await orch(runArgs(c, ['--flag', '--hold', '--flag', '20']), c.env);
     const id = idFrom(run.stdout);
     await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'spawned'), { timeoutMs: 20000, what: 'spawn' });
+    // The spawned event precedes the keeper's final worker-holder publication.
+    // Snapshot only after that writer has finished; wait-lane must not be blamed
+    // for the keeper's own atomic rewrite racing this test's baseline read.
+    await waitFor(() => {
+      try {
+        const holder = JSON.parse(fs.readFileSync(path.join(c.laneDirLocal, 'holder.json'), 'utf8'));
+        const worker = keeperLines(c.stateRoot, id).find((line) => line.event === 'spawned')?.worker_pid;
+        return holder.run_id === id && holder.worker_pid === worker && Number.isSafeInteger(worker) ? holder : null;
+      } catch { return null; }
+    }, { timeoutMs: 20000, what: 'fixture worker holder publication before read-only snapshot' });
     const before = laneSnapshot(c.laneDirLocal);
     const t0 = Date.now();
     const r = await orch(['wait-lane', '--lane', 'local', '--timeout', '2', '--json'], c.env);
