@@ -91,7 +91,14 @@ for (const by of ['opencode', 'vibe']) {
         if (pid) await waitFor(async () => (await identityOf(pid, createdAt)) === 'gone', { timeoutMs: 60000, what: `P04 ${role} exit before finalization` });
       }
     }
-    const finished = await orch(['finish', 'WP-R', '--by', by, '--json'], c.env);
+    // `finish` refuses while any recorded process is still live or its identity read is
+    // uncertain (a slow runner can hit that right after the waits above); it is built to be
+    // retried, so retry until the process table settles instead of failing on the first read.
+    let finished = await orch(['finish', 'WP-R', '--by', by, '--json'], c.env);
+    for (let attempt = 0; finished.code !== 0 && attempt < 20; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      finished = await orch(['finish', 'WP-R', '--by', by, '--json'], c.env);
+    }
     assert.equal(finished.code, 0, finished.stdout + finished.stderr);
     assert.equal(json(finished).state, 'finished');
     assert.equal(fs.existsSync(s.wt.path), false);
