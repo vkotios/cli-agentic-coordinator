@@ -38,6 +38,7 @@ Common to all workers:
 
 | copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
 | muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
+| aider | `ORCH_AIDER_EXE` or `exe.aider` | `aider` (or `aider.exe`) on `PATH` |
 
 A CLI that cannot be found is a clear `cli-not-found` error naming the override to set. The `.cmd`
 shims npm installs are deliberately **not** accepted (see opencode below).
@@ -273,6 +274,25 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   other tool profiles remain unqualified. Separate `orch adopt --harness muse`
   preserves native fallback instructions and merges owned project MCP wiring,
   without trust grants or native launches. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
+
+## aider (implementer)
+
+- Worker adapter only: `orch run --cli aider --model <selector>`. Aider is a BYOK/API-key CLI: you
+  install it and configure provider keys yourself; orch never touches credentials or billing.
+- **unverified** (from the official options reference and scripting docs; no run recorded yet).
+- Headless one-shot launch: `--message-file <handoff>` delivers the prompt from a file (never argv),
+  `--yes-always` for an unattended run, empty stdin so the prompt is never delivered twice.
+- The model is always pinned with `--model`; aider's config default is never trusted. Extra flags
+  that orch owns (prompt, model, git, verification, effort) are refused on `--flag`.
+- git stays with orch: `--no-auto-commits` and `--no-dirty-commits` so the worker never commits
+  inside the run worktree. `--no-auto-lint` / `--no-auto-test`: verification belongs to orch's
+  review flow, not a hidden shell command.
+- The reviewer role is refused: aider has no read-only confinement and applies edits under
+  `--yes-always`. Use another CLI for `orch review`.
+- Model attribution is unknown: one-shot output names no served model, so the record never claims
+  the requested model as the model used.
+- Streaming stays on; captured stdout is the heartbeat and the final message. `--no-pretty` keeps
+  ANSI escapes out of the record.
 
 ## Claude escalation reviewers
 

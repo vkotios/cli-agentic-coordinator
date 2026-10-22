@@ -20,7 +20,7 @@ const deny = (reason, rule) => ({ block: true, reason, rule });
  * 1. WORKER LAUNCH
  * ===================================================================== */
 
-export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot', 'muse'];
+export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot', 'muse', 'aider'];
 
 /** npm / PyPI package names that install a worker CLI. */
 const PACKAGE_ALIASES = {
@@ -28,6 +28,8 @@ const PACKAGE_ALIASES = {
   '@openai/codex': 'codex',
   '@github/copilot': 'copilot',
   'mistral-vibe': 'vibe',
+  'aider-chat': 'aider',
+  'aider': 'aider',
 };
 
 const HELP_FLAGS = new Set(['--help', '-h', '--version', '-v', '-V', '/?']);
@@ -313,6 +315,8 @@ export function judgeWorker(cli, args) {
     if (hasFlag('-p', '--prompt')) launch = 'copilot -p';
   } else if (cli === 'muse') {
     if (a.includes('exec') || a.includes('serve')) launch = 'muse exec/serve';
+  } else if (cli === 'aider') {
+    if (hasFlag('-m', '--msg', '--message', '--message-file', '-f')) launch = 'aider --message/--message-file';
   }
   if (!launch) return ok;
   return { ...deny(`Blocked: a direct \`${launch}\` launch bypasses orch. ${orchHint(cli)}`, 'worker-launch'), cli };
@@ -346,7 +350,7 @@ export function collectVars(text, outer = {}) {
   return vars;
 }
 
-const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot|muse(?:-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?)?)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
+const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot|muse(?:-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?)?|aider)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
 
 /** Program name of a (resolved) token; an expression such as `(Get-Command codex).Source` names its worker. */
 function programOf(v) {

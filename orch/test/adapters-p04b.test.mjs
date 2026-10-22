@@ -171,3 +171,49 @@ for(const role of ['implement','review']){
     }finally{adapter.build=originalBuild;delete adapter.testOnly;for(const[k,v]of Object.entries(before))if(v===undefined)delete process.env[k];else process.env[k]=v;}
   });
 }
+
+/* -------------------------------------------------------------- aider ----- */
+
+const aider=(await import('../src/adapters/aider.mjs').catch(()=>({default:null}))).default;
+test('P04b aider: registered adapter requires exact model, protects owned options, refuses review',async t=>{
+  assert.ok(aider,'adapter exists');const ctx=context(t);const {PUBLIC_ADAPTERS,getAdapter}=await import('../src/adapters/index.mjs');
+  assert.ok(PUBLIC_ADAPTERS.includes('aider'));assert.equal(getAdapter('aider'),aider);
+  assert.equal(aider.lane,'cloud');assert.equal(aider.heartbeatStream,'stdout');assert.equal(aider.canonicalModel('Provider/EXAMPLE-MODEL'),'example-model');
+  for(const model of ['','sonnet','auto'])assert.throws(()=>aider.validateRequest({...ctx,model}),/exact model selector/i);
+  for(const flags of [['--model','other'],['--message-file','other.txt'],['-m','hi'],['--yes-always'],['--auto-commits'],['--auto-test'],['--reasoning-effort','high'],['--edit-format','diff'],['--commit'],['--dry-run'],['--upgrade']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i);
+  assert.throws(()=>aider.validateRequest({...ctx,agent:'foreign'}),/agent/i);
+  for(const effort of ['ludicrous','ultra','max'])assert.throws(()=>aider.validateRequest({...ctx,effort}),/effort/i);
+  assert.doesNotThrow(()=>aider.validateRequest({...ctx,effort:'high'}));
+  assert.throws(()=>aider.validateRequest({...ctx,role:'review'}),/read-only reviewer/i);
+  assert.doesNotThrow(()=>aider.preLaunch({...ctx,ownerApprovedModel:true}));
+});
+test('P04b aider: direct executable, file prompt, empty stdin, no commits, effort mapping',t=>{
+  assert.ok(aider);const ctx=context(t);
+  env({ORCH_AIDER_EXE:'C:/fixture/aider.exe'},()=>{
+    const built=aider.build(ctx);
+    assert.equal(built.file,'C:/fixture/aider.exe');assert.equal(built.cwd,ctx.dir);assert.equal(built.envSet.PWD,ctx.dir);
+    assert.deepEqual(built.envDelete,[]);
+    const i=built.args.indexOf('--message-file');assert.ok(i>0);assert.equal(built.args[i+1],ctx.promptPath);
+    assert.ok(built.args.includes('--yes-always'));
+    assert.ok(built.args.includes('--no-auto-commits'));assert.ok(built.args.includes('--no-dirty-commits'));
+    assert.ok(built.args.includes('--no-auto-lint'));assert.ok(built.args.includes('--no-auto-test'));
+    assert.ok(!built.args.includes('Unicode handoff: café'),'the prompt is never on argv');
+    assert.equal(built.args.filter(a=>a==='--model').length,1);
+    assert.equal(fs.readFileSync(built.stdinFile,'utf8'),'');
+    const low=aider.build({...ctx,effort:'low'});
+    const e=low.args.indexOf('--reasoning-effort');assert.equal(low.args[e+1],'low');
+    const withFlags=aider.build({...ctx,flags:['--subtree-only','--map-tokens','1024']});
+    assert.ok(withFlags.args.includes('--subtree-only'));
+  });
+});
+test('P04b aider: model identity stays unknown; guard denies direct one-shot launches',()=>{
+  assert.ok(aider);
+  const got=aider.postExit({runDir:'.',requestedCanonical:'example-requested'});
+  assert.equal(got.actual_model,null);assert.equal(got.actual_model_source,'none');
+  assert.ok(got.warnings.some(w=>/not proof/i.test(w)));
+  assert.equal(checkCommand('aider --message-file handoff.txt',process.cwd()).block,true);
+  assert.equal(checkCommand('aider -m "do the task"',process.cwd()).block,true);
+  assert.equal(checkCommand('C:/tools/aider.exe --message "x"',process.cwd()).block,true);
+  assert.equal(checkCommand('aider --help',process.cwd()).block,false);
+  assert.equal(checkCommand('aider --version',process.cwd()).block,false);
+});
