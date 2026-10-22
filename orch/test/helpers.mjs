@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readProcessTable, verifyIdentity, killChecked } from '../src/procs.mjs';
 import { laneHome } from '../src/lanescope.mjs';
@@ -137,11 +137,26 @@ export function makeCase(name, opts = {}) {
     laneDirLocal: path.join(laneHome(), `${laneId}-local`),
     cleanup() {
       if (process.env.ORCH_KEEP_TEST_DIRS === '1') return; // keep evidence while debugging
+      // A held worker has `work` as its cwd; Windows cannot remove a process's cwd. Stop this
+      // case's own runs first (identity-checked `orch cancel`; already-terminal runs exit 0).
+      let runIds = [];
+      try {
+        runIds = fs.readdirSync(path.join(stateRoot, 'runs'));
+      } catch {
+        /* no runs were started */
+      }
+      for (const id of runIds) {
+        try {
+          execFileSync(process.execPath, [ORCH_BIN, 'cancel', id], { env, stdio: 'ignore', windowsHide: true, timeout: 30000 });
+        } catch {
+          /* the retry and the leak report below show whether it mattered */
+        }
+      }
       for (const p of [base, path.join(laneHome(), `${laneId}-local`), path.join(laneHome(), `${laneId}-cloud`)]) {
         try {
-          fs.rmSync(p, { recursive: true, force: true }); // only what this test created
-        } catch {
-          /* leave it rather than fight it */
+          fs.rmSync(p, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); // only what this test created
+        } catch (e) {
+          process.stderr.write(`leaked test dir: ${p}: ${e && e.code}\n`);
         }
       }
     },
