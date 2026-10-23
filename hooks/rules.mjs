@@ -316,7 +316,9 @@ export function judgeWorker(cli, args) {
   } else if (cli === 'muse') {
     if (a.includes('exec') || a.includes('serve')) launch = 'muse exec/serve';
   } else if (cli === 'aider') {
-    if (hasFlag('-m', '--msg', '--message', '--message-file', '-f')) launch = 'aider --message/--message-file';
+    // aider's argument parser also takes unique prefixes (`--mess`, `--message-f`) and glued short values (`-mhello`)
+    const messageLike = (x) => (x.startsWith('--') ? x.length > 3 && ['--msg', '--message', '--message-file'].some((o) => o.startsWith(x.split('=')[0])) : /^-[mf]./.test(x));
+    if (hasFlag('-m', '--msg', '--message', '--message-file', '-f') || a.some(messageLike)) launch = 'aider --message/--message-file';
   }
   if (!launch) return ok;
   return { ...deny(`Blocked: a direct \`${launch}\` launch bypasses orch. ${orchHint(cli)}`, 'worker-launch'), cli };

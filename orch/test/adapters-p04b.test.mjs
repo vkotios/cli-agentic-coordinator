@@ -237,14 +237,32 @@ test('P04b aider: a scope guard with an empty allowlist still turns the repo map
 test('P04b aider: owned flags are refused under argparse prefix abbreviations and glued short forms',t=>{
   assert.ok(aider);const ctx=context(t);
   for(const flags of [['--map-to','1024'],['--map-tokens=0'],['--fil','x.txt'],['--mod','other'],['--input-histo','x'],['--chat-hist=x'],['--llm-h','x'],['--mes','hi'],['--message-f=x'],['--yes-al'],['--auto-com'],['--re','x'],['-mhello'],['-fx.txt'],['--']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i,flags.join(' '));
-  for(const flags of [['--subtree-only'],['--map-refresh','manual'],['--no-git'],['--lint-cmd','x'],['--test-cmd','x']])assert.doesNotThrow(()=>aider.validateRequest({...ctx,flags}),flags.join(' '));
+  for(const flags of [['--suggest-shell-commands'],['--sugg'],['--pretty'],['--check-update'],['--analytics'],['--gitignore'],['--fancy-input'],['--detect-urls'],['--notifications'],['--show-model-warnings']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i,`orch passes the --no-* form: ${flags[0]}`);
+  for(const flags of [['--subtree-only'],['--map-refresh','manual'],['--lint-cmd','x'],['--test-cmd','x']])assert.doesNotThrow(()=>aider.validateRequest({...ctx,flags}),flags.join(' '));
+});
+test('P04b aider: allowlist entries resolve against the repo top, match the guard normalisation and must be creatable files',t=>{
+  assert.ok(aider);const ctx=context(t);
+  env({ORCH_AIDER_EXE:'C:/fixture/aider.exe'},()=>{
+    const top=ctx.dir;fs.mkdirSync(path.join(top,'sub'),{recursive:true});
+    const args=aider.build({...ctx,dir:path.join(top,'sub'),allowBase:top,allow:['sub/a.mjs','other/b.mjs','.\\sub\\\\c.mjs']}).args;
+    for(const f of ['--file=a.mjs','--file=../other/b.mjs','--file=c.mjs'])assert.ok(args.includes(f),f);
+    assert.equal(aider.build({...ctx,allow:['x//y.mjs','./z.mjs']}).args.filter(a=>a.startsWith('--file=')).join(','),'--file=x/y.mjs,--file=z.mjs');
+  });
+  fs.writeFileSync(path.join(ctx.dir,'afile'),'x');
+  for(const bad of ['a/./b','a/b.','a/b ','a:b','a"b','afile/child.mjs'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
+  assert.doesNotThrow(()=>aider.validateRequest({...ctx,allow:['afile','deep/new/dir/file.mjs']}),'an existing file and a not-yet-existing nested file');
+  fs.mkdirSync(path.join(ctx.dir,'srcdir2'),{recursive:true});
+  assert.doesNotThrow(()=>aider.build({...ctx,allow:['srcdir2']}),'the launch-time rebuild does no filesystem check, so it cannot throw once run artifacts exist');
 });
 test('P04b aider: final message is the ANSWER block when a reasoning model printed a THINKING block',()=>{
   assert.ok(aider);
   assert.equal(aider.extractFinalMessage('plain output\n'),'plain output');
   const out='Aider v0\n► **THINKING**\n\nreasoning...\n\n------------\n► **ANSWER**\n\nthe answer\nTokens: 1k sent\n';
   assert.equal(aider.extractFinalMessage(out),'the answer\nTokens: 1k sent');
-  assert.equal(aider.extractFinalMessage('a\n► **ANSWER**\nfirst\n► **ANSWER**\nsecond'),'second');
+  assert.equal(aider.extractFinalMessage('a\n► **THINKING**\nt\n► **ANSWER**\nline one\n► **ANSWER**\nmore\n'),'line one\n► **ANSWER**\nmore','an answer that contains the marker text is kept whole');
+  assert.equal(aider.extractFinalMessage('► **THINKING**\nt1\n► **ANSWER**\nr1\n► **THINKING**\nt2\n► **ANSWER**\nr2'),'r2','the last reply wins');
+  assert.equal(aider.extractFinalMessage('a\n► **ANSWER**\nonly\n'),'a\n► **ANSWER**\nonly','no THINKING marker: whole output');
+  assert.ok(aider.extractFinalMessage('► **THINKING**\nunfinished').includes('unfinished'),'THINKING without ANSWER: whole output');
 });
 test('P04b aider: model identity stays unknown; guard denies direct one-shot launches',()=>{
   assert.ok(aider);
@@ -254,6 +272,8 @@ test('P04b aider: model identity stays unknown; guard denies direct one-shot lau
   assert.equal(checkCommand('aider --message-file handoff.txt',process.cwd()).block,true);
   assert.equal(checkCommand('aider -m "do the task"',process.cwd()).block,true);
   assert.equal(checkCommand('C:/tools/aider.exe --message "x"',process.cwd()).block,true);
+  for(const abbreviated of ['aider --mess "x"','aider -mhello','aider --message-f=h.txt','aider --msg=x','aider -fh.txt'])assert.equal(checkCommand(abbreviated,process.cwd()).block,true,abbreviated);
+  assert.equal(checkCommand('aider --model x --map-tokens 0',process.cwd()).block,false);
   assert.equal(checkCommand('aider --help',process.cwd()).block,false);
   assert.equal(checkCommand('aider --version',process.cwd()).block,false);
 });

@@ -31,11 +31,14 @@ import path from 'node:path';
 import { OrchError } from '../errors.mjs';
 import { resolveCliExe } from '../exe.mjs';
 import { canonicalId, assertModelPermitted } from '../models.mjs';
+import { normalizeRepoPath } from '../scope.mjs';
 
 export const ALLOWED_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 
 /** Long flags orch sets itself or forbids; a `--flag` may not smuggle a second value in. */
-const OWNED_LONG_FLAGS = ['--msg', '--message', '--message-file', '--model', '--yes', '--yes-always', '--no-yes-always', '--auto-commits', '--no-auto-commits', '--dirty-commits', '--no-dirty-commits', '--auto-lint', '--no-auto-lint', '--auto-test', '--no-auto-test', '--test', '--lint', '--reasoning-effort', '--thinking-tokens', '--edit-format', '--architect', '--auto-accept-architect', '--no-auto-accept-architect', '--weak-model', '--editor-model', '--apply', '--commit', '--dry-run', '--no-dry-run', '--upgrade', '--install-main-branch', '--file', '--read', '--map-tokens', '--input-history-file', '--chat-history-file', '--llm-history-file', '--restore-chat-history', '--no-restore-chat-history'];
+const OWNED_LONG_FLAGS = ['--msg', '--message', '--message-file', '--model', '--yes', '--yes-always', '--no-yes-always', '--auto-commits', '--no-auto-commits', '--dirty-commits', '--no-dirty-commits', '--auto-lint', '--no-auto-lint', '--auto-test', '--no-auto-test', '--test', '--lint', '--reasoning-effort', '--thinking-tokens', '--edit-format', '--architect', '--auto-accept-architect', '--no-auto-accept-architect', '--weak-model', '--editor-model', '--apply', '--commit', '--dry-run', '--no-dry-run', '--upgrade', '--install-main-branch', '--file', '--read', '--map-tokens', '--input-history-file', '--chat-history-file', '--llm-history-file', '--restore-chat-history', '--no-restore-chat-history',
+  // orch passes the `--no-*` form of each of these; the positive form would undo it (`--suggest-shell-commands` runs commands under --yes-always).
+  '--show-model-warnings', '--no-show-model-warnings', '--check-update', '--no-check-update', '--analytics', '--no-analytics', '--gitignore', '--no-gitignore', '--pretty', '--no-pretty', '--fancy-input', '--no-fancy-input', '--suggest-shell-commands', '--no-suggest-shell-commands', '--notifications', '--no-notifications', '--detect-urls', '--no-detect-urls', '--disable-playwright'];
 /** Short owned flags (`-m`, `-f`); aider also takes the value glued on (`-mhello`). */
 const OWNED_SHORT_FLAGS = 'mf';
 
@@ -52,17 +55,35 @@ function isOwnedFlag(token) {
   return t.length > 1 && t[0] === '-' && OWNED_SHORT_FLAGS.includes(t[1]);
 }
 
-/** One allowlist entry, handed to aider as `--file=<path>`: an exact repo-relative file path only. */
-function allowedFileArg(entry, dir) {
-  const p = String(entry).replace(/\\/g, '/').replace(/^\.\//, '');
-  const bad = () => new OrchError(`allowlist entry "${entry}" cannot be handed to aider as a file (exact repo-relative file paths only)`, 'bad-allow');
-  if (!p || p === '.' || p.endsWith('/') || path.posix.isAbsolute(p) || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || /[\0\r\n*?]/.test(p)) throw bad();
-  try {
-    if (dir && fs.statSync(path.join(dir, p)).isDirectory()) throw bad();
-  } catch (e) {
-    if (e instanceof OrchError) throw e; // a path that does not exist yet is a file to be created
-  }
-  return `--file=${p}`;
+/**
+ * The allowlist as `--file=<path>` arguments. Entries are exact repo-relative file paths, normalised the way the
+ * scope guard compares them (NFC, `/`), resolved against the repo top (where the guard reads them) and handed to
+ * aider relative to its working directory. A file that does not exist yet is a file to be created. `stat: false`
+ * skips the filesystem checks (the launch-time rebuild must not be able to throw once run artifacts exist).
+ */
+function allowFileArgs(ctx, { stat }) {
+  const base = ctx.allowBase || ctx.dir;
+  return (ctx.allow || []).map((entry) => {
+    const bad = () => new OrchError(`allowlist entry "${entry}" cannot be handed to aider as a file (exact repo-relative file paths only)`, 'bad-allow');
+    const raw = String(entry).replace(/\\/g, '/');
+    if (!raw || raw.startsWith('/') || raw.endsWith('/') || /^[A-Za-z]:/.test(raw) || /[\0\r\n*?<>:"|]/.test(raw)) throw bad();
+    const p = normalizeRepoPath(raw, false);
+    const segs = p.split('/');
+    if (segs.some((s) => s === '' || s === '.' || s === '..') || /[. ]$/.test(segs[segs.length - 1])) throw bad();
+    if (stat && base) {
+      for (let i = 1; i <= segs.length; i++) {
+        let st = null;
+        try {
+          st = fs.statSync(path.join(base, ...segs.slice(0, i)));
+        } catch (e) {
+          if (e.code === 'ENOENT') break; // nothing deeper exists either
+          throw bad();
+        }
+        if (i < segs.length ? !st.isDirectory() : st.isDirectory()) throw bad(); // a file as a parent folder, or a directory as the entry
+      }
+    }
+    return `--file=${path.relative(ctx.dir || base, path.join(base, p)).split(path.sep).join('/')}`;
+  });
 }
 
 export function resolveAiderExe() {
@@ -71,7 +92,7 @@ export function resolveAiderExe() {
 
 const FAMILY_ALIASES = ['auto', 'default', 'sonnet', 'opus', 'haiku', 'gpt', 'gemini'];
 
-function validateRequest(ctx) {
+function validateRequest(ctx, { stat = true } = {}) {
   if (typeof ctx.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{1,199}$/.test(ctx.model) || FAMILY_ALIASES.includes(canonicalId(ctx.model))) {
     throw new OrchError('An exact model selector is required for aider; automatic/family aliases and its config default are never trusted', 'bad-model');
   }
@@ -82,7 +103,7 @@ function validateRequest(ctx) {
     throw new OrchError(`Invalid reasoning effort for aider (supported: ${ALLOWED_EFFORTS.join(', ')})`, 'bad-effort');
   }
   if (ctx.agent) throw new OrchError('Custom --agent is not supported by aider', 'forbidden-agent');
-  for (const entry of ctx.allow || []) allowedFileArg(entry, ctx.dir);
+  allowFileArgs(ctx, { stat });
   for (const f of ctx.flags || []) {
     if (isOwnedFlag(f)) throw new OrchError(`--flag ${f} is forbidden or set by orch for aider`, 'forbidden-flag');
   }
@@ -111,7 +132,7 @@ export default {
   },
 
   build(ctx) {
-    validateRequest(ctx);
+    validateRequest(ctx, { stat: false }); // preLaunch already did the filesystem checks, before any run artifact existed
     const exe = resolveAiderExe();
     const prompt = fs.readFileSync(ctx.promptPath, 'utf8');
     if (prompt.includes('\0')) throw new OrchError('the handoff contains a NUL byte', 'bad-handoff');
@@ -120,7 +141,7 @@ export default {
     fs.writeFileSync(stdinFile, '');
     // `allow` is null when the run has no scope check at all, an array (possibly empty) when it has one.
     const scoped = Array.isArray(ctx.allow);
-    const allowFiles = (ctx.allow || []).map((e) => allowedFileArg(e, ctx.dir));
+    const allowFiles = allowFileArgs(ctx, { stat: false });
     const args = [
       '--model', String(ctx.model),
       '--message-file', String(ctx.promptPath),
@@ -167,12 +188,18 @@ export default {
     };
   },
 
-  /** One-shot mode: the captured stdout, reduced to the ANSWER block when a reasoning model printed a THINKING block. */
+  /**
+   * One-shot mode: the captured stdout, reduced to the ANSWER block of the last reply that had a THINKING block (the first
+   * ANSWER marker after the last THINKING marker, so an answer that itself contains the marker text is kept whole).
+   * Without both markers the whole output is returned.
+   */
   extractFinalMessage(stdout) {
     const text = String(stdout);
-    const marks = [...text.matchAll(/^\s*► \*\*ANSWER\*\*\s*$/gm)];
-    const last = marks[marks.length - 1];
-    return (last ? text.slice(last.index + last[0].length) : text).trim();
+    const thinking = [...text.matchAll(/^[ \t]*► \*\*THINKING\*\*[ \t]*$/gm)].pop();
+    if (!thinking) return text.trim();
+    const rest = text.slice(thinking.index + thinking[0].length);
+    const answer = /^[ \t]*► \*\*ANSWER\*\*[ \t]*$/m.exec(rest);
+    return (answer ? rest.slice(answer.index + answer[0].length) : text).trim();
   },
 
   postExit() {

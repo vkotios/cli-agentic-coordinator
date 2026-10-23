@@ -290,9 +290,12 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   `--yes-always` for an unattended run, empty stdin so the prompt is never delivered twice.
 - The model is always pinned with `--model`; aider's config default is never trusted. Extra flags
   that orch owns (prompt, model, git, verification, effort, per-file context, repo map, history
-  location) are refused on `--flag` under their full name, with `=value`, and under any abbreviation:
-  aider's argument parser accepts unique prefixes (verified: `--map-to 77` sets `--map-tokens`), so
-  `--map-to`, `--fil`, `-mtext` and a bare `--` are refused too.
+  location, and both forms of every UI/shell switch orch turns off, such as `--suggest-shell-commands`,
+  `--pretty`, `--gitignore`) are refused on `--flag` under their full name, with `=value`, and under any
+  abbreviation: aider's argument parser accepts unique prefixes (verified: `--map-to 77` sets
+  `--map-tokens`), so `--map-to`, `--fil`, `-mtext` and a bare `--` are refused too. A side effect:
+  an exact flag that happens to be a prefix of an owned one (`--no-git`) is refused as well. The
+  hook guard treats abbreviated and glued message flags (`--mess`, `-mtext`) as direct launches.
 - git stays with orch: `--no-auto-commits` and `--no-dirty-commits` so the worker never commits
   inside the run worktree. `--no-auto-lint` / `--no-auto-test`: verification belongs to orch's
   review flow, not a hidden shell command.
@@ -302,18 +305,22 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   the requested model as the model used.
 - Streaming stays on; captured stdout is the heartbeat and the final message. `--no-pretty` keeps
   ANSI escapes out of the record. Reasoning models print a THINKING block before an ANSWER block;
-  the final message keeps the ANSWER block only (the full output stays in the stdout log).
+  the final message keeps the ANSWER block of the last reply (the first ANSWER marker after the last
+  THINKING marker; the full output stays in the stdout log).
 - Aider writes scratch files into the git root, and the scope guard counts untracked files. The chat,
   input and LLM history files are therefore redirected into the run folder (`aider-chat-history.md`,
   `aider-input-history`, `aider-llm-history.log`). The repo-map cache `.aider.tags.cache.v4/` cannot
   be relocated, so a run that has a scope guard (an `--allow` / `ALLOW:` entry, or a work package)
   turns the map off (`--map-tokens 0`) and passes each allowed file with `--file=<path>`: aider is
-  given exactly the allowed files (a file it creates anyway is still caught by the scope guard). A
+  given exactly the allowed files (a file it creates anyway is caught by the scope guard, which reads
+  only non-ignored paths inside the repository: a gitignored path or a write outside it is not seen). A
   run with no scope guard keeps the default repo map and leaves `.aider.tags.cache.v4/` in the
   worktree. Allowlist entries must be exact repo-relative file paths; a file that does not exist yet
-  is fine (verified: aider creates it), a directory, glob, `..` or absolute path is refused before any
-  run folder exists. Entries are handed to aider as written, while the scope guard compares them
-  NFC-normalised (and case-folded on a case-insensitive repo); keep entries in the file's own spelling.
+  is fine (verified: aider creates it). A directory, a `*`/`?` pattern, `..` or an interior `.`
+  segment, an absolute path, a trailing dot or space, any of `<>:"|`, or a file used as a parent
+  folder is refused before any run folder exists. Entries are resolved against the repository top
+  (where the scope guard reads them), normalised the way the guard compares them (NFC, `/`
+  separators) and given to aider relative to its working directory, so `--dir` may be a subfolder.
 - The ANSWER-block marker was verified on aider 0.86.2 with `--no-pretty`; if another version prints
   a different marker the final message falls back to the whole output.
 
