@@ -279,15 +279,20 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 - Worker adapter only: `orch run --cli aider --model <selector>`. Aider is a BYOK/API-key CLI: you
   install it and configure provider keys yourself; orch never touches credentials or billing.
-- Verified once: aider 0.86.2, an OpenAI-compatible local gateway (`--model openai/<id>` with
-  `OPENAI_API_BASE` / `OPENAI_API_KEY` in the environment), one small two-file edit. Other models,
-  providers and larger tasks are **unverified**; the flag set comes from the official options reference.
+- Verified on aider 0.86.2 with an OpenAI-compatible local gateway (`--model openai/<id>` with
+  `OPENAI_API_BASE` / `OPENAI_API_KEY` in the environment), one reasoning model: an allowlisted
+  two-file edit and an allowlisted new-file creation (both pass the scope guard with no untracked
+  scratch files), and an unscoped edit (leaves only `.aider.tags.cache.v4/`). Other models, providers
+  and larger tasks are **unverified**; the rest of the flag set comes from the official options reference.
 - Credentials and the API base are read from aider's own environment; orch passes the parent
   environment through and never sets them.
 - Headless one-shot launch: `--message-file <handoff>` delivers the prompt from a file (never argv),
   `--yes-always` for an unattended run, empty stdin so the prompt is never delivered twice.
 - The model is always pinned with `--model`; aider's config default is never trusted. Extra flags
-  that orch owns (prompt, model, git, verification, effort) are refused on `--flag`.
+  that orch owns (prompt, model, git, verification, effort, per-file context, repo map, history
+  location) are refused on `--flag` under their full name, with `=value`, and under any abbreviation:
+  aider's argument parser accepts unique prefixes (verified: `--map-to 77` sets `--map-tokens`), so
+  `--map-to`, `--fil`, `-mtext` and a bare `--` are refused too.
 - git stays with orch: `--no-auto-commits` and `--no-dirty-commits` so the worker never commits
   inside the run worktree. `--no-auto-lint` / `--no-auto-test`: verification belongs to orch's
   review flow, not a hidden shell command.
@@ -301,10 +306,16 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Aider writes scratch files into the git root, and the scope guard counts untracked files. The chat,
   input and LLM history files are therefore redirected into the run folder (`aider-chat-history.md`,
   `aider-input-history`, `aider-llm-history.log`). The repo-map cache `.aider.tags.cache.v4/` cannot
-  be relocated, so a run with an allowlist (`--allow` or an `ALLOW:` block) turns the map off
-  (`--map-tokens 0`) and passes each allowed file with `--file=<path>`: aider sees and edits exactly
-  the allowed files. A run with no allowlist has no scope check, keeps the default repo map and leaves
-  `.aider.tags.cache.v4/` in the worktree. Allowlist entries must be exact repo-relative file paths.
+  be relocated, so a run that has a scope guard (an `--allow` / `ALLOW:` entry, or a work package)
+  turns the map off (`--map-tokens 0`) and passes each allowed file with `--file=<path>`: aider is
+  given exactly the allowed files (a file it creates anyway is still caught by the scope guard). A
+  run with no scope guard keeps the default repo map and leaves `.aider.tags.cache.v4/` in the
+  worktree. Allowlist entries must be exact repo-relative file paths; a file that does not exist yet
+  is fine (verified: aider creates it), a directory, glob, `..` or absolute path is refused before any
+  run folder exists. Entries are handed to aider as written, while the scope guard compares them
+  NFC-normalised (and case-folded on a case-insensitive repo); keep entries in the file's own spelling.
+- The ANSWER-block marker was verified on aider 0.86.2 with `--no-pretty`; if another version prints
+  a different marker the final message falls back to the whole output.
 
 ## Claude escalation reviewers
 

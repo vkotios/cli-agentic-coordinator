@@ -21,9 +21,9 @@
 //  - Worktree stays clean (the scope guard counts untracked files): the chat, input
 //    and LLM history files are redirected into the run folder. The repo-map tags
 //    cache (`.aider.tags.cache.v4/`) has no relocation flag and is always written
-//    into the git root, so a run that carries an allowlist turns the map off
-//    (`--map-tokens 0`) and hands the allowed files to aider with `--file`. A run
-//    without an allowlist has no scope check and keeps aider's default repo map.
+//    into the git root, so a run that has a scope guard (an allowlist, or a work
+//    package) turns the map off (`--map-tokens 0`) and hands the allowed files to
+//    aider with `--file`. A run with no scope guard keeps aider's default repo map.
 //  - Reasoning models make aider print a THINKING block and an ANSWER block; the
 //    final message is the ANSWER block only.
 import fs from 'node:fs';
@@ -34,14 +34,33 @@ import { canonicalId, assertModelPermitted } from '../models.mjs';
 
 export const ALLOWED_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 
-/** Flags orch sets itself or forbids; a `--flag` may not smuggle a second value in. */
-const FORBIDDEN_FLAGS = /^(?:-m|--msg|--message|--message-file|-f|--model|--yes|--yes-always|--no-yes-always|--auto-commits|--no-auto-commits|--dirty-commits|--no-dirty-commits|--auto-lint|--no-auto-lint|--auto-test|--no-auto-test|--test|--lint|--reasoning-effort|--thinking-tokens|--edit-format|--architect|--auto-accept-architect|--no-auto-accept-architect|--weak-model|--editor-model|--apply|--commit|--dry-run|--no-dry-run|--upgrade|--install-main-branch|--file|--read|--map-tokens|--input-history-file|--chat-history-file|--llm-history-file|--restore-chat-history|--no-restore-chat-history)(?:=|$)/;
+/** Long flags orch sets itself or forbids; a `--flag` may not smuggle a second value in. */
+const OWNED_LONG_FLAGS = ['--msg', '--message', '--message-file', '--model', '--yes', '--yes-always', '--no-yes-always', '--auto-commits', '--no-auto-commits', '--dirty-commits', '--no-dirty-commits', '--auto-lint', '--no-auto-lint', '--auto-test', '--no-auto-test', '--test', '--lint', '--reasoning-effort', '--thinking-tokens', '--edit-format', '--architect', '--auto-accept-architect', '--no-auto-accept-architect', '--weak-model', '--editor-model', '--apply', '--commit', '--dry-run', '--no-dry-run', '--upgrade', '--install-main-branch', '--file', '--read', '--map-tokens', '--input-history-file', '--chat-history-file', '--llm-history-file', '--restore-chat-history', '--no-restore-chat-history'];
+/** Short owned flags (`-m`, `-f`); aider also takes the value glued on (`-mhello`). */
+const OWNED_SHORT_FLAGS = 'mf';
 
-/** One allowlist entry, handed to aider as `--file=<path>`: an exact repo-relative path only. */
-function allowedFileArg(entry) {
+/**
+ * aider (argparse) accepts any unique prefix of a long flag (`--map-to 1024` is `--map-tokens`; verified on 0.86.2),
+ * so an owned flag is refused under its full name, with `=value`, and under every prefix of it.
+ */
+function isOwnedFlag(token) {
+  const t = String(token);
+  if (t.startsWith('--')) {
+    const name = t.split('=')[0];
+    return OWNED_LONG_FLAGS.some((o) => o.startsWith(name));
+  }
+  return t.length > 1 && t[0] === '-' && OWNED_SHORT_FLAGS.includes(t[1]);
+}
+
+/** One allowlist entry, handed to aider as `--file=<path>`: an exact repo-relative file path only. */
+function allowedFileArg(entry, dir) {
   const p = String(entry).replace(/\\/g, '/').replace(/^\.\//, '');
-  if (!p || p.endsWith('/') || path.posix.isAbsolute(p) || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || /[\0\r\n*?]/.test(p)) {
-    throw new OrchError(`allowlist entry "${entry}" cannot be handed to aider as a file (exact repo-relative file paths only)`, 'bad-allow');
+  const bad = () => new OrchError(`allowlist entry "${entry}" cannot be handed to aider as a file (exact repo-relative file paths only)`, 'bad-allow');
+  if (!p || p === '.' || p.endsWith('/') || path.posix.isAbsolute(p) || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || /[\0\r\n*?]/.test(p)) throw bad();
+  try {
+    if (dir && fs.statSync(path.join(dir, p)).isDirectory()) throw bad();
+  } catch (e) {
+    if (e instanceof OrchError) throw e; // a path that does not exist yet is a file to be created
   }
   return `--file=${p}`;
 }
@@ -63,9 +82,9 @@ function validateRequest(ctx) {
     throw new OrchError(`Invalid reasoning effort for aider (supported: ${ALLOWED_EFFORTS.join(', ')})`, 'bad-effort');
   }
   if (ctx.agent) throw new OrchError('Custom --agent is not supported by aider', 'forbidden-agent');
-  for (const entry of ctx.allow || []) allowedFileArg(entry);
+  for (const entry of ctx.allow || []) allowedFileArg(entry, ctx.dir);
   for (const f of ctx.flags || []) {
-    if (FORBIDDEN_FLAGS.test(String(f))) throw new OrchError(`--flag ${f} is forbidden or set by orch for aider`, 'forbidden-flag');
+    if (isOwnedFlag(f)) throw new OrchError(`--flag ${f} is forbidden or set by orch for aider`, 'forbidden-flag');
   }
 }
 
@@ -99,7 +118,9 @@ export default {
     const runDir = ctx.runDir || path.dirname(ctx.promptPath);
     const stdinFile = path.join(runDir, 'stdin-empty.txt');
     fs.writeFileSync(stdinFile, '');
-    const allowFiles = (ctx.allow || []).map(allowedFileArg);
+    // `allow` is null when the run has no scope check at all, an array (possibly empty) when it has one.
+    const scoped = Array.isArray(ctx.allow);
+    const allowFiles = (ctx.allow || []).map((e) => allowedFileArg(e, ctx.dir));
     const args = [
       '--model', String(ctx.model),
       '--message-file', String(ctx.promptPath),
@@ -122,7 +143,7 @@ export default {
       '--chat-history-file', path.join(runDir, 'aider-chat-history.md'),
       '--input-history-file', path.join(runDir, 'aider-input-history'),
       '--llm-history-file', path.join(runDir, 'aider-llm-history.log'),
-      ...(allowFiles.length ? ['--map-tokens', '0', ...allowFiles] : []),
+      ...(scoped ? ['--map-tokens', '0', ...allowFiles] : []),
       ...(ctx.effort ? ['--reasoning-effort', String(ctx.effort)] : []),
       ...(ctx.flags || []).map(String),
     ];
@@ -139,9 +160,9 @@ export default {
         '--no-auto-commits / --no-dirty-commits: git stays with orch; the worker never commits',
         'streaming left on: stdout is the heartbeat',
         'chat/input/LLM history redirected into the run folder: the worktree stays clean',
-        allowFiles.length
-          ? `repo map off; ${allowFiles.length} allowlisted file(s) passed with --file (no tags cache in the worktree)`
-          : 'no allowlist: repo map on; aider writes .aider.tags.cache.v4/ into the worktree (no scope check applies)',
+        scoped
+          ? `scope guard active: repo map off; ${allowFiles.length} allowlisted file(s) passed with --file (no tags cache in the worktree)`
+          : 'no scope guard (no --wp and no allowlist): repo map on; aider writes .aider.tags.cache.v4/ into the worktree',
       ],
     };
   },

@@ -219,8 +219,25 @@ test('P04b aider: history goes to the run folder; an allowlist turns the repo ma
     assert.ok(scoped.args.includes('--file=src/a.mjs'));assert.ok(scoped.args.includes('--file=docs/b.md'));
     assert.ok(scoped.notes.some(n=>/repo map off/i.test(n)));
   });
-  for(const bad of ['../x','/etc/x','C:/x','src/','src/*.js','a/../../x'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
+  for(const bad of ['../x','/etc/x','C:/x','C:\\x','src/','src/*.js','a/../../x','.','./'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
   assert.throws(()=>aider.preLaunch({...ctx,allow:['../x']}),/allowlist entry/i);
+  fs.mkdirSync(path.join(ctx.dir,'srcdir'),{recursive:true});
+  assert.throws(()=>aider.validateRequest({...ctx,allow:['srcdir']}),/allowlist entry/i,'an existing directory without a trailing slash');
+  assert.doesNotThrow(()=>aider.validateRequest({...ctx,allow:['not-created-yet.mjs','srcdir/new.mjs']}),'a file that does not exist yet is a file to be created');
+});
+test('P04b aider: a scope guard with an empty allowlist still turns the repo map off; no scope guard keeps it',t=>{
+  assert.ok(aider);const ctx=context(t);
+  env({ORCH_AIDER_EXE:'C:/fixture/aider.exe'},()=>{
+    const empty=aider.build({...ctx,allow:[]});
+    const m=empty.args.indexOf('--map-tokens');assert.ok(m>0,'scoped run, no allowed files: map still off');assert.equal(empty.args[m+1],'0');
+    assert.ok(!empty.args.some(a=>a.startsWith('--file')));assert.ok(empty.notes.some(n=>/scope guard active/i.test(n)));
+    for(const none of [undefined,null]){const plain=aider.build({...ctx,allow:none});assert.ok(!plain.args.includes('--map-tokens'));assert.ok(plain.notes.some(n=>/no scope guard/i.test(n)));}
+  });
+});
+test('P04b aider: owned flags are refused under argparse prefix abbreviations and glued short forms',t=>{
+  assert.ok(aider);const ctx=context(t);
+  for(const flags of [['--map-to','1024'],['--map-tokens=0'],['--fil','x.txt'],['--mod','other'],['--input-histo','x'],['--chat-hist=x'],['--llm-h','x'],['--mes','hi'],['--message-f=x'],['--yes-al'],['--auto-com'],['--re','x'],['-mhello'],['-fx.txt'],['--']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i,flags.join(' '));
+  for(const flags of [['--subtree-only'],['--map-refresh','manual'],['--no-git'],['--lint-cmd','x'],['--test-cmd','x']])assert.doesNotThrow(()=>aider.validateRequest({...ctx,flags}),flags.join(' '));
 });
 test('P04b aider: final message is the ANSWER block when a reasoning model printed a THINKING block',()=>{
   assert.ok(aider);
