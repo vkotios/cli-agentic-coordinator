@@ -25,7 +25,8 @@
 //    package) turns the map off (`--map-tokens 0`) and hands the allowed files to
 //    aider with `--file`. A run with no scope guard keeps aider's default repo map.
 //  - Reasoning models make aider print a THINKING block and an ANSWER block; the
-//    final message is the ANSWER block only.
+//    final message is the ANSWER block of the last reply. Without both markers the
+//    whole output is the final message.
 import fs from 'node:fs';
 import path from 'node:path';
 import { OrchError } from '../errors.mjs';
@@ -69,7 +70,8 @@ function allowFileArgs(ctx, { stat }) {
     if (!raw || raw.startsWith('/') || raw.endsWith('/') || /^[A-Za-z]:/.test(raw) || /[\0\r\n*?<>:"|]/.test(raw)) throw bad();
     const p = normalizeRepoPath(raw, false);
     const segs = p.split('/');
-    if (segs.some((s) => s === '' || s === '.' || s === '..') || /[. ]$/.test(segs[segs.length - 1])) throw bad();
+    // Windows drops a trailing dot or space from any segment and reserves device names; neither could match the guard's path.
+    if (segs.some((s) => s === '' || s === '.' || s === '..' || /[. ]$/.test(s) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(s))) throw bad();
     if (stat && base) {
       for (let i = 1; i <= segs.length; i++) {
         let st = null;

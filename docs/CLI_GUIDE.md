@@ -311,16 +311,21 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   input and LLM history files are therefore redirected into the run folder (`aider-chat-history.md`,
   `aider-input-history`, `aider-llm-history.log`). The repo-map cache `.aider.tags.cache.v4/` cannot
   be relocated, so a run that has a scope guard (an `--allow` / `ALLOW:` entry, or a work package)
-  turns the map off (`--map-tokens 0`) and passes each allowed file with `--file=<path>`: aider is
-  given exactly the allowed files (a file it creates anyway is caught by the scope guard, which reads
-  only non-ignored paths inside the repository: a gitignored path or a write outside it is not seen). A
-  run with no scope guard keeps the default repo map and leaves `.aider.tags.cache.v4/` in the
-  worktree. Allowlist entries must be exact repo-relative file paths; a file that does not exist yet
-  is fine (verified: aider creates it). A directory, a `*`/`?` pattern, `..` or an interior `.`
-  segment, an absolute path, a trailing dot or space, any of `<>:"|`, or a file used as a parent
-  folder is refused before any run folder exists. Entries are resolved against the repository top
-  (where the scope guard reads them), normalised the way the guard compares them (NFC, `/`
-  separators) and given to aider relative to its working directory, so `--dir` may be a subfolder.
+  turns the map off (`--map-tokens 0`) and passes each allowed file with `--file=<path>` as its chat
+  files. That is not a fence: a file the model creates anyway, or a bare path in an extra `--flag`
+  value (passed to aider verbatim, where aider treats it as a file), is only caught afterwards by the
+  scope guard, which reads only non-ignored paths inside the repository (a gitignored path, a symlink
+  target or a write outside the repository is not seen). A run with no scope guard keeps the default
+  repo map and leaves `.aider.tags.cache.v4/` in the worktree. The scratch-file inventory above was
+  verified on one model; another file aider writes into the git root would fail the guard. Allowlist
+  entries must be exact repo-relative file paths; a file that does not exist yet is fine, including in
+  folders that do not exist yet (verified: aider creates both). A directory, a `*`/`?` pattern, `..`
+  or a `.` segment, an absolute path, a trailing dot or space on any segment, a Windows device name
+  (`CON`, `NUL`, `COM1`...), any of `<>:"|`, or a file used as a parent folder is refused before any
+  run folder exists. Entries are resolved against the repository top (where the scope guard reads
+  them), normalised like the guard (NFC, `/` separators; the guard also case-folds on a
+  case-insensitive repository, so spell entries as the file is spelled) and given to aider relative to
+  its working directory, so `--dir` may be a subfolder.
 - The ANSWER-block marker was verified on aider 0.86.2 with `--no-pretty`; if another version prints
   a different marker the final message falls back to the whole output.
 

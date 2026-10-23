@@ -249,7 +249,7 @@ test('P04b aider: allowlist entries resolve against the repo top, match the guar
     assert.equal(aider.build({...ctx,allow:['x//y.mjs','./z.mjs']}).args.filter(a=>a.startsWith('--file=')).join(','),'--file=x/y.mjs,--file=z.mjs');
   });
   fs.writeFileSync(path.join(ctx.dir,'afile'),'x');
-  for(const bad of ['a/./b','a/b.','a/b ','a:b','a"b','afile/child.mjs'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
+  for(const bad of ['a/./b','a/b.','a/b ','a./b','a /b','a:b','a"b','afile/child.mjs','con','src/NUL.txt','COM1','lpt9.log'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
   assert.doesNotThrow(()=>aider.validateRequest({...ctx,allow:['afile','deep/new/dir/file.mjs']}),'an existing file and a not-yet-existing nested file');
   fs.mkdirSync(path.join(ctx.dir,'srcdir2'),{recursive:true});
   assert.doesNotThrow(()=>aider.build({...ctx,allow:['srcdir2']}),'the launch-time rebuild does no filesystem check, so it cannot throw once run artifacts exist');
