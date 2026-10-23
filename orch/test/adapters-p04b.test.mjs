@@ -180,7 +180,7 @@ test('P04b aider: registered adapter requires exact model, protects owned option
   assert.ok(PUBLIC_ADAPTERS.includes('aider'));assert.equal(getAdapter('aider'),aider);
   assert.equal(aider.lane,'cloud');assert.equal(aider.heartbeatStream,'stdout');assert.equal(aider.canonicalModel('Provider/EXAMPLE-MODEL'),'example-model');
   for(const model of ['','sonnet','auto'])assert.throws(()=>aider.validateRequest({...ctx,model}),/exact model selector/i);
-  for(const flags of [['--model','other'],['--message-file','other.txt'],['-m','hi'],['--yes-always'],['--auto-commits'],['--auto-test'],['--reasoning-effort','high'],['--edit-format','diff'],['--commit'],['--dry-run'],['--upgrade']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i);
+  for(const flags of [['--model','other'],['--message-file','other.txt'],['-m','hi'],['--yes-always'],['--auto-commits'],['--auto-test'],['--reasoning-effort','high'],['--edit-format','diff'],['--commit'],['--dry-run'],['--upgrade'],['--file','x.txt'],['--read','x.txt'],['--map-tokens','1024'],['--chat-history-file','x.md'],['--input-history-file=x'],['--llm-history-file','x'],['--restore-chat-history']])assert.throws(()=>aider.validateRequest({...ctx,flags}),/flag/i);
   assert.throws(()=>aider.validateRequest({...ctx,agent:'foreign'}),/agent/i);
   for(const effort of ['ludicrous','ultra','max'])assert.throws(()=>aider.validateRequest({...ctx,effort}),/effort/i);
   assert.doesNotThrow(()=>aider.validateRequest({...ctx,effort:'high'}));
@@ -202,9 +202,32 @@ test('P04b aider: direct executable, file prompt, empty stdin, no commits, effor
     assert.equal(fs.readFileSync(built.stdinFile,'utf8'),'');
     const low=aider.build({...ctx,effort:'low'});
     const e=low.args.indexOf('--reasoning-effort');assert.equal(low.args[e+1],'low');
-    const withFlags=aider.build({...ctx,flags:['--subtree-only','--map-tokens','1024']});
+    const withFlags=aider.build({...ctx,flags:['--subtree-only']});
     assert.ok(withFlags.args.includes('--subtree-only'));
   });
+});
+test('P04b aider: history goes to the run folder; an allowlist turns the repo map off and passes exact files',t=>{
+  assert.ok(aider);const ctx=context(t);
+  env({ORCH_AIDER_EXE:'C:/fixture/aider.exe'},()=>{
+    const plain=aider.build(ctx);const runDir=ctx.runDir||path.dirname(ctx.promptPath);
+    for(const f of ['--chat-history-file','--input-history-file','--llm-history-file']){const i=plain.args.indexOf(f);assert.ok(i>0,f);assert.equal(path.dirname(plain.args[i+1]),runDir,`${f} stays in the run folder`);}
+    assert.ok(plain.args.includes('--no-restore-chat-history'));
+    assert.ok(!plain.args.includes('--map-tokens'),'no allowlist: aider keeps its default repo map');
+    assert.ok(!plain.args.some(a=>a.startsWith('--file')));
+    const scoped=aider.build({...ctx,allow:['src/a.mjs','.\\docs\\b.md']});
+    const m=scoped.args.indexOf('--map-tokens');assert.ok(m>0);assert.equal(scoped.args[m+1],'0');
+    assert.ok(scoped.args.includes('--file=src/a.mjs'));assert.ok(scoped.args.includes('--file=docs/b.md'));
+    assert.ok(scoped.notes.some(n=>/repo map off/i.test(n)));
+  });
+  for(const bad of ['../x','/etc/x','C:/x','src/','src/*.js','a/../../x'])assert.throws(()=>aider.validateRequest({...ctx,allow:[bad]}),/allowlist entry/i,bad);
+  assert.throws(()=>aider.preLaunch({...ctx,allow:['../x']}),/allowlist entry/i);
+});
+test('P04b aider: final message is the ANSWER block when a reasoning model printed a THINKING block',()=>{
+  assert.ok(aider);
+  assert.equal(aider.extractFinalMessage('plain output\n'),'plain output');
+  const out='Aider v0\n► **THINKING**\n\nreasoning...\n\n------------\n► **ANSWER**\n\nthe answer\nTokens: 1k sent\n';
+  assert.equal(aider.extractFinalMessage(out),'the answer\nTokens: 1k sent');
+  assert.equal(aider.extractFinalMessage('a\n► **ANSWER**\nfirst\n► **ANSWER**\nsecond'),'second');
 });
 test('P04b aider: model identity stays unknown; guard denies direct one-shot launches',()=>{
   assert.ok(aider);

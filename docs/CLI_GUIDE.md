@@ -279,7 +279,11 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 - Worker adapter only: `orch run --cli aider --model <selector>`. Aider is a BYOK/API-key CLI: you
   install it and configure provider keys yourself; orch never touches credentials or billing.
-- **unverified** (from the official options reference and scripting docs; no run recorded yet).
+- Verified once: aider 0.86.2, an OpenAI-compatible local gateway (`--model openai/<id>` with
+  `OPENAI_API_BASE` / `OPENAI_API_KEY` in the environment), one small two-file edit. Other models,
+  providers and larger tasks are **unverified**; the flag set comes from the official options reference.
+- Credentials and the API base are read from aider's own environment; orch passes the parent
+  environment through and never sets them.
 - Headless one-shot launch: `--message-file <handoff>` delivers the prompt from a file (never argv),
   `--yes-always` for an unattended run, empty stdin so the prompt is never delivered twice.
 - The model is always pinned with `--model`; aider's config default is never trusted. Extra flags
@@ -292,7 +296,15 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Model attribution is unknown: one-shot output names no served model, so the record never claims
   the requested model as the model used.
 - Streaming stays on; captured stdout is the heartbeat and the final message. `--no-pretty` keeps
-  ANSI escapes out of the record.
+  ANSI escapes out of the record. Reasoning models print a THINKING block before an ANSWER block;
+  the final message keeps the ANSWER block only (the full output stays in the stdout log).
+- Aider writes scratch files into the git root, and the scope guard counts untracked files. The chat,
+  input and LLM history files are therefore redirected into the run folder (`aider-chat-history.md`,
+  `aider-input-history`, `aider-llm-history.log`). The repo-map cache `.aider.tags.cache.v4/` cannot
+  be relocated, so a run with an allowlist (`--allow` or an `ALLOW:` block) turns the map off
+  (`--map-tokens 0`) and passes each allowed file with `--file=<path>`: aider sees and edits exactly
+  the allowed files. A run with no allowlist has no scope check, keeps the default repo map and leaves
+  `.aider.tags.cache.v4/` in the worktree. Allowlist entries must be exact repo-relative file paths.
 
 ## Claude escalation reviewers
 

@@ -119,7 +119,7 @@ async function runLocked(args, io, opts) {
   const pre = adapter.preLaunch
     ? adapter.preLaunch({ model, dir, promptPath: handoff, promptBuffer: delivery.prompt, allowNonAscii: !!args['allow-non-ascii'], role, ownerApprovedModel: !!args['owner-approved-model'],
         agent: args.agent || null, flags: args.flag || [], maxTurns: args['max-turns'] != null ? Number(args['max-turns']) : null,
-        maxPrice: args['max-price'] != null ? String(args['max-price']) : null, effort: args.effort || null, runDir: P.dir, launchPromptPath: P.prompt })
+        maxPrice: args['max-price'] != null ? String(args['max-price']) : null, effort: args.effort || null, runDir: P.dir, launchPromptPath: P.prompt, allow: workflow.scope ? workflow.scope.allow : [] })
     : { notes: [], extra: {} };
   beginRunArtifacts(cfg, id);
   fs.mkdirSync(P.dir);
@@ -143,6 +143,7 @@ async function runLocked(args, io, opts) {
     effort: args.effort || null,
     printTimeout: args['print-timeout'] || null,
     runDir: P.dir,
+    allow: workflow.scope ? workflow.scope.allow : [],
   });
 
   // `dir_real` is resolved ONCE, here, and stored (v3 §5).
