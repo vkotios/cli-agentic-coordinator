@@ -97,3 +97,32 @@ test('claude guard: direct headless launches are denied; interactive use and ins
   for(const command of ['claude -p "do it"','claude --print "do it"','claude --model x -p "y"','C:/Users/example/.local/bin/claude.exe -p "y"','claude -p --output-format stream-json < handoff.txt','npx @anthropic-ai/claude-code -p "y"'])assert.equal(blocked(command),true,command);
   for(const command of ['claude','claude --help','claude --version','claude mcp list','claude auth login','claude auth status','claude plugin list','claude update'])assert.equal(blocked(command),false,command);
 });
+
+test('claude: a context-window suffix on the SERVED model is not a different model; the request side refuses a suffix',t=>{
+  assert.ok(claude);const ctx=context(t),stdoutPath=path.join(ctx.dir,'stdout.log');
+  const say=model=>({type:'assistant',message:{model,content:[{type:'text',text:'x'}]}});
+  fs.writeFileSync(stdoutPath,jsonl([say('Example-Requested[1m]')]));
+  const got=claude.postExit({...ctx,stdoutPath,requestedCanonical:'example-requested'});assert.equal(got.actual_model,'example-requested');assert.equal(got.model_mismatch,false);
+  fs.writeFileSync(stdoutPath,jsonl([{type:'result',subtype:'success',is_error:false,result:'r',modelUsage:{'example-requested[1m]':{}}}]));
+  const viaUsage=claude.postExit({...ctx,stdoutPath,requestedCanonical:'example-requested'});assert.equal(viaUsage.actual_model,'example-requested');assert.equal(viaUsage.actual_model_source,'claude-result-model-usage','the fallback source is named as the fallback');
+  assert.throws(()=>claude.validateRequest({...ctx,model:'example-requested[1m]'}),/exact|model/i);
+});
+
+test('claude: without an override the executable is found under the home directory fallback',t=>{
+  assert.ok(claude);const ctx=context(t),bin=path.join(ctx.dir,'.local','bin'),name=process.platform==='win32'?'claude.exe':'claude';fs.mkdirSync(bin,{recursive:true});fs.writeFileSync(path.join(bin,name),'fixture');
+  const empty=path.join(ctx.dir,'empty-path');fs.mkdirSync(empty);
+  env({ORCH_CLAUDE_EXE:'',PATH:empty,USERPROFILE:ctx.dir,HOME:ctx.dir},()=>assert.equal(claude.build(ctx).file,path.join(bin,name)));
+});
+
+test('claude: invalid launches leave no run folder',async t=>{
+  assert.ok(claude);const {cmdRun}=await import('../src/commands.mjs'),c=makeCase('claude-preflight',{handoff:'short'});t.after(()=>c.cleanup());
+  const native=path.join(c.base,'native.exe');fs.writeFileSync(native,'non-executable fixture');
+  const vars={...c.env,ORCH_CLAUDE_EXE:native},before={};for(const[k,v]of Object.entries(vars)){before[k]=process.env[k];process.env[k]=v;}
+  claude.testOnly=true;
+  try{
+    for(const extra of [{model:'sonnet'},{flag:['--dangerously-skip-permissions']},{agent:'foreign'},{'max-price':2},{effort:'invalid'},{'max-turns':0}]){
+      await assert.rejects(cmdRun({cli:'claude',model:'example-model',dir:c.work,handoff:c.handoffPath,json:true,...extra}),extra.model?/exact model/i:/flag|agent|price|effort|max-turns/i,JSON.stringify(extra));
+      assert.deepEqual(fs.readdirSync(path.join(c.stateRoot,'runs')),[],`refused launch left a run folder: ${JSON.stringify(extra)}`);
+    }
+  }finally{delete claude.testOnly;for(const[k,v]of Object.entries(before))if(v===undefined)delete process.env[k];else process.env[k]=v;}
+});

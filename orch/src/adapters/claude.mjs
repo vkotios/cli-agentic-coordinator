@@ -18,6 +18,8 @@
 //  - Model used: the `model` of the main agent's assistant messages. `<synthetic>` (CLI-generated errors) and
 //    sub-agent messages (`parent_tool_use_id`) do not count; with no assistant evidence, a `modelUsage` that
 //    lists exactly one model is the fallback. The `init` event and the request are never proof.
+import os from 'node:os';
+import path from 'node:path';
 import {resolveCliExe} from '../exe.mjs';
 import {canonicalId,assertModelPermitted} from '../models.mjs';
 import {OrchError} from '../errors.mjs';
@@ -35,7 +37,7 @@ const IMPLEMENT_TOOLS='Read,Grep,Glob,Edit,Write,Bash';
 const REVIEW_TOOLS='Read,Grep,Glob';
 
 export function resolveClaudeExe(){
-  return resolveCliExe('claude',{fallbacks:env=>[`${env.USERPROFILE||env.HOME||''}/.local/bin/claude${process.platform==='win32'?'.exe':''}`]});
+  return resolveCliExe('claude',{fallbacks:env=>[path.join(env.USERPROFILE||os.homedir(),'.local','bin',`claude${process.platform==='win32'?'.exe':''}`)]});
 }
 
 function validateRequest(ctx){
@@ -78,13 +80,13 @@ export default {
   postExit(ctx){
     const events=parseJsonl(readBounded(ctx.stdoutPath));
     const served=[...new Set(events.filter(e=>e.type==='assistant'&&!e.parent_tool_use_id).map(e=>servedId(e.message?.model)).filter(Boolean))];
-    let models=served;
+    let models=served,source='claude-assistant-message';
     if(!models.length){
       const usage=events.filter(e=>e.type==='result'&&e.modelUsage&&typeof e.modelUsage==='object').at(-1)?.modelUsage;
       const keys=usage?[...new Set(Object.keys(usage).map(servedId).filter(Boolean))]:[];
-      if(keys.length===1)models=keys;
+      if(keys.length===1){models=keys;source='claude-result-model-usage';}
     }
-    return modelResult(models,servedId(ctx.requestedCanonical),'claude-assistant-message');
+    return modelResult(models,servedId(ctx.requestedCanonical),source);
   },
   statusRules:[...subscriptionStatusRules,...claudeStatusRules],
 };

@@ -332,9 +332,10 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 
 ## claude (implementer / reviewer, for non-Claude controllers)
 
-- `orch run --cli claude --model <exact id>` and `orch review --cli claude ...`: lets a controller that is
-  not Claude Code (Codex, Vibe, Muse, ...) launch Claude as a worker or a read-only reviewer. A controller
-  that IS Claude Code should keep using its own subagents for escalation reviews (next section).
+- `orch run --cli claude --model <exact id>` and `orch review --reviewer claude --model <exact id> ...`: lets
+  a controller that is not Claude Code (Codex, Vibe, Muse, ...) launch Claude as a worker or a read-only
+  reviewer. A controller that IS Claude Code should keep using its own subagents for escalation reviews (next
+  section). A context-window suffix such as `[1m]` is not accepted in `--model`; use the plain id.
 - Billing is the saved subscription login (`claude auth login`). `ANTHROPIC_*`, `CLAUDE_CODE_USE_*` and
   `AWS_BEARER_TOKEN_BEDROCK` are removed from the child, so a stray key cannot move the run to API billing or
   another endpoint. Aliases (`sonnet`, `opus`, `haiku`, `default`, `auto`) are refused: pin an exact model id.
