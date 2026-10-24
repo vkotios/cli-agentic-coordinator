@@ -150,6 +150,16 @@ test('freshness follows original observations and reset expiry, never the cache 
   const expired=await usage.getUsage({...c,now:Date.parse(resetAt)+1});
   assert.equal(expired.pools[0].observation.windows[0].freshness,'reset-stale');
 });
+test('collector clock skew within the accepted tolerance is fresh; beyond it is unknown', async t => {
+  const c=setup(t);
+  await usage.getUsage({...c,refresh:true});
+  assert.equal((await usage.getUsage({...c,now:c.now-1000})).pools[0].freshness,'fresh');
+  assert.equal((await usage.getUsage({...c,now:c.now-6000})).pools[0].freshness,'unknown');
+  const bad=setup(t);bad.c.pools[0].collector.args[2]='not-a-date';fs.writeFileSync(bad.configFile,JSON.stringify(bad.c));
+  const r=await usage.getUsage({...bad,refresh:true});
+  assert.equal(r.pools[0].error.code,'collector-invalid');
+  assert.equal(r.pools[0].freshness,'unknown');
+});
 test('a helper account change is rejected and failures cannot immediately retry', async t => {
   const c=setup(t);c.c.pools[0].collector.version='0.75.0';fs.writeFileSync(c.configFile,JSON.stringify(c.c));
   const r=await usage.getUsage({...c,refresh:true});
