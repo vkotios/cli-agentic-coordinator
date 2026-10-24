@@ -44,7 +44,7 @@ export const WAIT_LANE_MAX_S = 55;
 export const DEFAULT_BOUND_MS = 120000;
 
 const INSTRUCTIONS =
-  'orch launches and supervises worker CLI runs (opencode, vibe, codex, agy, copilot, muse, aider) and records the ' +
+  'orch launches and supervises worker CLI runs (opencode, vibe, codex, agy, copilot, muse, aider, claude) and records the ' +
   'work-package workflow. Never start a worker CLI directly: use `run`. Every tool returns promptly; a run is ' +
   'watched with `status` / `log_tail`, never by waiting. A stall is advisory; cancel only with a stated reason. ' +
   'Protocol: ORCHESTRATOR.md in the cli-agentic-coordinator repository.';
@@ -150,7 +150,7 @@ export const TOOLS = {
       'orch run: launch ONE worker run (the only allowed way to start a worker CLI). Returns at admission with the job id ' +
       '(lane-busy = exit 3, nothing started). Then monitor with status / log_tail.',
     opts: {
-      cli: S('--cli <opencode|vibe|codex|agy|copilot|muse|aider>'),
+      cli: S('--cli <opencode|vibe|codex|agy|copilot|muse|aider|claude>'),
       model: S('--model <id>'),
       dir: S('--dir <worktree> (absolute path)'),
       handoff: S('--handoff <file> (the prompt file)'),
