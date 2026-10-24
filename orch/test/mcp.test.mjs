@@ -186,11 +186,26 @@ test('T3: protocol - legacy initialize, tools/list (every tool), ping, modern se
   assert.equal(disc.result.resultType, 'complete');
   assert.ok(disc.result.supportedVersions.includes('2026-07-28') && disc.result.supportedVersions.includes('2025-11-25'));
   assert.equal(disc.result._meta['io.modelcontextprotocol/serverInfo'].name, 'orch');
+  assert.ok(Number.isInteger(disc.result.ttlMs) && disc.result.ttlMs >= 0, 'server/discover carries ttlMs');
+  assert.ok(['public', 'private'].includes(disc.result.cacheScope), 'server/discover carries cacheScope');
+  assert.deepEqual(disc.result.capabilities, { tools: { listChanged: false } }, 'a server with tools declares the tools capability');
   const mlist = await srv.request('tools/list', { _meta: meta });
   assert.equal(mlist.result.resultType, 'complete');
   assert.equal(mlist.result.tools.length, TOOL_NAMES.length);
+  // Claude Code's client validates modern list results: ttlMs must be a number and cacheScope public or private.
+  assert.equal(typeof mlist.result.ttlMs, 'number', 'modern tools/list carries ttlMs');
+  assert.ok(Number.isInteger(mlist.result.ttlMs) && mlist.result.ttlMs >= 0, 'ttlMs is a non-negative integer');
+  assert.ok(['public', 'private'].includes(mlist.result.cacheScope), 'modern tools/list carries cacheScope');
+  assert.equal(list.result.ttlMs, undefined, 'legacy list results carry no caching hints');
+  assert.equal(list.result.cacheScope, undefined, 'legacy list results carry no caching hints');
   const mcall = await srv.request('tools/call', { _meta: meta, name: 'claims', arguments: {} });
   assert.equal(mcall.result.resultType, 'complete');
+  assert.equal(mcall.result.ttlMs, undefined, 'tools/call results are not cacheable and carry no hints');
+  assert.equal(mcall.result.cacheScope, undefined, 'tools/call results are not cacheable and carry no hints');
+  const mlist2 = await srv.request('tools/list', { _meta: meta });
+  assert.deepEqual(mlist2.result.tools.map((x) => x.name), mlist.result.tools.map((x) => x.name), 'tool order is deterministic');
+  assert.equal(mlist2.result.ttlMs, mlist.result.ttlMs);
+  assert.equal(mlist2.result.cacheScope, mlist.result.cacheScope);
   const bad = await srv.request('tools/list', { _meta: { ...meta, 'io.modelcontextprotocol/protocolVersion': '1900-01-01' } });
   assert.equal(bad.error.code, -32022);
   assert.equal(bad.error.data.requested, '1900-01-01');
