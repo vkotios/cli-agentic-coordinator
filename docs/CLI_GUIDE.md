@@ -38,6 +38,7 @@ Common to all workers:
 
 | copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
 | muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
+| aider | `ORCH_AIDER_EXE` or `exe.aider` | `aider` (or `aider.exe`) on `PATH` |
 
 A CLI that cannot be found is a clear `cli-not-found` error naming the override to set. The `.cmd`
 shims npm installs are deliberately **not** accepted (see opencode below).
@@ -273,6 +274,60 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   other tool profiles remain unqualified. Separate `orch adopt --harness muse`
   preserves native fallback instructions and merges owned project MCP wiring,
   without trust grants or native launches. See [repository adoption](SETUP.md#copilot-and-muse-repository-adoption).
+
+## aider (implementer)
+
+- Worker adapter only: `orch run --cli aider --model <selector>`. Aider is a BYOK/API-key CLI: you
+  install it and configure provider keys yourself; orch never touches credentials or billing.
+- Verified on aider 0.86.2 with an OpenAI-compatible local gateway (`--model openai/<id>` with
+  `OPENAI_API_BASE` / `OPENAI_API_KEY` in the environment), one reasoning model: an allowlisted
+  two-file edit and an allowlisted new-file creation (both pass the scope guard with no untracked
+  scratch files), and an unscoped edit (leaves only `.aider.tags.cache.v4/`). Other models, providers
+  and larger tasks are **unverified**; the rest of the flag set comes from the official options reference.
+- Credentials and the API base are read from aider's own environment; orch passes the parent
+  environment through and never sets them.
+- Headless one-shot launch: `--message-file <handoff>` delivers the prompt from a file (never argv),
+  `--yes-always` for an unattended run, empty stdin so the prompt is never delivered twice.
+- The model is always pinned with `--model`; aider's config default is never trusted. Extra flags
+  that orch owns (prompt, model, git, verification, effort, per-file context, repo map, history
+  location, and both forms of every UI/shell switch orch turns off, such as `--suggest-shell-commands`,
+  `--pretty`, `--gitignore`) are refused on `--flag` under their full name, with `=value`, and under any
+  abbreviation: aider's argument parser accepts unique prefixes (verified: `--map-to 77` sets
+  `--map-tokens`), so `--map-to`, `--fil`, `-mtext` and a bare `--` are refused too. A side effect:
+  an exact flag that happens to be a prefix of an owned one (`--no-git`) is refused as well. The
+  hook guard treats abbreviated and glued message flags (`--mess`, `-mtext`) as direct launches.
+- git stays with orch: `--no-auto-commits` and `--no-dirty-commits` so the worker never commits
+  inside the run worktree. `--no-auto-lint` / `--no-auto-test`: verification belongs to orch's
+  review flow, not a hidden shell command.
+- The reviewer role is refused: aider has no read-only confinement and applies edits under
+  `--yes-always`. Use another CLI for `orch review`.
+- Model attribution is unknown: one-shot output names no served model, so the record never claims
+  the requested model as the model used.
+- Streaming stays on; captured stdout is the heartbeat and the final message. `--no-pretty` keeps
+  ANSI escapes out of the record. Reasoning models print a THINKING block before an ANSWER block;
+  the final message keeps the ANSWER block of the last reply (the first ANSWER marker after the last
+  THINKING marker; the full output stays in the stdout log).
+- Aider writes scratch files into the git root, and the scope guard counts untracked files. The chat,
+  input and LLM history files are therefore redirected into the run folder (`aider-chat-history.md`,
+  `aider-input-history`, `aider-llm-history.log`). The repo-map cache `.aider.tags.cache.v4/` cannot
+  be relocated, so a run that has a scope guard (an `--allow` / `ALLOW:` entry, or a work package)
+  turns the map off (`--map-tokens 0`) and passes each allowed file with `--file=<path>` as its chat
+  files. That is not a fence: a file the model creates anyway, or a bare path in an extra `--flag`
+  value (passed to aider verbatim, where aider treats it as a file), is only caught afterwards by the
+  scope guard, which reads only non-ignored paths inside the repository (a gitignored path, a symlink
+  target or a write outside the repository is not seen). A run with no scope guard keeps the default
+  repo map and leaves `.aider.tags.cache.v4/` in the worktree. The scratch-file inventory above was
+  verified on one model; another file aider writes into the git root would fail the guard. Allowlist
+  entries must be exact repo-relative file paths; a file that does not exist yet is fine, including in
+  folders that do not exist yet (verified: aider creates both). A directory, a `*`/`?` pattern, `..`
+  or a `.` segment, an absolute path, a trailing dot or space on any segment, a Windows device name
+  (`CON`, `NUL`, `COM1`...), any of `<>:"|`, or a file used as a parent folder is refused before any
+  run folder exists. Entries are resolved against the repository top (where the scope guard reads
+  them), normalised like the guard (NFC, `/` separators; the guard also case-folds on a
+  case-insensitive repository, so spell entries as the file is spelled) and given to aider relative to
+  its working directory, so `--dir` may be a subfolder.
+- The ANSWER-block marker was verified on aider 0.86.2 with `--no-pretty`; if another version prints
+  a different marker the final message falls back to the whole output.
 
 ## Claude escalation reviewers
 

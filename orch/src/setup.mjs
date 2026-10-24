@@ -13,7 +13,7 @@ import { validateCatalog } from './catalog.mjs';
 import { resolveOpencodeExe } from './adapters/opencode.mjs';
 import { resolveMuseExe } from './adapters/muse.mjs';
 import { resolveCopilotExe } from './adapters/copilot.mjs';
-const LIMIT = 65536, HARNESSES = ['claude', 'codex', 'opencode', 'vibe', 'copilot', 'muse'], WORKERS = ['codex', 'opencode', 'vibe', 'agy', 'copilot', 'muse'];
+const LIMIT = 65536, HARNESSES = ['claude', 'codex', 'opencode', 'vibe', 'copilot', 'muse'], WORKERS = ['codex', 'opencode', 'vibe', 'agy', 'copilot', 'muse', 'aider'];
 const authority = { configChanges: false, adoptionChanges: false, credentialChanges: false, launchChanges: false };
 const sha = x => crypto.createHash('sha256').update(x).digest('hex');
 const encoded = x => JSON.stringify(x, null, 2) + '\n';
