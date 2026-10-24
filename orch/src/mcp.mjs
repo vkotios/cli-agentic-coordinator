@@ -36,6 +36,13 @@ export const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-
 export const SUPPORTED_VERSIONS = [...MODERN_VERSIONS, ...LEGACY_VERSIONS];
 const META_VERSION = 'io.modelcontextprotocol/protocolVersion';
 const SERVER_INFO = { name: 'orch', version: SERVER_VERSION };
+/**
+ * Caching hints. In the 2026-07-28 revision `server/discover` and `tools/list` results MUST carry `ttlMs`
+ * (integer >= 0, milliseconds) and `cacheScope`. The tool list is identical for every caller and fixed for the
+ * life of the process, so it is `public`. Legacy (initialize-based) results never carry these fields.
+ */
+const DISCOVER_CACHE = { ttlMs: 3600000, cacheScope: 'public' };
+const LIST_CACHE = { ttlMs: 300000, cacheScope: 'public' };
 
 /** wait_lane: default and hard cap, in seconds. */
 export const WAIT_LANE_DEFAULT_S = 20;
@@ -531,13 +538,14 @@ export async function handleMessage(msg, ctx) {
         resultType: 'complete',
         supportedVersions: SUPPORTED_VERSIONS,
         capabilities,
+        ...DISCOVER_CACHE,
         _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO },
         instructions: INSTRUCTIONS,
       });
     case 'ping':
       return ok(id, complete({}));
     case 'tools/list':
-      return ok(id, complete({ tools: toolList() }));
+      return ok(id, complete({ tools: toolList(), ...(modern ? LIST_CACHE : {}) }));
     case 'tools/call': {
       const name = params.name;
       // FIX a4: own properties only - `toString`, `constructor`, `__proto__` are not tools.
