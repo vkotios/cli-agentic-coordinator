@@ -2,7 +2,7 @@
   "name": "cli-agentic-coordinator",
   "version": "0.1.0",
   "private": true,
-  "description": "orch: launch, supervise, review and record worker coding-CLI runs for one orchestrator agent (Windows and Linux).",
+  "description": "orch: launch, supervise, review and record worker coding-CLI runs for one orchestrator agent (Windows, Linux and macOS).",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,7 +15,8 @@
   "type": "module",
   "os": [
     "win32",
-    "linux"
+    "linux",
+    "darwin"
   ],
   "engines": {
     "node": ">=22"
@@ -31,7 +32,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test:full": "node tools/ci-run.mjs --mode full",
     "test:plan": "node tools/ci-plan.mjs",
-    "verify": "node tools/ci-verify.mjs"
+    "verify": "node tools/ci-verify.mjs",
+    "install": "node tools/build-darwin-helper.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.0"

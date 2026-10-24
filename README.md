@@ -1,7 +1,7 @@
 # cli-agentic-coordinator
 
 One orchestrator agent in your chosen harness coordinating **worker coding CLIs** (opencode, vibe,
-codex, agy, Copilot, Muse, aider) on Windows. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
+codex, agy, Copilot, Muse, aider) on Windows, Linux and macOS. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
 write the code. The `orch` tool is the only way work gets launched, and it keeps the record.
 
 What `orch` enforces:
@@ -52,10 +52,10 @@ escalates.
 
 ## Requirements
 
-- **Windows 10 or 11, or Linux with procfs and `getconf CLK_TCK`.** Linux process evidence must be readable; missing or denied metadata stays unknown and does not authorize a kill or cleanup. macOS and other platforms are not supported yet; `orch` fails fast with a clear platform message there.
+- **Windows 10 or 11, Linux with procfs and `getconf CLK_TCK`, or macOS.** macOS requires Apple Command Line Tools (`xcode-select --install`) to build the small native process reader during `npm ci`. It builds for the current architecture (Apple Silicon or Intel); rerun `npm ci` after moving between architectures. Native process evidence must be readable; missing or denied metadata stays unknown and does not authorize a kill or cleanup. Other platforms fail fast with a clear platform message.
 - **Node.js 22 or newer** (developed and tested on Node 24).
 - **git** on `PATH`.
-- On Windows, Windows PowerShell 5.1 ships with Windows. **Windows Terminal** (`wt.exe`) is optional; when present, each run gets a read-only log window. On Linux, use `orch log <run-id>` to read captured output; no terminal viewer is opened automatically.
+- On Windows, Windows PowerShell 5.1 ships with Windows. **Windows Terminal** (`wt.exe`) is optional; when present, each run gets a read-only log window. On Linux and macOS, use `orch log <run-id>` to read captured output; no terminal viewer is opened automatically.
 - An orchestrator host: **Claude Code**, **Codex**, **OpenCode** or **Vibe**, with the native
   instructions and tools configured. Qualify the controller lifecycle on your installed harness,
   model and profile; instruction adoption and claim support alone do not establish readiness.
@@ -84,7 +84,26 @@ npm ci
 node bin\orch.mjs --help
 ```
 
-Core `orch` commands have no runtime dependencies. The optional measured task-case verifier uses
+On macOS or Linux, use POSIX paths:
+
+```sh
+git clone https://github.com/vkotios/cli-agentic-coordinator.git
+cd cli-agentic-coordinator/orch
+npm ci
+node bin/orch.mjs --help
+# Optional shell function; replace with your actual checkout path:
+orch() { node "/path/to/cli-agentic-coordinator/orch/bin/orch.mjs" "$@"; }
+```
+
+On macOS, install Apple Command Line Tools before `npm ci` if they are missing.
+A missing helper or restricted process-table access refuses launch; installing Node alone
+cannot supply native process evidence. The macOS port has been exercised on Apple Silicon;
+Intel builds use the same source but require qualification on an Intel Mac.
+Worker availability and authentication remain separate: install and qualify your chosen CLI.
+Muse currently needs `ORCH_MUSE_EXE` or `exe.muse` pointing at its native executable
+on macOS; its automatic version-marker discovery follows the Windows launcher layout.
+
+Core `orch` commands have no JavaScript runtime dependencies. macOS uses the locally built `orch/native/darwin-processes` helper for process identity; it uses only system APIs and never signals processes. The optional measured task-case verifier uses
 the TypeScript parser installed by `npm ci`; keep that installation for task qualification.
 `npm ci` also installs the MCP client used by
 the tests. Optionally make `orch` a command, for example in your PowerShell profile:
@@ -210,8 +229,8 @@ Notes:
 
 - The review root must be a neutral place: orch refuses one under the temp directory, a path that looks
   like a scratch or temp folder, or one inside the repository under review.
-- The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under `/tmp/.orch-<uid>` on Linux. Its identifier is derived from your account; inherited temporary-directory settings cannot create another lane. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
-- On Linux, `orch gc` can clear a recorded orphan lane socket, and `orch monitor <run-id>` can recover a recorded orphan monitor socket. Recovery requires the same socket inode, a native owner identity proved gone, and a matching network namespace; a refused connection alone is insufficient. Missing, unreadable or changed receipts remain protected. A crash before the receipt is published, or a legacy socket without one, requires operator inspection rather than automatic removal. Run records and other historical evidence are retained.
+- The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under `/tmp/.orch-<uid>` on Linux and macOS. Its identifier is derived from your account; inherited temporary-directory settings cannot create another lane. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.
+- On Linux and macOS, `orch gc` can clear a recorded orphan lane socket, and `orch monitor <run-id>` can recover a recorded orphan monitor socket. Recovery requires the same socket inode, a native owner identity proved gone, and a matching network namespace on Linux or boot scope on macOS; a refused connection alone is insufficient. Missing, unreadable or changed receipts remain protected. A crash before the receipt is published, or a legacy socket without one, requires operator inspection rather than automatic removal. Run records and other historical evidence are retained.
 - `<state root>/config.json` can tune the lane thresholds (`lanes.local.quietSeconds`, `stallSeconds`,
   ...) and polling; the defaults are in `orch/src/config.mjs`.
 
@@ -426,7 +445,7 @@ It removes neither worktrees nor provider session caches and installs no schedul
 
 ## Limitations
 
-- **Platform support.** `orch` supports Windows and Linux. Linux uses private per-user Unix-domain sockets and `/proc` identities bound to the boot, PID namespace and process start tick. Older bare-tick records remain retained and unqualified. Workers run in dedicated sessions so cancellation targets the verified worker's process group; descendants that leave that group are outside its scope. A supervisor refuses uncertain keeper identity at startup and does not treat a later unreadable keeper as dead. The visible Windows Terminal log window is Windows-only; on Linux use `orch log <run-id>`. macOS is not supported yet.
+- **Platform support.** `orch` supports Windows, Linux and macOS. Linux uses private per-user Unix-domain sockets and `/proc` identities bound to the boot, PID namespace and process start tick. Older bare-tick records remain retained and unqualified. Workers run in dedicated sessions so cancellation targets the verified worker's process group; descendants that leave that group are outside its scope. A supervisor refuses uncertain keeper identity at startup and does not treat a later unreadable keeper as dead. The visible Windows Terminal log window is Windows-only; on Linux and macOS use `orch log <run-id>`. macOS uses the same private socket and supervised process-group lifecycle, with kernel process start times at microsecond precision scoped to the boot-session UUID. Process metadata is read through a locally compiled, read-only system helper; second-resolution `ps` output is never used as identity evidence.
 - **The guard reads command text; it is not a sandbox.** It stops the direct forms and the common wrappers
   of a worker launch or a destructive command, but not a launch from a script file, an alias or function,
   or a variable set in an earlier command. It prevents accidents.

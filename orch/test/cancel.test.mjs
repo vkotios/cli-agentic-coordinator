@@ -207,7 +207,7 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
   const { id, workerPid, workerCreatedAt } = await launch(c, 40, ['--flag', '--grandchild', '--flag', '--spawn-receipt', '--flag', spawnReceipt]);
   const fixture = await waitFor(() => { try { const r=JSON.parse(fs.readFileSync(spawnReceipt,'utf8'));return Number.isSafeInteger(r.worker_pid)&&r.worker_pid>0&&Number.isSafeInteger(r.parent_pid)&&r.parent_pid>0?r:null; } catch { return null; } }, {timeoutMs:5000,what:'the explicit fake worker launch receipt'});
   const fakePid = fixture.worker_pid;
-  if (process.platform === 'linux') assert.equal(fixture.parent_pid, workerPid, 'the fixture must be the recorded supervisor\'s own child');
+  if (process.platform !== 'win32') assert.equal(fixture.parent_pid, workerPid, 'the fixture must be the recorded supervisor\'s own child');
   else assert.equal(fakePid, workerPid, 'the fixture must be the directly recorded worker');
   // Require the fixture's own spawn receipts, not every PPID neighbour (which also
   // includes OS console helpers and can refer to an older process incarnation).
@@ -222,7 +222,7 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
     return entry;
   });
   for (const d of before) strays.push({ pid: d.pid, createdAt: d.createdAt });
-  if (process.platform === 'linux') {
+  if (process.platform !== 'win32') {
     const launched = observed.candidates.find(p => p.pid === fakePid && p.ancestry === 'verified');
     assert.ok(launched, 'the fixture launch receipt also needs verified native ancestry');
     assert.equal(launched.ppid, workerPid);
@@ -234,7 +234,7 @@ test('G5/T4: cancel leaves no non-detached descendant behind, and says that /T r
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
   assert.equal(out.cancel_state, 'cancelled', res.stdout);
-  assert.match(String(out.note), process.platform === 'linux' ? /verified worker process group/ : /tree kill also ends descendants/, 'the platform-specific cancellation scope must be stated in the output');
+  assert.match(String(out.note), process.platform !== 'win32' ? /verified worker process group/ : /tree kill also ends descendants/, 'the platform-specific cancellation scope must be stated in the output');
   const human = await orch(['cancel', id], c.env); // already terminal now, but the text path must carry it too
   assert.equal(human.code, 0);
   assert.ok(['gone', 'mismatch'].includes(await identityOf(workerPid, workerCreatedAt)));

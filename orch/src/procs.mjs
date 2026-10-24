@@ -1,4 +1,4 @@
-// Windows and Linux process helpers. Every read is BOUNDED and asynchronous; every kill is
+// Windows, Linux and macOS process helpers. Every read is BOUNDED and asynchronous; every kill is
 // identity-checked.
 //
 // Hard rules (owner rule, spec rule, and v3 §6):
@@ -13,6 +13,7 @@
 // predicate silently turned "the table could not be read" into "not alive".
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { readDarwinProcessTable } from './darwin-processes.mjs';
 import { creationPoint, tableClockScope } from './process-time.mjs';
 
 const PS = 'powershell.exe';
@@ -26,7 +27,7 @@ const PS_BASE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', 
 export function normalizeCreationTime(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string') {
-    if (/^ms:-?\d+$/.test(v) || /^ticks:\d+$/.test(v) || v.startsWith('linux:')) return v; // already normalised: MUST be idempotent
+    if (/^ms:-?\d+$/.test(v) || /^ticks:\d+$/.test(v) || v.startsWith('linux:') || v.startsWith('darwin:')) return v; // already normalised: MUST be idempotent
     const m = /\/Date\((-?\d+)/.exec(v);
     if (m) return `ms:${m[1]}`;
     const t = Date.parse(v);
@@ -156,7 +157,7 @@ async function readLinuxProcessTable(list, deadlineMs) {
 
 /**
  * Bounded snapshot of the process table.
- * @returns {Promise<Array<{pid:number,ppid:number,pgrp?:number,session?:number,name:string,createdAt:string|null}>|null>}
+ * @returns {Promise<Array<{pid:number,ppid:number,pgrp?:number,session?:number,state?:string,name:string,createdAt:string|null}>|null>}
  *          `null` means UNKNOWN (not "nothing is alive").
  */
 /** @param {{deadlineMs?:number,pids?:Array|null,attempts?:number,onFailure?:(failure:any)=>void}} [options]
@@ -164,14 +165,14 @@ async function readLinuxProcessTable(list, deadlineMs) {
 export async function readProcessTable({ deadlineMs = 5000, pids = null, attempts = 2, onFailure = null } = {}, seams = {}) {
   const list = Array.isArray(pids) ? [...new Set(pids.map(Number).filter((n) => Number.isFinite(n) && n > 0))] : null;
   if (list && list.length === 0) return [];
-  if (process.platform === 'linux' && !seams.query) {
+  if (['linux', 'darwin'].includes(process.platform) && !seams.query) {
     const started = Date.now();
     for (let i = 0; i < Math.max(1, attempts); i++) {
       const left = deadlineMs - (Date.now() - started);
       if (left <= 0) break;
-      const table = await readLinuxProcessTable(list, left);
+      const table = await (process.platform === 'darwin' ? readDarwinProcessTable : readLinuxProcessTable)(list, left);
       if (table !== null) return table;
-      try { onFailure?.({ reason: 'linux-process-table-unreadable', attempt: i + 1, elapsed_ms: Date.now() - started }); } catch { /* diagnostics never change evidence */ }
+      try { onFailure?.({ reason: `${process.platform}-process-table-unreadable`, attempt: i + 1, elapsed_ms: Date.now() - started }); } catch { /* diagnostics never change evidence */ }
     }
     return null;
   }
@@ -242,7 +243,7 @@ export function observeDescendants(root, recordedCreatedAt, table, options = {})
   if (!Number.isSafeInteger(Number(root)) || Number(root) <= 0) return unknown('worker-pid-unreadable');
   if (!table) return unknown('process-table-unreadable');
   if (birth === null) return unknown('worker-creation-time-unreadable', true);
-  if (point.kind === 'linux' && tableClockScope(table, identity.found) !== scope) return unknown('worker-clock-scope-unreadable');
+  if (['linux', 'darwin'].includes(point.kind) && tableClockScope(table, identity.found) !== scope) return unknown('worker-clock-scope-unreadable');
   if (options.exitedAt != null && (exit === null || exit < birth)) return unknown('worker-lifetime-unreadable');
   if (identity.verdict !== 'match' && exit === null) return unknown('worker-identity-' + identity.verdict);
   const replacementBirth = identity.verdict !== 'match' && identity.found ? creationEpoch(identity.found.createdAt, scope) : null;
@@ -316,12 +317,15 @@ export function verifyIdentity(pid, recordedCreatedAt, table) {
   const hit = table.find(p => p.pid === Number(pid));
   const recorded = normalizeCreationTime(recordedCreatedAt), point = creationPoint(recorded);
   const scope = tableClockScope(table, hit), currentScope = creationPoint(scope === 'ms' ? 'ms:0' : scope ? `${scope}:0` : null);
-  if (typeof recorded === 'string' && /^(?:ticks:|linux:)/.test(recorded) && !point) return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
-  if (point?.kind === 'linux') {
+  if (typeof recorded === 'string' && /^(?:ticks:|linux:|darwin:)/.test(recorded) && !point) return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
+  if (point?.kind === 'darwin') {
+    if (currentScope?.kind !== 'darwin') return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
+    if (point.boot !== currentScope.boot) return { verdict: 'mismatch', reason: 'boot-changed', found: hit };
+  } else if (point?.kind === 'linux') {
     if (currentScope?.kind !== 'linux') return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
     if (point.boot !== currentScope.boot) return { verdict: 'mismatch', reason: 'boot-changed', found: hit };
     if (point.namespace !== currentScope.namespace) return { verdict: 'unknown', reason: 'pid-namespace-unreadable', found: hit };
-  } else if (point?.kind === 'wall' && currentScope?.kind === 'linux') return { verdict: 'unknown', reason: 'creation-clock-mismatch', found: hit };
+  } else if (point?.kind === 'wall' && ['linux', 'darwin'].includes(currentScope?.kind)) return { verdict: 'unknown', reason: 'creation-clock-mismatch', found: hit };
   if (!hit) return { verdict: 'gone', reason: 'pid-not-present' };
   if (!recordedCreatedAt) return { verdict: 'unknown', reason: 'no-creation-time-recorded', found: hit };
   if (!hit.createdAt) return { verdict: 'unknown', reason: 'creation-time-unreadable', found: hit };
@@ -373,11 +377,11 @@ function taskkill(args, deadlineMs) {
   });
 }
 
-function signalLinux(pid, processGroup = false) {
+function signalPosix(pid, processGroup = false) {
   const numericPid = Number(pid);
   // kill(-1, signal) broadcasts to every process the caller may signal; never derive it from PID 1.
   if (!Number.isSafeInteger(numericPid) || numericPid <= 1) {
-    return { ok: false, output: `refusing unsafe Linux process id ${pid}` };
+    return { ok: false, output: `refusing unsafe POSIX process id ${pid}` };
   }
   try {
     process.kill(processGroup ? -numericPid : numericPid, 'SIGKILL');
@@ -399,8 +403,8 @@ export async function killChecked(pid, recordedCreatedAt, opts = {}) {
   if (id.verdict !== 'match') {
     return { killed: false, verdict: id.verdict, output: refusal(pid, id, recordedCreatedAt) };
   }
-  const r = process.platform === 'linux'
-    ? signalLinux(pid)
+  const r = process.platform !== 'win32'
+    ? signalPosix(pid)
     : await taskkill(['/PID', String(pid), '/F'], deadlineMs);
   return { killed: r.ok, verdict: 'match', output: r.output };
 }
@@ -423,11 +427,11 @@ export async function treeKillChecked(pid, recordedCreatedAt, opts = {}) {
     return { killed: false, verdict: id.verdict, output: refusal(pid, id, recordedCreatedAt) };
   }
   const hit = t?.find((p) => p.pid === Number(pid));
-  if (process.platform === 'linux') {
+  if (process.platform !== 'win32') {
     if (!hit || hit.pgrp !== Number(pid) || hit.session !== Number(pid)) {
-      return { killed: false, verdict: 'unknown', output: `pid ${pid} is not a verified Linux session leader; refusing process-group kill` };
+      return { killed: false, verdict: 'unknown', output: `pid ${pid} is not a verified POSIX session leader; refusing process-group kill` };
     }
-    const r = signalLinux(pid, true);
+    const r = signalPosix(pid, true);
     return { killed: r.ok, verdict: 'match', output: r.output };
   }
   const r = await taskkill(['/PID', String(pid), '/T', '/F'], deadlineMs);
