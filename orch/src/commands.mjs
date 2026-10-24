@@ -37,15 +37,15 @@ export const MONITOR = path.resolve(fileURLToPath(new URL('./monitor.mjs', impor
 
 const ADMISSION_TIMEOUT_MS = Number(process.env.ORCH_ADMISSION_TIMEOUT_MS || 5000);
 const HELLO_DEADLINE_MS = Number(process.env.ORCH_HELLO_DEADLINE_MS || 2000);
-// Identity reads that decide a cancel. A filtered process query costs ~0.5 s idle but was
-// observed to exceed 3 s under load; a timed-out read refuses the kill (safe, but the
-// operator must cancel again). The same budget as cancel --keeper's re-check.
-const CANCEL_IDENTITY_MS = 10000;
+// The identity reads that decide a cancel use the same budget as the spawn-time identity
+// reads (IDENTITY_QUERY_MS). A filtered process query costs ~0.5 s idle but was observed
+// to exceed 3 s under load; a timed-out read refuses the kill (safe, but the operator
+// must cancel again).
 // A concurrent cancel waits for the holder's whole attempt, which keeps the lock until
-// the viewer is closed: identity read, tree kill and final read (CANCEL_IDENTITY_MS
+// the viewer is closed: identity read, tree kill and final read (IDENTITY_QUERY_MS
 // each), the 15 s reap wait, the viewer's 3 s read and 3 s kill, plus 10 s margin for
 // process start-up and timer slack.
-const CANCEL_LOCK_WAIT_MS = 3 * CANCEL_IDENTITY_MS + 15000 + 2 * 3000 + 10000;
+const CANCEL_LOCK_WAIT_MS = 3 * IDENTITY_QUERY_MS + 15000 + 2 * 3000 + 10000;
 
 /* ------------------------------------------------------------------ run ---- */
 
@@ -962,7 +962,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
     return { ...out, exitCode: 3 };
   }
 
-  const kill = await treeKillChecked(workerPid, workerCreatedAt, { deadlineMs: CANCEL_IDENTITY_MS });
+  const kill = await treeKillChecked(workerPid, workerCreatedAt, { deadlineMs: IDENTITY_QUERY_MS });
 
   // Give the keeper up to 15 s to reap and record the exit.
   const reapDeadline = new Deadline(15000, 'reap wait');
@@ -973,7 +973,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
   }
 
   // Final, bounded identity read. Nothing is claimed before this.
-  const finalTable = await readProcessTable({ deadlineMs: CANCEL_IDENTITY_MS, pids: [workerPid] });
+  const finalTable = await readProcessTable({ deadlineMs: IDENTITY_QUERY_MS, pids: [workerPid] });
   const finalId = verifyIdentity(workerPid, workerCreatedAt, finalTable);
   const exitRecorded = !!keeperFacts(readTailLines(P.keeper, 16384)).workerExit;
   // Success needs POSITIVE evidence of death: the keeper recorded the exit, or the pid
@@ -1030,7 +1030,7 @@ async function performCancel({ id, rec, P, args, io, firstRequester, workerPid, 
  * told apart from a live one without guessing.
  */
 async function acquireCancelLock(P, waitMs) {
-  const { times } = await creationTimesOf([process.pid], { deadlineMs: CANCEL_IDENTITY_MS });
+  const { times } = await creationTimesOf([process.pid], { deadlineMs: IDENTITY_QUERY_MS });
   const me = { pid: process.pid, created_at: times[process.pid] ?? null, attempt: crypto.randomBytes(6).toString('hex'), at: nowIso() };
   const dl = new Deadline(waitMs, 'cancel lock');
   const waitStartedMs = Date.now();
@@ -1054,7 +1054,7 @@ async function acquireCancelLock(P, waitMs) {
     waited = true;
     const holder = readJson(P.cancelLock, null);
     if (holder && holder.pid) {
-      const t = await readProcessTable({ deadlineMs: CANCEL_IDENTITY_MS, pids: [holder.pid] });
+      const t = await readProcessTable({ deadlineMs: IDENTITY_QUERY_MS, pids: [holder.pid] });
       const v = holder.created_at ? verifyIdentity(holder.pid, holder.created_at, t).verdict : 'unknown';
       if (v === 'gone' || v === 'mismatch') {
         // Stale: its holder is verifiably not running. Move it aside atomically; if a
@@ -1126,7 +1126,7 @@ async function cancelKeeper(cfg, rec, args, io) {
     return { ...out, exitCode: 3 };
   }
 
-  const kill = await killChecked(keeperPid, keeperCreatedAt, { deadlineMs: CANCEL_IDENTITY_MS });
+  const kill = await killChecked(keeperPid, keeperCreatedAt, { deadlineMs: IDENTITY_QUERY_MS });
   await sleep(500);
 
   const workerPid = facts.workerPid ?? rec.worker_pid ?? null;
