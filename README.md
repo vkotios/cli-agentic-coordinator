@@ -1,7 +1,7 @@
 # cli-agentic-coordinator
 
 One orchestrator agent in your chosen harness coordinating **worker coding CLIs** (opencode, vibe,
-codex, agy, Copilot, Muse, aider) on Windows, Linux and macOS. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
+codex, agy, Copilot, Muse, aider, Claude) on Windows, Linux and macOS. The orchestrator specifies, launches, monitors, reviews and accepts; the workers
 write the code. The `orch` tool is the only way work gets launched, and it keeps the record.
 
 What `orch` enforces:
@@ -71,6 +71,7 @@ escalates.
   | GitHub Copilot CLI | subscription implementer / reviewer | direct native executable; explicit model or Auto access route |
   | Muse Code (Meta) | subscription implementer / reviewer | native versioned executable; saved device sign-in |
   | aider | cloud implementer (BYOK/API-key) | headless `--message-file`; model always pinned; never commits (review role unsupported) |
+  | Claude Code | subscription implementer / reviewer (for non-Claude controllers) | headless `claude -p` on the saved login; no settings, hooks or MCP; reviewer has read-only tools |
 
   Copilot and Muse currently support subscription workers and reviewers; controller support is separate.
   Per-CLI details and verified quirks: `docs/CLI_GUIDE.md`.
@@ -218,7 +219,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | optional Jev adviser policy | `advicePolicy` | `ORCH_ADVICE_POLICY` (`--advice-policy`) | disabled; explicit `pick --advice` required |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
-| opencode / codex / agy / vibe / aider executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe`, `exe.aider` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE`, `ORCH_AIDER_EXE` | found on `PATH` / the npm global prefix at run time |
+| opencode / codex / agy / vibe / aider / claude executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe`, `exe.aider`, `exe.claude` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE`, `ORCH_AIDER_EXE`, `ORCH_CLAUDE_EXE` | found on `PATH` / the npm global prefix at run time |
 | Windows Terminal / PowerShell for the log window (Windows only) | `exe.wt`, `exe.powershell` | `ORCH_WT_EXE`, `ORCH_PS_EXE` | `wt.exe`, `powershell.exe` |
 | codex session rollouts (model attribution) | `codexSessionsDir` | `ORCH_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else Windows: `%USERPROFILE%\.codex\sessions`; Linux: `~/.codex/sessions` |
 | vibe logs | `vibeLogDir` | `ORCH_VIBE_LOG_DIR` | `~/.vibe/logs` |

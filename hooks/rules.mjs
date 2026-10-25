@@ -20,7 +20,7 @@ const deny = (reason, rule) => ({ block: true, reason, rule });
  * 1. WORKER LAUNCH
  * ===================================================================== */
 
-export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot', 'muse', 'aider'];
+export const WORKERS = ['opencode', 'vibe', 'agy', 'codex', 'copilot', 'muse', 'aider', 'claude'];
 
 /** npm / PyPI package names that install a worker CLI. */
 const PACKAGE_ALIASES = {
@@ -30,6 +30,7 @@ const PACKAGE_ALIASES = {
   'mistral-vibe': 'vibe',
   'aider-chat': 'aider',
   'aider': 'aider',
+  '@anthropic-ai/claude-code': 'claude',
 };
 
 const HELP_FLAGS = new Set(['--help', '-h', '--version', '-v', '-V', '/?']);
@@ -319,6 +320,9 @@ export function judgeWorker(cli, args) {
     // aider's argument parser also takes unique prefixes (`--mess`, `--message-f`) and glued short values (`-mhello`)
     const messageLike = (x) => (x.startsWith('--') ? x.length > 3 && ['--msg', '--message', '--message-file'].some((o) => o.startsWith(x.split('=')[0])) : /^-[mf]./.test(x));
     if (hasFlag('-m', '--msg', '--message', '--message-file', '-f') || a.some(messageLike)) launch = 'aider --message/--message-file';
+  } else if (cli === 'claude') {
+    // headless print mode only: interactive `claude`, `claude mcp ...`, `claude auth ...` stay allowed
+    if (hasFlag('-p', '--print')) launch = 'claude -p';
   }
   if (!launch) return ok;
   return { ...deny(`Blocked: a direct \`${launch}\` launch bypasses orch. ${orchHint(cli)}`, 'worker-launch'), cli };
@@ -352,7 +356,7 @@ export function collectVars(text, outer = {}) {
   return vars;
 }
 
-const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot|muse(?:-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?)?|aider)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
+const WORKER_WORD = /(?:^|[\\/\s'"(])(opencode|vibe|agy|codex|copilot|muse(?:-bin-\d+\.\d+\.\d+-r\d+(?:\.\d+)?)?|aider|claude)(?:\.(?:exe|cmd|bat|ps1))?(?=$|[\s'")])/i;
 
 /** Program name of a (resolved) token; an expression such as `(Get-Command codex).Source` names its worker. */
 function programOf(v) {
