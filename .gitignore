@@ -14,3 +14,7 @@ orch/roster.json
 # Logs and run output
 *.log
 bench-results*.json
+
+# Host-built macOS process helper
+orch/native/darwin-processes
+orch/native/darwin-processes.[0-9]*

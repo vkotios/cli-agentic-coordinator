@@ -39,6 +39,7 @@ Common to all workers:
 | copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
 | muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
 | aider | `ORCH_AIDER_EXE` or `exe.aider` | `aider` (or `aider.exe`) on `PATH` |
+| claude | `ORCH_CLAUDE_EXE` or `exe.claude` | `claude.exe` on `PATH`; then `%USERPROFILE%\.local\bin\claude.exe` |
 
 A CLI that cannot be found is a clear `cli-not-found` error naming the override to set. The `.cmd`
 shims npm installs are deliberately **not** accepted (see opencode below).
@@ -328,6 +329,36 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   its working directory, so `--dir` may be a subfolder.
 - The ANSWER-block marker was verified on aider 0.86.2 with `--no-pretty`; if another version prints
   a different marker the final message falls back to the whole output.
+
+## claude (implementer / reviewer, for non-Claude controllers)
+
+- `orch run --cli claude --model <exact id>` and `orch review --reviewer claude --model <exact id> ...`: lets
+  a controller that is not Claude Code (Codex, Vibe, Muse, ...) launch Claude as a worker or a read-only
+  reviewer. A controller that IS Claude Code should keep using its own subagents for escalation reviews (next
+  section). A context-window suffix such as `[1m]` is not accepted in `--model`; use the plain id.
+- Billing is the saved subscription login (`claude auth login`). `ANTHROPIC_*`, `CLAUDE_CODE_USE_*` and
+  `AWS_BEARER_TOKEN_BEDROCK` are removed from the child, so a stray key cannot move the run to API billing or
+  another endpoint. Aliases (`sonnet`, `opus`, `haiku`, `default`, `auto`) are refused: pin an exact model id.
+- Launch: `claude -p --model <id> --output-format stream-json --verbose --no-session-persistence`, handoff on
+  **stdin** (never argv). No `--max-turns` (not offered by the CLI); `--effort` takes low, medium, high, xhigh, max.
+- Isolation (read from the `system/init` event of offline probes on Claude Code 2.1.x): `--setting-sources ""`
+  loads no user/project settings, so none of their hooks or permission rules run (a default launch loaded 5
+  hooks, 2 MCP servers and `auto` mode); an empty `--mcp-config` with `--strict-mcp-config` removes every MCP
+  server; `--disable-slash-commands` drops skills. `--bare` is deliberately not used: it ignores the saved login.
+- Roles: the implementer gets `Read,Grep,Glob,Edit,Write,Bash` under `--permission-mode bypassPermissions`
+  (print mode cannot answer a prompt; the run is confined to its worktree by orch). The reviewer gets
+  `Read,Grep,Glob` only under `default`. That is a tool restriction, not an OS sandbox.
+- A failed run (for example an expired login) still ends with a `result` event whose `subtype` is `success`;
+  `is_error:true` marks the failure. Only a non-error `result` is taken as the final message. An expired login
+  reads `Failed to authenticate: OAuth session expired ...` and is classified `blocked-auth`.
+- Model used: taken from the main agent's assistant messages (`<synthetic>` and sub-agent messages are ignored;
+  one model listed in the result's `modelUsage` is the fallback). Several models, or none, leave it unknown.
+- Verification so far: flags, tool/MCP/hook isolation and the failure shape were checked offline against the real
+  CLI; a complete authenticated worker and reviewer run is **not yet recorded**. Record it (and any quirk) here
+  after the first one. The CLI printed `unrecognized_model` on stderr for a model id it did not know; that
+  diagnostic is not an exit status.
+- The guard denies a direct `claude -p` / `claude --print` launch; interactive `claude`, `claude mcp ...` and
+  `claude auth ...` stay allowed.
 
 ## Claude escalation reviewers
 

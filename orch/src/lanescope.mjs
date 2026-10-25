@@ -68,7 +68,7 @@ export function laneScope(lane = 'local') {
   const laneId = override ? sanitizeId(override) : userLaneIdentifier();
   const scope = `${laneId}-${lane}`;
   const laneDir = path.join(laneHome(), scope);
-  const pipePath = (kind, id) => process.platform === 'linux'
+  const pipePath = (kind, id) => process.platform !== 'win32'
     ? path.join('/tmp', `.orch-${process.getuid()}`, `${kind}-${id}.sock`)
     : `\\\\.\\pipe\\orch-${kind}-${id}`;
   return {

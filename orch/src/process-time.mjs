@@ -8,6 +8,11 @@ export function creationPoint(value) {
     return Number.isSafeInteger(at) && Math.abs(at) <= 8640000000000000 && value === `ms:${at}`
       ? { kind: 'wall', scope: 'ms', value: at } : null;
   }
+  const mac = /^darwin:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):(0|[1-9]\d*)$/.exec(value);
+  if (mac) {
+    const at = Number(mac[2]);
+    return Number.isSafeInteger(at) ? { kind: 'darwin', boot: mac[1], scope: `darwin:${mac[1]}`, value: at } : null;
+  }
   const native = /^linux:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([1-9]\d{0,19}):(0|[1-9]\d*)$/.exec(value);
   if (!native) return null;
   const at = Number(native[3]);

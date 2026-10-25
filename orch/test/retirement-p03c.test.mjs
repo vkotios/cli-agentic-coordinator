@@ -1,3 +1,4 @@
+import { DARWIN_FIXTURE_SCOPE, darwinFixtureSnapshot } from './fixtures/darwin-process-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -505,13 +506,17 @@ test('P03c review: archived PID reuse permits retention while match and unknown 
     });
   } else {
     cp.execFile = /** @type {any} */ ((exe, args, opts, cb) => {
+      if (process.platform === 'darwin' && String(exe).endsWith('/darwin-processes')) {
+        const child = /** @type {any} */ (new EventEmitter()); child.kill = () => true;
+        setImmediate(() => { cb(verdict === 'unknown' ? new Error('fixture unavailable') : null, darwinFixtureSnapshot(verdict, 424242, '123456', '654321'), ''); child.emit('close', 0); }); return child;
+      }
       if (exe !== 'powershell.exe' || !String(args.at(-1)).includes('Get-CimInstance Win32_Process')) return original(exe, args, opts, cb);
       const child = /** @type {any} */ (new EventEmitter()); child.kill = () => true;
       setImmediate(() => { cb(verdict === 'unknown' ? new Error('fixture unavailable') : null, verdict === 'gone' || verdict === 'unknown' ? '' : JSON.stringify([{ ProcessId: 424242, CreationDate: verdict === 'match' ? old : '2026-06-01T00:00:00Z' }]), ''); child.emit('close', 0); }); return child;
     }); syncBuiltinESMExports();
   }
   try {
-    const recordedAt = process.platform === 'linux' ? 'linux:'+fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+/^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'))[1]+':123456' : old;
+    const recordedAt = process.platform === 'linux' ? 'linux:'+fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+/^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid'))[1]+':123456' : process.platform === 'darwin' ? DARWIN_FIXTURE_SCOPE + ':123456' : old;
     fs.writeFileSync(path.join(f.dir, 'spawned.json'), JSON.stringify({ monitor_pid: 424242, monitor_created_at: recordedAt }));
     // In-process calls keep the platform-specific process-query fixture local to this test.
     const cfg = loadConfig(f.c.stateRoot);

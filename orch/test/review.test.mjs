@@ -90,7 +90,7 @@ test('astra H1: the lane id does not depend on inheritable environment (USERPROF
     });
   const normal = await run({});
   const skewed = await run({ USERPROFILE: 'C:\\Elsewhere\\profile', HOMEDRIVE: 'D:', HOMEPATH: '\\other', USERNAME: 'mallory' });
-  if (process.platform === 'linux') assert.match(path.basename(normal), /^lane-[0-9a-f]{12}-local\.sock$/);
+  if (process.platform !== 'win32') assert.match(path.basename(normal), /^lane-[0-9a-f]{12}-local\.sock$/);
   else assert.match(normal, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
   assert.equal(skewed, normal, 'a shell with a different profile environment derived a DIFFERENT lane - two local lanes');
 });
@@ -161,7 +161,7 @@ test('astra H3: an `undetermined` admission still records the keeper identity, s
   const id = fs.readdirSync(path.join(c.stateRoot, 'runs')).sort().pop();
   const spawned = spawnedIdentity(c.stateRoot, id);
   assert.ok(spawned, 'spawned.json was not written on the undetermined path');
-  assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
+  assert.match(String(spawned.keeper_created_at), process.platform !== 'win32' ? /^(?:linux:[0-9a-f-]{36}:\d+:\d+|darwin:[0-9a-f-]{36}:\d+)$/ : /^ms:\d+$/, 'the keeper creation time was not captured before the early return');
   await waitFor(() => keeperLines(c.stateRoot, id).some((l) => l.event === 'worker-identity'), { timeoutMs: 20000, what: 'worker identity' });
 
   const res = await orch(['cancel', '--keeper', id, '--json'], c.env);
@@ -189,7 +189,7 @@ test('astra H4: the monitor never adopts the identity of whatever process holds 
       '\n' +
       JSON.stringify({ event: 'spawned', worker_pid: decoy.pid, at: new Date().toISOString() }) +
       '\n',
-    spawned: { run_id: id, keeper_pid: 999999, keeper_created_at: process.platform === 'linux' ? decoy.createdAt : 'ms:1' },
+    spawned: { run_id: id, keeper_pid: 999999, keeper_created_at: process.platform !== 'win32' ? decoy.createdAt : 'ms:1' },
   });
   const m = await orch(['monitor', id, '--json'], c.env);
   assert.equal(m.code, 0, m.stdout + m.stderr);
@@ -281,7 +281,7 @@ test('astra M6: a stale attempt lock (its holder is gone) is taken over, so a re
   // A cancel process that died holding the lock: its recorded identity is not running.
   fs.writeFileSync(
     path.join(c.stateRoot, 'runs', id, 'cancel.lock'),
-    JSON.stringify({ pid: 999999, created_at: process.platform === 'linux' ? keeperLines(c.stateRoot,id).find(l=>l.event==='worker-identity').worker_created_at : 'ms:1', attempt: 'deadbeef0000', at: new Date().toISOString() }),
+    JSON.stringify({ pid: 999999, created_at: process.platform !== 'win32' ? keeperLines(c.stateRoot,id).find(l=>l.event==='worker-identity').worker_created_at : 'ms:1', attempt: 'deadbeef0000', at: new Date().toISOString() }),
   );
   const res = await orch(['cancel', id, '--json'], c.env);
   const out = JSON.parse(res.stdout);
@@ -455,7 +455,7 @@ test('agy g2: cancel --keeper does not count an identity MISMATCH as the worker 
 
 test('agy g3: a probe that times out before connecting is `unknown`, never `free`', { timeout: 60000 }, async () => {
   const { tryListen, connectHello } = await import('../src/lanepipe.mjs');
-  const name = process.platform === 'linux'
+  const name = process.platform !== 'win32'
     ? path.join(path.dirname(laneScope('local').pipeName), `lane-g3-${process.pid}.sock`)
     : `\\\\.\\pipe\\orch-g3-${process.pid}`;
   const held = await tryListen(name);

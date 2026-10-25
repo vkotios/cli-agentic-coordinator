@@ -60,26 +60,29 @@ function runNode(args, env) {
 
 /* ------------------------------------------------------------ platform -- */
 
-test('P1: the platform guard supports Windows and Linux, and clearly refuses unsupported platforms', () => {
+test('P1: the platform guard supports Windows, Linux and macOS, and clearly refuses unsupported platforms', () => {
   assert.doesNotThrow(() => assertSupportedPlatform('win32'));
   assert.doesNotThrow(() => assertSupportedPlatform('linux'));
-  for (const p of ['darwin', 'freebsd']) {
-    assert.throws(() => assertSupportedPlatform(p), (/** @type {any} */ e) => e.code === 'unsupported-platform' && /not supported yet/.test(e.message) && e.message.includes(p));
+  assert.doesNotThrow(() => assertSupportedPlatform('darwin'));
+  for (const p of ['freebsd']) {
+    assert.throws(() => assertSupportedPlatform(p), (/** @type {any} */ e) => e.code === 'unsupported-platform' && /not supported/.test(e.message) && e.message.includes(p));
   }
 });
 
 test('P1: unsupported platforms fail closed while simulated Linux can run the CLI', { timeout: 120000 }, async () => {
   const pre = pathToFileURL(FAKE_PLATFORM).href;
   for (const args of [['--help'], ['adopt', '--repo', '.', '--dry-run'], ['mcp'], ['status', '--all']]) {
-    const r = await runNode(['--import', pre, ORCH_BIN, ...args], { ...process.env, ORCH_FAKE_PLATFORM: 'darwin' });
+    const r = await runNode(['--import', pre, ORCH_BIN, ...args], { ...process.env, ORCH_FAKE_PLATFORM: 'freebsd' });
     assert.equal(r.code, 2, `${args.join(' ')}: ${r.stderr}`);
-    assert.match(r.stderr, /supports Windows and Linux/);
-    assert.ok(r.stderr.includes('this platform: darwin'), r.stderr);
+    assert.match(r.stderr, /supports Windows, Linux and macOS/);
+    assert.ok(r.stderr.includes('this platform: freebsd'), r.stderr);
     assert.equal(r.stdout, '', 'nothing is printed on stdout');
   }
-  const linux = await runNode(['--import', pre, ORCH_BIN, '--help'], { ...process.env, ORCH_FAKE_PLATFORM: 'linux' });
-  assert.equal(linux.code, 0, linux.stderr);
-  assert.match(linux.stdout, /orch run --cli/);
+  for (const platform of ['linux', 'darwin']) {
+    const result = await runNode(['--import', pre, ORCH_BIN, '--help'], { ...process.env, ORCH_FAKE_PLATFORM: platform });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /orch run --cli/);
+  }
 });
 
 /* -------------------------------------------------------- configuration -- */

@@ -10,7 +10,9 @@
     "orch/src/lanescope.mjs",
     "orch/src/claims.mjs",
     "orch/src/exclusive.mjs",
-    "orch/src/helper-reconciliation.mjs"
+    "orch/src/helper-reconciliation.mjs",
+    "orch/src/darwin-processes.mjs",
+    "orch/native/**"
   ],
   "shared": [
     ".github/**",
@@ -58,7 +60,8 @@
         "orch/test/routing-p05a.test.mjs",
         "orch/test/portable.test.mjs",
         "orch/test/ci-policy.test.mjs",
-        "orch/test/ci-fixtures.test.mjs"
+        "orch/test/ci-fixtures.test.mjs",
+        "orch/test/darwin-process-evidence.test.mjs"
       ],
       "inputs": []
     },
@@ -194,7 +197,8 @@
       "execution": "serial",
       "files": [
         "orch/test/adapters.test.mjs",
-        "orch/test/adapters-p04b.test.mjs"
+        "orch/test/adapters-p04b.test.mjs",
+        "orch/test/adapter-claude.test.mjs"
       ],
       "inputs": [
         "orch/src/adapters/**",
