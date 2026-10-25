@@ -194,7 +194,8 @@
       "execution": "serial",
       "files": [
         "orch/test/adapters.test.mjs",
-        "orch/test/adapters-p04b.test.mjs"
+        "orch/test/adapters-p04b.test.mjs",
+        "orch/test/adapter-claude.test.mjs"
       ],
       "inputs": [
         "orch/src/adapters/**",

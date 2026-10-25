@@ -17,6 +17,7 @@
     "codex": "C:/tools/codex/codex.exe",
     "agy": "C:/tools/agy/agy.exe",
     "aider": "C:/tools/aider/aider.exe",
+    "claude": "C:/Users/example/.local/bin/claude.exe",
     "vibe": "C:/Users/example/.local/bin/vibe.exe",
     "wt": "wt.exe",
     "powershell": "powershell.exe"
