@@ -69,12 +69,12 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
 
   for (let rep = 0; rep < KEEPER_REPS; rep++) {
     const { id, spawned, workerPid } = await launchHeld(c, 30);
-    assert.match(String(spawned.keeper_created_at), process.platform === 'linux' ? /^linux:[0-9a-f-]{36}:\d+:\d+$/ : /^ms:\d+$/, 'the spawner must have captured the keeper identity');
+    assert.match(String(spawned.keeper_created_at), process.platform !== 'win32' ? /^(?:linux:[0-9a-f-]{36}:\d+:\d+|darwin:[0-9a-f-]{36}:\d+)$/ : /^ms:\d+$/, 'the spawner must have captured the keeper identity');
 
     // On Linux the keeper starts a supervisor process which must in turn start the
     // actual CLI inside its session. Checking only the supervisor pid can pass while
     // the lane is held by a keeper whose worker never started.
-    const supervisedWorker = process.platform === 'linux'
+    const supervisedWorker = process.platform !== 'win32'
       ? await waitFor(async () => {
         const table = await readProcessTable({ deadlineMs: 3000 });
         return table?.find((p) => p.ppid === workerPid && p.pgrp === workerPid && p.session === workerPid) || null;
@@ -113,14 +113,14 @@ test(`G4/TC: keeper killed mid-run, ${KEEPER_REPS}x -> worker reaped, pipe re-bi
     const mainWorkerPid = supervisedWorker?.pid ?? workerPid;
     const mainWorkerCreatedAt = supervisedWorker?.createdAt ?? workerCreatedAt;
     const at2 = await identityOf(mainWorkerPid, mainWorkerCreatedAt);
-    const supervisorAt2 = process.platform === 'linux' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
+    const supervisorAt2 = process.platform !== 'win32' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
     if (at2 === 'gone' || at2 === 'mismatch') dist.workerGoneAt2s++;
     await new Promise((r) => setTimeout(r, 8000));
     const at10 = await identityOf(mainWorkerPid, mainWorkerCreatedAt);
-    const supervisorAt10 = process.platform === 'linux' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
+    const supervisorAt10 = process.platform !== 'win32' ? await identityOf(workerPid, workerCreatedAt) : 'gone';
     if (at10 === 'gone' || at10 === 'mismatch') dist.workerGoneAt10s++;
     assert.ok(at10 === 'gone' || at10 === 'mismatch', `rep ${rep}: the MAIN worker survived the keeper at t+10s (${at10})`);
-    if (process.platform === 'linux') {
+    if (process.platform !== 'win32') {
       assert.ok(supervisorAt10 === 'gone' || supervisorAt10 === 'mismatch', `rep ${rep}: the worker supervisor survived the keeper at t+10s (${supervisorAt10})`);
     }
 
@@ -285,7 +285,7 @@ test('G8: an async error event with no prior spawn event is treated exactly like
 async function runKeeperDirect(c, label, mutate) {
   const runDir = path.join(c.stateRoot, 'runs', `direct-${label}`);
   fs.mkdirSync(runDir, { recursive: true });
-  const pipe = process.platform === 'linux'
+  const pipe = process.platform !== 'win32'
     ? c.lanePipe.replace(/-local\.sock$/, `-d${label}.sock`)
     : `\\\\.\\pipe\\orch-lane-${c.laneId}-d${label}`;
   fs.writeFileSync(path.join(runDir, 'prompt.txt'), 'x');

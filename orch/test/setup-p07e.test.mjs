@@ -38,7 +38,7 @@ test('P07e: actual hook protocol permits an exact command, audits decisions and 
   const rows=fs.readFileSync(path.join(dir,'guard-events.ndjson'),'utf8').trim().split('\n').map(x=>JSON.parse(x));assert.deepEqual(rows.map(x=>x.decision),['allow','deny']);assert.equal(rows[0].commandHash,hash(policy.commands[0]));
   assert.equal(call('{malformed'),'deny');fs.appendFileSync(file,' ');assert.equal(call(request(policy.commands[0])),'deny');
 });
-test('P07e: native runner preflight obtains its own real creation time without launching a model',async()=>{const createdAt=await nativeControllerIdentity();assert.equal(typeof createdAt,'string');assert.match(createdAt,process.platform==='linux'?/^linux:[0-9a-f-]{36}:\d+:\d+$/:/^ms:\d+$/);});
+test('P07e: native runner preflight obtains its own real creation time without launching a model',async()=>{const createdAt=await nativeControllerIdentity();assert.equal(typeof createdAt,'string');assert.match(createdAt,process.platform!=='win32'?/^(?:linux:[0-9a-f-]{36}:\d+:\d+|darwin:[0-9a-f-]{36}:\d+)$/:/^ms:\d+$/);});
 test('P07e: Windows self identity survives PowerShell startup beyond five seconds', {skip:process.platform!=='win32',timeout:45000}, async t=>{
   const expected=await nativeControllerIdentity();assert.equal(typeof expected,'string');
   const nativeExec=childProcess.execFile,started=Date.now(),queries=[];

@@ -1102,8 +1102,8 @@ function cancelText(o) {
 }
 
 /** The accepted, documented conflict with "escaped helpers are never killed" (v4 §6 H6). */
-export const TREE_KILL_NOTE = process.platform === 'linux'
-  ? 'Linux cancellation targets the verified worker process group. Descendants that leave that group are outside this kill scope; retained helper evidence still governs finalization.'
+export const TREE_KILL_NOTE = process.platform !== 'win32'
+  ? 'POSIX cancellation targets the verified worker process group. Descendants that leave that group are outside this kill scope; retained helper evidence still governs finalization.'
   : 'a tree kill also ends descendants the worker spawned detached. This is accepted and documented, not claimed away.';
 
 /**
@@ -1216,7 +1216,7 @@ async function monitorLocked(cfg, id, args, io) {
     return { ...out, exitCode: 3 };
   }
 
-  if (process.platform === 'linux' && probe.state === 'free') {
+  if (process.platform !== 'win32' && probe.state === 'free') {
     const recovery = await recoverLinuxSocket(scope.monitorPipe(id));
     if (!['absent', 'recovered'].includes(recovery.state)) {
       const out = { id, monitor: 'not-started', reason: `socket owner ${recovery.state}; inspect retained evidence` };
@@ -1247,7 +1247,7 @@ export async function cmdGc(args, io = console) {
   const holder = readJson(scope.holderFile, null);
   const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
   const out = { lane: scope.lane, lane_state: probe.state, holder_run: holder ? holder.run_id : null, removed: [] };
-  if (process.platform === 'linux' && probe.state === 'free') {
+  if (process.platform !== 'win32' && probe.state === 'free') {
     const recovery = await recoverLinuxSocket(scope.pipeName);
     out.removed.push(...recovery.removed);
     if (!['absent', 'recovered'].includes(recovery.state)) out.lane_state = 'unknown';

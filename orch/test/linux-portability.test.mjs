@@ -28,7 +28,7 @@ test('setup discovery checks native executable permission without invoking a har
  for(const key of Object.keys(before))delete process.env[key];t.after(()=>{for(const[key,value]of Object.entries(before))if(value===undefined)delete process.env[key];else process.env[key]=value;});
  const file=path.join(dir,process.platform==='win32'?'native.exe':'native');fs.writeFileSync(file,'synthetic executable: never run');fs.chmodSync(file,0o755);
  const config={exe:Object.fromEntries(names.map(h=>[h,file]))};assert.ok(Object.values(discoverExecutables(config,dir)).every(Boolean));
- if(process.platform==='linux'){fs.chmodSync(file,0o644);assert.ok(Object.values(discoverExecutables(config,dir)).every(v=>v===false));}
+ if(process.platform!=='win32'){fs.chmodSync(file,0o644);assert.ok(Object.values(discoverExecutables(config,dir)).every(v=>v===false));}
  const wrapper=path.join(dir,'wrapper.cmd');fs.writeFileSync(wrapper,'synthetic');fs.chmodSync(wrapper,0o755);config.exe=Object.fromEntries(names.map(h=>[h,wrapper]));assert.ok(Object.values(discoverExecutables(config,dir)).every(v=>v===false));
 });
 test('Linux adoption retains a case-distinct owner hook and installs the actual guard',{skip:process.platform!=='linux'},async t=>{

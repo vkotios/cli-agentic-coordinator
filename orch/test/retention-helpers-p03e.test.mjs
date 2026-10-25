@@ -13,9 +13,10 @@ import { dependentRunBlock } from '../src/resources.mjs';
 import { readArchived } from '../src/archive.mjs';
 import { ownChildCreationTime } from '../src/procs.mjs';
 import { once } from 'node:events';
+import { DARWIN_FIXTURE_SCOPE, darwinFixtureSnapshot } from './fixtures/darwin-process-fixture.mjs';
 
 const old='2026-01-01T00:00:00.000Z',pid=424242,boot='00000000-0000-4000-8000-000000000001';
-const recordedBirth=process.platform==='linux'?'linux:'+boot+':123:100':old;
+const recordedBirth=process.platform==='linux'?'linux:'+boot+':123:100':process.platform==='darwin'?DARWIN_FIXTURE_SCOPE+':100':old;
 function fixture(t,name){
   const c=makeCase(name,{config:{retention:{mode:'manual',successDays:0,otherDays:0,maxMs:10000,metadata:{enabled:true,successDays:0,otherDays:0}}}});t.after(()=>c.cleanup());
   const id='20260101-000000-abc123',dir=path.join(c.stateRoot,'runs',id);fs.mkdirSync(dir,{recursive:true});
@@ -41,6 +42,10 @@ function processFixture(t){
     t.after(()=>{fs.promises.readFile=read;fs.promises.readlink=link;});return state;
   }
   cp.execFile=/** @type {any} */((exe,args,opts,cb)=>{
+    if(process.platform==='darwin'&&String(exe).endsWith('/darwin-processes')){
+      state.queries.push('darwin:'+args[0]);const child=/** @type {any} */(new EventEmitter());child.kill=()=>true;
+      setImmediate(()=>{cb(state.mode==='unknown'?new Error('fixture unavailable'):null,darwinFixtureSnapshot(state.mode),'');child.emit('close',0);});return child;
+    }
     if(exe!=='powershell.exe'||!String(args.at(-1)).includes('Get-CimInstance Win32_Process')){state.unexpected.push(exe);return original(exe,args,opts,cb);}
     state.queries.push(String(args.at(-1)));const child=/** @type {any} */(new EventEmitter());child.kill=()=>true;
     setImmediate(()=>{const rows=state.mode==='gone'?[]:[{ProcessId:state.mode==='invalid-pid'?'broken':pid,ParentProcessId:1,CreationDate:state.mode==='mismatch'?'2026-06-01T00:00:00.000Z':state.mode==='missing-birth'?null:state.mode==='invalid-birth'?'broken':state.mode==='padded-birth'?'ms:0'+Date.parse(old):old,Name:'fixture-helper'}];cb(state.mode==='unknown'?new Error('fixture unavailable'):null,state.mode==='unknown'?'':JSON.stringify(rows),'');child.emit('close',0);});return child;
@@ -51,7 +56,7 @@ async function enroll(f){return maintain(f,{enroll:f.id,by:'fixture-owner',reaso
 
 for(const mode of ['gone','mismatch'])test(`P03e: ${mode} helper incarnation permits quiescence without rewriting original audit`,async t=>{
   const f=fixture(t,'p03e-'+mode),state=processFixture(t);state.mode=mode;const before=fs.readFileSync(path.join(f.dir,'run.json'));
-  assert.equal(await quiescent(f.cfg,f.rec,Date.now()+4000),null);assert.ok(state.queries.length);assert.match(state.queries[0],process.platform==='linux'?new RegExp('424242/stat$'):/ProcessId=424242/);assert.deepEqual(state.unexpected,[]);assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);assert.equal(f.rec.escaped_helpers[0].state,'alive');
+  assert.equal(await quiescent(f.cfg,f.rec,Date.now()+4000),null);assert.ok(state.queries.length);assert.match(state.queries[0],process.platform==='linux'?new RegExp('424242/stat$'):process.platform==='darwin'?/darwin:424242/:/ProcessId=424242/);assert.deepEqual(state.unexpected,[]);assert.deepEqual(fs.readFileSync(path.join(f.dir,'run.json')),before);assert.equal(f.rec.escaped_helpers[0].state,'alive');
 });
 for(const mode of ['match','unknown','missing-birth','invalid-birth','invalid-pid'])test(`P03e: ${mode} helper protects transcripts and worktree cleanup`,async t=>{
   const f=fixture(t,'p03e-protect-'+mode),state=processFixture(t);state.mode=mode;
@@ -121,6 +126,10 @@ test('P03e: an owned real helper stays protected until its exit is actually read
     catch(error){queries.push({unreadable:!['ENOENT','ESRCH'].includes(error.code),pidPresent:false});throw error;}
   };
   cp.execFile=/** @type {any} */((exe,args,opts,cb)=>original(exe,args,opts,(error,stdout,stderr)=>{
+    if(process.platform==='darwin'&&String(exe).endsWith('/darwin-processes')&&args[0]===String(child.pid)){
+      let rows;try{rows=JSON.parse(String(stdout)).rows;}catch{}
+      queries.push({unreadable:!!error||!Array.isArray(rows),pidPresent:Array.isArray(rows)&&rows.some(row=>row.pid===child.pid)});
+    }
     if(exe==='powershell.exe'&&String(args.at(-1)).includes(`ProcessId=${child.pid}`)){
       let rows;try{rows=JSON.parse(String(stdout||'null'));}catch{rows=undefined;}
       if(rows&&!Array.isArray(rows))rows=[rows];

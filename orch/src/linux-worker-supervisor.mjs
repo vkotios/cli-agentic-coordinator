@@ -1,14 +1,21 @@
-// Linux-only launcher: keep the actual worker in a private session and tie its
+// POSIX launcher (the historical filename is retained for existing integrations): keep the actual worker in a private session and tie its
 // lifetime to the keeper. If the keeper disappears, this wrapper kills the
 // session so neither the CLI nor its same-session descendants are orphaned.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { readDarwinProcessTable } from './darwin-processes.mjs';
 import { creationPoint } from './process-time.mjs';
 
 let nativeScope = null;
-/** @returns {{unknown:boolean,state?:string,ppid?:number,pgrp?:number,session?:number,start?:string,identity?:string}|null} */
-function procStat(pid) {
+/** @returns {Promise<{unknown:boolean,state?:string,ppid?:number,pgrp?:number,session?:number,start?:string,identity?:string}|null>} */
+async function procStat(pid) {
+  if (process.platform === 'darwin') {
+    const table = await readDarwinProcessTable([pid], 1000);
+    if (!table) return { unknown: true };
+    const row = table.find(p => p.pid === pid);
+    return row ? { unknown: false, ...row, identity: row.createdAt } : null;
+  }
   if (nativeScope === null) {
     try {
       const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
@@ -35,11 +42,11 @@ function ownPipe(pathname, deviceText, inodeText) {
   const uid = process.getuid?.();
   const expectedDir = path.join('/tmp', `.orch-${uid}`);
   if (!Number.isInteger(uid) || path.dirname(pathname) !== expectedDir || !path.isAbsolute(pathname) || !/^lane-[A-Za-z0-9_-]+\.sock$/.test(path.basename(pathname))) {
-    throw new Error('unsafe Linux lane socket path');
+    throw new Error('unsafe POSIX lane socket path');
   }
   const dir = fs.lstatSync(expectedDir);
   if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 0o077) !== 0) {
-    throw new Error('unsafe Linux lane socket directory');
+    throw new Error('unsafe POSIX lane socket directory');
   }
   const socket = fs.lstatSync(pathname, { bigint: true });
   if (!socket.isSocket() || socket.uid !== BigInt(uid) || String(socket.dev) !== deviceText || String(socket.ino) !== inodeText) {
@@ -70,16 +77,16 @@ function reportStatus(line) {
 
 function fail(message, code = 125, statusCode = 'SUPERVISOR') {
   reportStatus(`ERROR ${statusCode}`);
-  try { process.stderr.write(`orch Linux worker supervisor: ${message}\n`); } catch { /* inherited output may be closed */ }
+  try { process.stderr.write(`orch POSIX worker supervisor: ${message}\n`); } catch { /* inherited output may be closed */ }
   process.exit(code);
 }
 
-if (process.platform !== 'linux') fail('this launcher is Linux-only');
+if (!['linux', 'darwin'].includes(process.platform)) fail('this launcher requires Linux or macOS');
 const [exe, encodedArgs, keeperPidText, keeperStart, pipeName, pipeDevice, pipeInode] = process.argv.slice(2);
 let args;
 try { args = JSON.parse(encodedArgs); } catch { fail('invalid worker arguments'); }
 const keeperPid = Number(keeperPidText);
-if (!exe || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string') || !Number.isInteger(keeperPid) || keeperPid <= 1 || creationPoint(keeperStart)?.kind !== 'linux') {
+if (!exe || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string') || !Number.isInteger(keeperPid) || keeperPid <= 1 || creationPoint(keeperStart)?.kind !== process.platform) {
   fail('invalid worker launch request');
 }
 
@@ -91,14 +98,14 @@ if (pipeName) {
 } else if (pipeDevice || pipeInode) {
   fail('unexpected lane socket identity for a non-exclusive lane');
 }
-const keeper = procStat(keeperPid);
+const keeper = await procStat(keeperPid);
 // Uncertainty refuses admission, but the live owner still owns its listener.
 if (keeper?.unknown) fail('keeper identity could not be established');
 if (!keeper || keeper.identity !== keeperStart || keeper.state === 'Z' || keeper.state === 'X') {
   removeOwnPipe(pipeIdentity);
   fail('keeper identity could not be established');
 }
-const self = procStat(process.pid);
+const self = await procStat(process.pid);
 if (!self || self.unknown || self.pgrp !== process.pid || self.session !== process.pid) {
   fail('worker supervisor is not an isolated session leader');
 }
@@ -135,8 +142,12 @@ function terminateSession(releasePipe = false) {
   }
 }
 
-function checkKeeper() {
-  const current = procStat(keeperPid);
+let checking = false;
+async function checkKeeper() {
+  if (checking || complete) return;
+  checking = true;
+  const current = await procStat(keeperPid);
+  checking = false;
   if (current?.unknown) return; // uncertainty is not keeper death and must not kill a live job
   if (!current || current.identity !== keeperStart || current.state === 'Z' || current.state === 'X') {
     terminateSession(true);
@@ -144,7 +155,7 @@ function checkKeeper() {
 }
 
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => terminateSession());
-timer = setInterval(checkKeeper, 50);
+timer = setInterval(checkKeeper, process.platform === 'darwin' ? 250 : 50);
 checkKeeper();
 worker.on('error', (/** @type {any} */ error) => {
   if (!statusSent) reportStatus(`ERROR ${error?.code || 'SPAWN-ERROR'}`);

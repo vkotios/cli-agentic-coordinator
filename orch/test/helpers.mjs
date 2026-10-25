@@ -131,7 +131,7 @@ export function makeCase(name, opts = {}) {
     work,
     handoffPath,
     env,
-    lanePipe: process.platform === 'linux'
+    lanePipe: process.platform !== 'win32'
       ? path.join('/tmp', `.orch-${process.getuid()}`, `lane-${laneId}-local.sock`)
       : `\\\\.\\pipe\\orch-lane-${laneId}-local`,
     laneDirLocal: path.join(laneHome(), `${laneId}-local`),
@@ -307,7 +307,7 @@ export async function identityOf(pid, recordedCreatedAt) {
 
 /** Compile before starting a keeper: cold Add-Type compilation is not a control action. */
 export async function prepareProcessControl(dir) {
-  if (process.platform === 'linux') return null;
+  if (process.platform !== 'win32') return null;
   const assemblyPath = path.join(dir, 'orch-test-process-control.dll');
   if (fs.existsSync(assemblyPath)) throw new Error('process-control fixture assembly already exists');
   const script = [
@@ -333,7 +333,7 @@ export async function prepareProcessControl(dir) {
 export async function suspendProcess(pid, recordedCreatedAt, resume = false, {assemblyPath} = {}) {
   const verdict = await identityOf(pid, recordedCreatedAt);
   if (verdict !== 'match') return { ok: false, verdict, failure: 'identity-refused', output: 'refused: identity is not a match' };
-  if (process.platform === 'linux') {
+  if (process.platform !== 'win32') {
     try {
       process.kill(Number(pid), resume ? 'SIGCONT' : 'SIGSTOP');
       return { ok: true, verdict, output: `sent ${resume ? 'SIGCONT' : 'SIGSTOP'} to verified pid ${pid}` };
