@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { laneScope } from '../src/lanescope.mjs';
@@ -394,5 +394,69 @@ test('POSIX close fallbacks bound admission failure and monitor exit', {skip:pro
     const child=spawn(process.execPath,['--import',loader,fileURLToPath(new URL('../src/'+kind+'.mjs',import.meta.url)),'--state-root',c.stateRoot,'--id',id,'--run-dir',dir],{env:c.env,stdio:'ignore'});await once(child,'spawn');const closed=once(child,'close'),birth=await ownChildCreationTime(child.pid,{deadlineMs:1000});assert.ok(birth);
     t.after(async()=>{if(child.exitCode===null&&child.signalCode===null){assert.equal((await killOwnedChecked(child.pid,birth)).killed,true);await closed;}c.cleanup();});
     await waitFor(()=>child.exitCode!==null||child.signalCode!==null,{timeoutMs:4500,what:kind+' to exit despite a stuck socket close callback'});await closed;assert.equal(child.exitCode,kind==='keeper'?8:0);
+  }
+});
+
+
+test('macOS keeper classifies EEXIST bind contention without disturbing the live holder', { skip: process.platform !== 'darwin', timeout: 15000 }, async t => {
+  const c = makeCase('macos-bind-error');
+  t.after(() => c.cleanup());
+  const bound = await tryListen(c.lanePipe);
+  assert.equal(bound.ok, true, JSON.stringify(bound));
+  t.after(() => new Promise(resolve => bound.server.close(resolve)));
+  const hello = JSON.stringify({ run: 'fixture-live-holder', keeper: process.pid }) + '\n';
+  bound.server.on('connection', socket => socket.end(hello));
+  const inode = fs.lstatSync(c.lanePipe, { bigint: true }).ino;
+  const ownerFile = c.lanePipe + '.owner.json', owner = fs.readFileSync(ownerFile);
+  const loader = path.join(c.base, 'bind-error.mjs');
+  fs.writeFileSync(loader, `
+import net from 'node:net';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const create = net.createServer;
+net.createServer = function(...args) {
+  const server = create(...args), listen = server.listen, emit = server.emit;
+  server.listen = function(...args) {
+    fs.appendFileSync(process.env.ORCH_TEST_BIND_TRACE, 'listen\\n');
+    return listen.apply(this, args);
+  };
+  server.emit = function(event, ...args) {
+    if (event === 'error' && args[0]?.code === 'EADDRINUSE') {
+      args[0].code = process.env.ORCH_TEST_BIND_ERROR;
+      fs.appendFileSync(process.env.ORCH_TEST_BIND_TRACE, args[0].code + '\\n');
+    }
+    return emit.call(this, event, ...args);
+  };
+  return server;
+};
+syncBuiltinESMExports();
+`);
+  for (const errorCode of ['EEXIST', 'EACCES']) {
+    const runDir = path.join(c.base, errorCode), marker = path.join(runDir, 'unexpected-worker'), trace = path.join(runDir, 'bind-trace');
+    fs.mkdirSync(runDir);
+    fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ launch: {
+      exe: process.execPath, args: ['-e', 'require("node:fs").writeFileSync(' + JSON.stringify(marker) + ',"started")'],
+      cwd: c.work, prompt: c.handoffPath, stdout: path.join(runDir, 'stdout.log'), stderr: path.join(runDir, 'stderr.log'),
+      pipe_name: c.lanePipe, lane_exclusive: true,
+    } }));
+    const result = await new Promise(resolve => execFile(process.execPath, [
+      '--import', loader, fileURLToPath(new URL('../src/keeper.mjs', import.meta.url)),
+      '--id', 'fixture-' + errorCode, '--run-dir', runDir,
+    ], { timeout: 5000, encoding: 'utf8', env: { ...c.env, ORCH_TEST_BIND_ERROR: errorCode, ORCH_TEST_BIND_TRACE: trace } },
+    (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr })));
+    const admission = JSON.parse(result.stdout.trim());
+    assert.equal(result.code, errorCode === 'EEXIST' ? 3 : 7, result.stdout + result.stderr);
+    if (errorCode === 'EEXIST') {
+      assert.equal(admission.admission, 'lane-busy');
+      assert.equal(admission.holder.run_id, 'fixture-live-holder');
+    } else {
+      assert.equal(admission.admission, 'blocked');
+      assert.equal(admission.reason, 'lane-unavailable-EACCES');
+    }
+    assert.equal(fs.readFileSync(trace, 'utf8'), 'listen\n' + errorCode + '\n', 'one failed bind, with no retry');
+    assert.equal(fs.existsSync(marker), false, 'a losing keeper must never launch its worker');
+    assert.equal(fs.lstatSync(c.lanePipe, { bigint: true }).ino, inode);
+    assert.deepEqual(fs.readFileSync(ownerFile), owner, 'the live holder receipt must remain unchanged');
+    assert.equal((await connectHello(c.lanePipe)).hello, hello.trim(), 'the same holder must still answer');
   }
 });

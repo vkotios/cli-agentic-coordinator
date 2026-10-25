@@ -274,7 +274,10 @@ if (EXCLUSIVE) {
 
 function onBindError(e) {
   const code = (e && e.code) || 'UNKNOWN';
-  if (code !== 'EADDRINUSE') {
+  // Concurrent Unix-socket binds can report EEXIST on macOS (observed in CI).
+  // Both errors refuse admission; neither permits retrying or removing the socket.
+  const occupied = code === 'EADDRINUSE' || process.platform === 'darwin' && code === 'EEXIST';
+  if (!occupied) {
     blockedExit(`lane-unavailable-${code}`, 7, { pipe: PIPE });
     return;
   }
