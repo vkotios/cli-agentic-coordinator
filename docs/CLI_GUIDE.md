@@ -263,6 +263,23 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Workspace trust loads existing project rules for both roles. Review additionally disables
   shell execution and file writes. Web/reminder tools are disabled; native session worktrees and
   duplicate session logs are disabled. The detached review audit still checks containment.
+- The default keeps Muse's sandbox enabled. An owner can set `"muse": {"sandbox": "disabled"}`
+  in the private `orch.config.json` to launch implementers with `--disable-sandbox`. This removes
+  filesystem and network confinement, including for Muse's file tools; approval remains `never`.
+  Only use it for workloads trusted with the host account's access. The worktree scope guard is
+  an after-the-fact repository check, not a host filesystem boundary. Review remains shell- and
+  write-disabled and does not receive `--disable-sandbox`. Restart long-running orch servers after
+  changing the config.
+- On Windows, the managed shell can fail during sandbox state admission or hang during shell
+  startup, leaving an implementer unable to run checks. Inspect native tool events and treat
+  missing command results as unverified. In a Windows probe, `--enable-shell-tool` selected the
+  legacy shell but still failed at the same `windows_elevated` sandbox admission; orch does not
+  enable it. A failed launch does not prove write containment. Muse documents a writable temp
+  directory, so test outside-workspace denial separately from temp access.
+- Relocating Muse's data directory can get past state admission, but does not ensure reliable
+  shell execution: a Windows probe timed out waiting for Muse's global ACL-publication lock.
+  A separate probe ran Node but Git rejected the worktree's ownership under the sandbox account.
+  Neither a relocated data directory nor a Git trust exception is configured by orch.
 - `--max-turns` maps to a positive `--max-model-steps`; `--max-price` is not supported.
 - Model attribution binds the native `run.model.configured` fact to the same completed main run
   and Meta provider. It reports the runtime model, not independent backend model verification.
