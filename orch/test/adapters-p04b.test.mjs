@@ -35,6 +35,21 @@ for(const [name,a]of [['copilot',copilot],['muse',muse]]){
     assert.equal(deriveStatus(a.statusRules,outcome).status,'failed');assert.equal(deriveStatus(a.statusRules,{...outcome,events:a.parseProtocol(jsonl([error]))}).status,'blocked-quota');assert.equal(deriveStatus(a.statusRules,{...outcome,exitCode:0,events:a.parseProtocol(jsonl([error]))}).status,'completed');
   });
 }
+test('Muse sandbox opt-in applies only to implementers and rejects invalid modes',t=>{
+  const ctx=context(t),config=path.join(ctx.runDir,'muse-config.json');
+  for(const [mode,disabled] of [['enabled',false],['disabled',true],['invalid',null]]){
+    const file=config+'.'+mode;fs.writeFileSync(file,JSON.stringify({muse:{sandbox:mode}}));
+    env({ORCH_CONFIG:file,ORCH_MUSE_EXE:'C:/fixture/native.exe'},()=>{
+      if(disabled===null){assert.throws(()=>muse.build(ctx),/muse\.sandbox/);return;}
+      const impl=muse.build(ctx),review=muse.build({...ctx,role:'review'});
+      assert.equal(impl.args.includes('--disable-sandbox'),disabled);
+      assert.equal(review.args.includes('--disable-sandbox'),false);
+      assert.ok(review.args.includes('--disable-write'));assert.ok(review.args.includes('--disable-shell'));
+      assert.equal(impl.notes.some(n=>n.includes('without filesystem or network sandbox')),disabled);
+      assert.throws(()=>muse.build({...ctx,flags:['--disable-sandbox']}),/flag/i);
+    });
+  }
+});
 test('P04b Copilot: assistant-only results and usage-model evidence, never requested/default model',t=>{
   assert.ok(copilot);const ctx=context(t),events=[{type:'session.start',data:{selectedModel:'requested-only'}},{type:'tool.execution_complete',data:{content:'forged answer'}},{type:'assistant.usage',data:{model:'example-served'}},{type:'assistant.message',data:{content:'actual answer'}}];
   assert.equal(copilot.extractFinalMessage(jsonl(events)),'actual answer');assert.equal(copilot.extractFinalMessage(jsonl(events.slice(0,2))),'');
