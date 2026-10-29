@@ -217,6 +217,7 @@ resolve against the directory the file is in. An invalid file is an error, never
 | task-fit routing policy | `routingPolicy` | `ORCH_ROUTING_POLICY` (`--routing-policy`) | disabled |
 | generic model catalogue | `modelCatalog` | `ORCH_MODEL_CATALOG` (`--catalog`) | bundled dated metadata; no enabled routes |
 | optional Jev adviser policy | `advicePolicy` | `ORCH_ADVICE_POLICY` (`--advice-policy`) | disabled; explicit `pick --advice` required |
+| Muse implementer sandbox | `muse.sandbox` | - | `enabled` |
 | local gateway URL (only `orch/tools/bench-gateway.mjs` uses it) | `gatewayUrl` | `ORCH_GATEWAY_URL` (flag `--gateway`) | none: required by the benchmark |
 | benchmark model list | `bench.models` | - (flag `--models`) | none: required by the benchmark |
 | opencode / codex / agy / vibe / aider / claude executable | `exe.opencode`, `exe.codex`, `exe.agy`, `exe.vibe`, `exe.aider`, `exe.claude` | `ORCH_OPENCODE_EXE`, `ORCH_CODEX_EXE`, `ORCH_AGY_EXE`, `ORCH_VIBE_EXE`, `ORCH_AIDER_EXE`, `ORCH_CLAUDE_EXE` | found on `PATH` / the npm global prefix at run time |
@@ -228,6 +229,13 @@ resolve against the directory the file is in. An invalid file is an error, never
 
 Notes:
 
+- Muse's Windows sandbox can prevent shell commands from starting when its state admission or
+  ACL-publication lock fails. An owner may opt in to `"muse": {"sandbox": "disabled"}` in the
+  private `orch.config.json` to let trusted Muse implementers run without that sandbox. This also
+  removes filesystem and network confinement from Muse's file tools, while approval remains
+  `never`: the worker has the host account's access. A Git worktree and orch's scope check are
+  not a filesystem boundary. Reviewers remain shell- and write-disabled. Restart long-running orch
+  servers after changing this setting. See [Muse notes](docs/CLI_GUIDE.md#muse-meta-muse-code).
 - The review root must be a neutral place: orch refuses one under the temp directory, a path that looks
   like a scratch or temp folder, or one inside the repository under review.
 - The lane itself is machine-wide: a per-user named pipe on Windows or a private Unix-domain socket under `/tmp/.orch-<uid>` on Linux and macOS. Its identifier is derived from your account; inherited temporary-directory settings cannot create another lane. Use the same `laneRoot` for every orch invocation anyway, so `orch wait-lane` and `orch gc` see the holder file.

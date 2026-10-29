@@ -11,6 +11,7 @@
   "modelCatalog": "private/model-catalog.json",
   "advicePolicy": "private/advice.json",
   "gatewayUrl": "http://10.0.0.2:8080/v1",
+  "muse": { "sandbox": "enabled" },
   "bench": { "models": ["example-coder-30b", "example-reasoner-120b"] },
   "exe": {
     "opencode": "C:/Users/example/AppData/Roaming/npm/node_modules/opencode-ai/bin/opencode.exe",
