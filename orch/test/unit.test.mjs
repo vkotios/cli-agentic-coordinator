@@ -130,7 +130,7 @@ test('r2-4: the lane pipe and the lane directory come from ONE identifier, never
   delete process.env.ORCH_LANE_ID;
   const s = laneScope('local');
   assert.equal(s.laneId, userLaneIdentifier());
-  if (process.platform === 'linux') assert.match(path.basename(s.pipeName), /^lane-[0-9a-f]{12}-local\.sock$/);
+  if (process.platform !== 'win32') assert.match(path.basename(s.pipeName), /^lane-[0-9a-f]{12}-local\.sock$/);
   else assert.match(s.pipeName, /^\\\\\.\\pipe\\orch-lane-[0-9a-f]{12}-local$/);
   assert.equal(s.laneDir, path.join(laneHome(), `${s.laneId}-local`));
   // Not inside the state root in effect (whatever ORCH_STATE_ROOT / the config say).
@@ -152,7 +152,7 @@ test('local and cloud are different lanes; the override is sanitised', () => {
   const c = laneScope('cloud');
   assert.notEqual(l.pipeName, c.pipeName);
   assert.equal(l.laneId, 'test..weird'.replace(/[^A-Za-z0-9_-]/g, ''));
-  if (process.platform === 'linux') {
+  if (process.platform !== 'win32') {
     assert.equal(path.basename(l.pipeName), `lane-${l.laneId}-local.sock`);
     assert.equal(path.basename(c.pipeName), `lane-${c.laneId}-cloud.sock`);
     assert.equal(path.dirname(l.pipeName), path.dirname(c.pipeName));
@@ -355,7 +355,7 @@ test('T-v2-7: path identity over case differences, measured not assumed', () => 
   // are acceptable to the design; what is NOT acceptable is a silent assumption.
   console.log(`measured: realpath case-normalisation on this filesystem -> "${upper}" vs "${WT_REAL}" = ${verdict}`);
   if (process.platform === 'linux') assert.equal(verdict, 'unresolved');
-  else assert.ok(['match', 'mismatch'].includes(verdict));
+  else assert.ok(['match', 'mismatch', 'unresolved'].includes(verdict));
 });
 
 test('parseSessionLine requires the FULL line shape; parseBootstrapLine is informational', () => {

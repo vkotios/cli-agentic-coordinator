@@ -47,7 +47,7 @@ const P = paths(cfg, ID);
 let monitorServer = null;
 
 async function exitMonitor(code) {
-  if (process.platform === 'linux' && monitorServer?.listening) {
+  if (process.platform !== 'win32' && monitorServer?.listening) {
     await new Promise(resolve => {
       const fallback = setTimeout(() => resolve(null), 2000);
       fallback.unref?.();

@@ -194,7 +194,7 @@ test('TG: server.close() is limited to pre-worker admission/identity failure and
   const admissionCloseIdx = src.indexOf('server.close(');
   const blockedStart = src.indexOf('function blockedExit('), blockedEnd = src.indexOf('let launch;');
   assert.ok(admissionCloseIdx > blockedStart && admissionCloseIdx < blockedEnd, 'admission cleanup belongs only to the pre-worker failure helper');
-  assert.match(src.slice(blockedStart, blockedEnd), /process\.platform === 'linux' && server\?\.listening/);
+  assert.match(src.slice(blockedStart, blockedEnd), /process\.platform !== 'win32' && server\?\.listening/);
   const preWorkerCloseIdx = src.indexOf('server.close(', admissionCloseIdx + 1);
   const spawnIdx = src.indexOf('child = spawn(');
   assert.ok(preWorkerCloseIdx > src.indexOf('function onBound()') && preWorkerCloseIdx < spawnIdx);
@@ -265,7 +265,7 @@ test('T1: the prompt reaches the worker BYTE-EXACT from a file descriptor', { ti
 
 test('T1: the prompt is delivered as a FILE DESCRIPTOR, not written to a pipe', () => {
   const src = readCode('keeper.mjs');
-  assert.match(src, /stdio: linux \? \[fdIn, fdOut, fdErr, 'pipe'\] : \[fdIn, fdOut, fdErr\]/, 'worker streams remain file descriptors; only the private status channel is a pipe');
+  assert.match(src, /stdio: posix \? \[fdIn, fdOut, fdErr, 'pipe'\] : \[fdIn, fdOut, fdErr\]/, 'worker streams remain file descriptors; only the private status channel is a pipe');
   assert.ok(!/stdin\.write|stdin\.end/.test(src), 'the write-then-close stdin path is deleted');
 });
 
@@ -314,7 +314,7 @@ test('the run record carries every field an operator needs, and the launch block
   assert.equal(typeof rec.launch.exe, 'string');
   assert.ok(Array.isArray(rec.launch.args));
   assert.deepEqual(rec.launch.env_set, { PWD: c.work });
-  const expectedPipe = process.platform === 'linux'
+  const expectedPipe = process.platform !== 'win32'
     ? path.join('/tmp', `.orch-${process.getuid()}`, `lane-${rec.lane_id}-${rec.lane}.sock`)
     : `\\\\.\\pipe\\orch-lane-${rec.lane_id}-${rec.lane}`;
   assert.equal(rec.launch.pipe_name, expectedPipe);

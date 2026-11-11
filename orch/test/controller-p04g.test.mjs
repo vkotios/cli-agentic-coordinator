@@ -130,3 +130,18 @@ for(const harness of ['copilot','muse'])test(`P04g: offline ${harness} full rece
  const listed=await controllerQualification(c.session,{configFile:c.config},c.seams);assert.equal(listed.routes.length,1);assert.equal(listed.routes[0].observedModel,receipt.controller.observedModel);assert.equal(listed.launchAllowed,false);
  const nativeProfile=c.p.profileFiles[0].file;fs.appendFileSync(nativeProfile,' ');await assert.rejects(qualifyController(c.session,request,c.seams),/configuration changed/);assert.equal((await controllerQualification(c.session,{configFile:c.config},c.seams)).status,'unavailable');
 });
+
+test('P04g: native macOS controller provenance qualifies only with readable boot-scoped exit evidence', async t => {
+ const c = await completeSubscription(t, 'copilot'), request = { offerHash: c.o.offerHash };
+ const scope = 'darwin:00000000-0000-4000-8000-000000000001';
+ const createdAt = `${scope}:${Date.parse(c.started) * 1000}`;
+ const launchFile = path.join(c.dir, 'launch.json'), launch = JSON.parse(fs.readFileSync(launchFile, 'utf8'));
+ write(launchFile, { ...launch, createdAt, runnerCreatedAt: createdAt });
+ const server = JSON.parse(fs.readFileSync(c.serverFile, 'utf8'));
+ write(c.serverFile, { ...server, createdAt });
+ await assert.rejects(qualifyController(c.session, request, c.seams), /process exit/);
+ const table = Object.defineProperty([], 'clockScope', { value: scope });
+ const receipt = await qualifyController(c.session, request, { ...c.seams, processTable: async () => table });
+ assert.equal(receipt.status, 'controller-observed');
+ assert.equal(receipt.launchAllowed, false);
+});

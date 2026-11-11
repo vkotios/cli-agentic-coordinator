@@ -12,7 +12,7 @@ gate_record, gate_status, record, pick, cleanup, finish, usage, quota. Supported
 requires live qualification with the adopted repository's configured models and tool permissions;
 preparing instructions alone does not establish end-to-end controller support.
 
-Never start opencode / vibe / agy / codex exec / copilot -p / aider --message yourself: use `orch run` or `orch review`.
+Never start opencode / vibe / agy / codex exec / copilot -p / aider --message / claude -p yourself: use `orch run` or `orch review`.
 The guard hook denies direct launches only when the installed host invokes it. Never write
 implementation code yourself. A guard or hook that blocks you is a stop condition.
 The guard reads command TEXT: it stops the direct forms and the common wrappers, but it cannot see a launch

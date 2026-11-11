@@ -127,7 +127,7 @@ function answer(obj) {
 function blockedExit(reason, code, extra = {}) {
   append(F.keeper, { blocked: reason, at: nowIso(), ...extra });
   answer({ admission: 'blocked', reason });
-  if (process.platform === 'linux' && server?.listening) {
+  if (process.platform !== 'win32' && server?.listening) {
     const fallback = setTimeout(() => process.exit(code), 2000);
     fallback.unref?.();
     try {
@@ -149,7 +149,7 @@ try {
 }
 
 // 3 refuse shell wrappers that break process containment. Windows worker CLIs must be
-// direct .exe files; Linux supports native executables and shebang scripts (spawn uses
+// direct .exe files; POSIX supports native executables and shebang scripts (spawn uses
 // shell:false and workers are placed in a dedicated process session).
 {
   const exe = String(launch.exe);
@@ -166,14 +166,14 @@ const HELLO = Buffer.from(JSON.stringify({ run: RUN_ID, keeper: process.pid }) +
 const PIPE = String(launch.pipe_name || '');
 let PIPE_IDENTITY = null;
 
-function prepareLinuxLaneSocketDir() {
-  if (process.platform !== 'linux' || !EXCLUSIVE) return;
+function preparePosixLaneSocketDir() {
+  if (process.platform === 'win32' || !EXCLUSIVE) return;
   const uid = process.getuid?.();
-  if (!Number.isInteger(uid)) throw new Error('cannot determine the Linux uid for the lane socket');
+  if (!Number.isInteger(uid)) throw new Error('cannot determine the POSIX uid for the lane socket');
   const expected = path.join('/tmp', `.orch-${uid}`);
   const base = path.basename(PIPE);
   if (path.dirname(PIPE) !== expected || !path.isAbsolute(PIPE) || !base.startsWith('lane-') || !base.endsWith('.sock') || !/^[A-Za-z0-9_-]+$/.test(base.slice(5, -5))) {
-    throw new Error('unsafe Linux lane socket path');
+    throw new Error('unsafe POSIX lane socket path');
   }
   try {
     fs.mkdirSync(expected, { mode: 0o700 });
@@ -182,11 +182,11 @@ function prepareLinuxLaneSocketDir() {
   }
   const dir = fs.lstatSync(expected);
   if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 0o077) !== 0) {
-    throw new Error(`unsafe Linux lane socket directory: ${expected}`);
+    throw new Error(`unsafe POSIX lane socket directory: ${expected}`);
   }
 }
 
-function readLinuxLaneSocketIdentity() {
+function readPosixLaneSocketIdentity() {
   const uid = process.getuid?.();
   const socket = fs.lstatSync(PIPE, { bigint: true });
   if (!Number.isInteger(uid) || !socket.isSocket() || socket.uid !== BigInt(uid)) {
@@ -229,6 +229,22 @@ if (process.platform === 'linux') {
       }));
   } catch (error) { blockedExit('linux-process-clock-unavailable', 5, { detail: String(error?.message || error).slice(0, 160) }); }
 }
+// The helper emits a fixed single-row schema; only native fields are extracted here.
+// No command arguments or executable names appear in its output.
+let DARWIN_SELF = null;
+const DARWIN_HELPER = decodeURIComponent(new URL('../native/darwin-processes', import.meta.url).pathname);
+function darwinIdentity(pid) {
+  return new Promise(resolve => execFile(DARWIN_HELPER, [String(pid)],
+    { encoding: 'utf8', timeout: 3000, maxBuffer: 8192 }, (error, stdout) => {
+      if (error) return resolve(null);
+      const row = /"pid":(\d+),"ppid":(\d+),"pgrp":(\d+),"session":(-?\d+),"name":"","state":"[RTZ]","createdAt":"(darwin:[0-9a-f-]{36}:\d+)"/.exec(stdout);
+      resolve(row && Number(row[1]) === Number(pid) ? { ppid: Number(row[2]), createdAt: row[5] } : null);
+    }));
+}
+if (process.platform === 'darwin') {
+  DARWIN_SELF = await darwinIdentity(process.pid);
+  if (!DARWIN_SELF) blockedExit('darwin-process-clock-unavailable', 5, { detail: 'Run npm ci to build the macOS helper; native process evidence must be readable.' });
+}
 function linuxStamp(ticks) {
   const value = Number(ticks);
   return LINUX_SCOPE && Number.isSafeInteger(value) && value >= 0 ? `${LINUX_SCOPE}:${value}` : null;
@@ -246,7 +262,7 @@ server.on('error', () => {}); // after the bind, a server error may never change
 // 5 listen ONCE. No retry, no loop, no ticket.
 if (EXCLUSIVE) {
   try {
-    prepareLinuxLaneSocketDir();
+    preparePosixLaneSocketDir();
   } catch (e) {
     blockedExit(`lane-unavailable-${e?.code || 'UNSAFE-SOCKET-PATH'}`, 7, { pipe: PIPE, detail: String(e?.message || e) });
   }
@@ -258,7 +274,10 @@ if (EXCLUSIVE) {
 
 function onBindError(e) {
   const code = (e && e.code) || 'UNKNOWN';
-  if (code !== 'EADDRINUSE') {
+  // Concurrent Unix-socket binds can report EEXIST on macOS (observed in CI).
+  // Both errors refuse admission; neither permits retrying or removing the socket.
+  const occupied = code === 'EADDRINUSE' || process.platform === 'darwin' && code === 'EEXIST';
+  if (!occupied) {
     blockedExit(`lane-unavailable-${code}`, 7, { pipe: PIPE });
     return;
   }
@@ -305,14 +324,17 @@ function onBindError(e) {
 
 function onBound() {
   server.removeListener('error', onBindError);
-  if (process.platform === 'linux' && EXCLUSIVE) {
+  if (process.platform !== 'win32' && EXCLUSIVE) {
     try {
-      PIPE_IDENTITY = readLinuxLaneSocketIdentity();
-      const raw = fs.readFileSync('/proc/self/stat', 'utf8'), ticks = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
-      const createdAt = /^\d+$/.test(ticks || '') ? linuxStamp(ticks) : null;
+      PIPE_IDENTITY = readPosixLaneSocketIdentity();
+      let createdAt = DARWIN_SELF?.createdAt;
+      if (process.platform === 'linux') {
+        const raw = fs.readFileSync('/proc/self/stat', 'utf8'), ticks = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
+        createdAt = /^\d+$/.test(ticks || '') ? linuxStamp(ticks) : null;
+      }
       if (!createdAt) throw new Error('socket owner identity unavailable');
       const ownerFile = PIPE + '.owner.json', owner = { token: crypto.randomUUID(), pid: process.pid, createdAt,
-        netns: fs.readlinkSync('/proc/self/ns/net'), dev: PIPE_IDENTITY.dev, ino: PIPE_IDENTITY.ino, uid: String(process.getuid()) };
+        netns: process.platform === 'darwin' ? 'darwin' : fs.readlinkSync('/proc/self/ns/net'), dev: PIPE_IDENTITY.dev, ino: PIPE_IDENTITY.ino, uid: String(process.getuid()) };
       writeAtomic(ownerFile, JSON.stringify(owner));
       server.once('close', () => {
         try { if (fs.readFileSync(ownerFile, 'utf8') === JSON.stringify(owner)) fs.unlinkSync(ownerFile); } catch { /* preserve successors and uncertainty */ }
@@ -416,14 +438,17 @@ function phaseB(ctx) {
   //    are both a safe pre-worker failure.
   let child = null;
   try {
-    const linux = process.platform === 'linux';
-    const workerExe = linux ? process.execPath : launch.exe;
+    const posix = process.platform !== 'win32';
+    const workerExe = posix ? process.execPath : launch.exe;
     let workerArgs = launch.args;
-    if (linux) {
-      const raw = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
-      const close = raw.lastIndexOf(')');
-      const fields = close >= 0 ? raw.slice(close + 1).trim().split(/\s+/) : [];
-      const keeperStart = /^\d+$/.test(fields[19] || '') ? linuxStamp(fields[19]) : null;
+    if (posix) {
+      let keeperStart = DARWIN_SELF?.createdAt;
+      if (process.platform === 'linux') {
+        const raw = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
+        const close = raw.lastIndexOf(')');
+        const fields = close >= 0 ? raw.slice(close + 1).trim().split(/\s+/) : [];
+        keeperStart = /^\d+$/.test(fields[19] || '') ? linuxStamp(fields[19]) : null;
+      }
       if (!keeperStart) {
         throw Object.assign(new Error('keeper identity could not be established'), { code: 'KEEPER_IDENTITY_UNAVAILABLE' });
       }
@@ -445,9 +470,9 @@ function phaseB(ctx) {
       cwd: launch.cwd,
       env,
       shell: false,
-      detached: linux,
+      detached: posix,
       windowsHide: true,
-      stdio: linux ? [fdIn, fdOut, fdErr, 'pipe'] : [fdIn, fdOut, fdErr],
+      stdio: posix ? [fdIn, fdOut, fdErr, 'pipe'] : [fdIn, fdOut, fdErr],
     });
   } catch (/** @type {any} */ e) {
     closeFds(ctx);
@@ -459,7 +484,7 @@ function phaseB(ctx) {
   }
 
   // Every handler is registered synchronously, in this same tick, before any await.
-  // Linux launches a supervisor first; its private fd 3 reports READY only after the
+  // POSIX launches a supervisor first; its private fd 3 reports READY only after the
   // requested executable itself emits `spawn`. Admission must not mistake the wrapper
   // process for a worker (agy M2).
   let sawSpawn = false;
@@ -480,7 +505,7 @@ function phaseB(ctx) {
     closeFds(ctx);
     const safeCode = /^[A-Z0-9_-]{1,64}$/.test(String(code || '')) ? String(code) : 'SUPERVISOR';
     const reason = `spawn-failed-${safeCode}`;
-    const message = detail || `Linux worker supervisor did not start the requested worker (${safeCode})`;
+    const message = detail || `POSIX worker supervisor did not start the requested worker (${safeCode})`;
     append(F.keeper, { blocked: reason, at: nowIso(), detail: message });
     answer({ admission: 'blocked', reason, detail: message });
     finish(10);
@@ -510,7 +535,7 @@ function phaseB(ctx) {
     }
   }
 
-  if (process.platform === 'linux') {
+  if (process.platform !== 'win32') {
     const statusChannel = child.stdio?.[3];
     if (!statusChannel) {
       failBeforeWorker('SUPERVISOR');
@@ -547,14 +572,14 @@ function phaseB(ctx) {
     failBeforeWorker((e && e.code) || 'ERROR', String((e && e.message) || e));
   });
 
-  if (process.platform !== 'linux') child.on('spawn', workerSpawned);
+  if (process.platform === 'win32') child.on('spawn', workerSpawned);
 
   function workerExit(code, signal) {
     workerExited = true;
     if (settled) return;
     // A supervisor may exit before its status-pipe data is delivered. Let the pipe's
     // close event decide whether the real worker ever spawned.
-    if (!sawSpawn && process.platform === 'linux') {
+    if (!sawSpawn && process.platform !== 'win32') {
       deferredExit = { code, signal };
       return;
     }
@@ -564,7 +589,7 @@ function phaseB(ctx) {
     }
     settled = true;
     // 14
-    append(F.keeper, { event: 'worker-exit', code: code ?? null, signal: signal ?? null, at: nowIso(), ...(process.platform === 'linux' ? { process_clock: linuxExitClock() } : {}) });
+    append(F.keeper, { event: 'worker-exit', code: code ?? null, signal: signal ?? null, at: nowIso(), ...(process.platform === 'linux' ? { process_clock: linuxExitClock() } : process.platform === 'darwin' ? { process_clock: `${DARWIN_SELF.createdAt.slice(0, DARWIN_SELF.createdAt.lastIndexOf(':'))}:${(Date.now() + 1) * 1000}` } : {}) });
     // 15 wait for the streams, capped: an escaped helper can hold the fds open.
     let closed = false;
     const cap = setTimeout(() => {
@@ -587,6 +612,12 @@ function phaseB(ctx) {
 
 /** One bounded, guarded process query. Never blocks, never kills, never throws. */
 function captureWorkerIdentity(pid) {
+  if (process.platform === 'darwin') {
+    darwinIdentity(pid).then(row => {
+      if (!workerExited && row?.ppid === process.pid) append(F.keeper, { event: 'worker-identity', worker_pid: Number(pid), worker_created_at: row.createdAt, at: nowIso() });
+    }).catch(() => {});
+    return;
+  }
   if (process.platform === 'linux') {
     try {
       const raw = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
