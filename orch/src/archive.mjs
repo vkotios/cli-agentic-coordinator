@@ -186,7 +186,37 @@ export function listReviewEvidence(cfg, { wp = null } = {}) {
   }
   return out;
 }
-export const listRunEvidence = (cfg) => evidenceIds(cfg, 'run').map((id) => readEvidence(cfg, 'run', id)).map((e) => { if (!e) throw new OrchError('run inventory unreadable', 'archive-unreadable'); return e.record; });
+// A run folder with no readable record is an orphan (typically a launch that failed after
+// the folder was created). It is tolerated only when provably inert: older than the grace
+// period AND holding no process trail. A young folder may be a launch in progress and one
+// with keeper/spawned/holder files may have a live process, so those still fail the inventory.
+export const ORPHAN_GRACE_MS = 15 * 60 * 1000;
+const PROCESS_TRAIL = ['keeper.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'events.monitor.ndjson', 'monitor.alive', 'cancel.json', 'viewer.pid'];
+export function inertRunOrphan(cfg, id, now = Date.now()) {
+  const dir = path.join(cfg.runsDir, checkedId(id));
+  try {
+    const s = fs.lstatSync(safe(dir));
+    if (!s.isDirectory() || now - s.mtimeMs < ORPHAN_GRACE_MS) return null;
+    for (const name of fs.readdirSync(dir)) {
+      if (PROCESS_TRAIL.includes(name)) return null;
+      if (name !== 'prompt.txt' && name !== 'stdout.log' && name !== 'stderr.log') return null;
+      if (fs.lstatSync(path.join(dir, name)).mtimeMs > now - ORPHAN_GRACE_MS) return null;
+    }
+    return { id, dir, age_ms: Math.round(now - s.mtimeMs), reason: 'run folder has no run.json' };
+  } catch { return null; }
+}
+export function runInventory(cfg) {
+  const runs = [], orphans = [];
+  for (const id of evidenceIds(cfg, 'run')) {
+    const e = readEvidence(cfg, 'run', id);
+    if (e) { runs.push(e.record); continue; }
+    const orphan = inertRunOrphan(cfg, id);
+    if (!orphan) throw new OrchError(`run inventory unreadable: ${id}`, 'archive-unreadable');
+    orphans.push(orphan);
+  }
+  return { runs, orphans };
+}
+export const listRunEvidence = (cfg) => runInventory(cfg).runs;
 export const readScopeEvidence = (cfg, id) => readArchived(cfg, 'run', id)?.scope || readDocument(path.join(cfg.runsDir, checkedId(id), 'scope.json'));
 export function assertLive(cfg, kind, id) {
   if (readArchived(cfg, kind, id)) throw new OrchError('record retired or retirement pending; use preserved evidence', 'record-retired');

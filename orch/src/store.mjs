@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic, readJson, nowIso } from './util.mjs';
-import { readArchived, evidenceIds, assertLive } from './archive.mjs';
+import { readArchived, evidenceIds, assertLive, inertRunOrphan } from './archive.mjs';
 import { OrchError } from './errors.mjs';
 
 /**
@@ -101,7 +101,8 @@ export function listRunIds(cfg) {
 
 export function listRuns(cfg) {
   return listRunIds(cfg)
-    .map((id) => { const rec = readRun(cfg, id); if (!rec) throw new OrchError(`run inventory unreadable: ${id}`, 'record-unreadable'); return rec; });
+    .map((id) => { const rec = readRun(cfg, id); if (!rec) { if (inertRunOrphan(cfg, id)) return null; throw new OrchError(`run inventory unreadable: ${id}`, 'record-unreadable'); } return rec; })
+    .filter(Boolean);
 }
 
 /**

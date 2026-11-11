@@ -143,6 +143,7 @@
       "execution": "serial",
       "files": [
         "orch/test/cleanup-p02.test.mjs",
+        "orch/test/run-orphan-inventory.test.mjs",
         "orch/test/retention-p03.test.mjs",
         "orch/test/retirement-p03c.test.mjs",
         "orch/test/retention-helpers-p03e.test.mjs"
