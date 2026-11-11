@@ -9,7 +9,7 @@ import { ledgerPath, readLedger } from './ledger.mjs';
 import { readRounds, computeGate } from './gate.mjs';
 import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, removeResource, dependentRunBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
 import { maintainOnUse } from './retention.mjs';
-import { listRunEvidence, listReviewEvidence } from './archive.mjs';
+import { runInventory, listReviewEvidence } from './archive.mjs';
 
 const emit = (args, io, out) => io.log(args.json ? JSON.stringify(out, null, 2) : [
   `${out.wp}: ${out.state}`,
@@ -113,8 +113,8 @@ export async function cmdFinish(cfg, args, io) {
     requireClaim(cfg, wp, args.by);
     const issues = [];
     // Strictly read the complete inventory; corrupt/missing run files are blockers.
-    let runs = [];
-    try { runs = listRunEvidence(cfg).filter((r) => sameWp(r.wp, wp)); } catch (e) { issues.push(`run inventory unreadable: ${e.message}`); }
+    let runs = [], orphanRuns = [];
+    try { const inv = runInventory(cfg); runs = inv.runs.filter((r) => sameWp(r.wp, wp)); orphanRuns = inv.orphans; } catch (e) { issues.push(`run inventory unreadable: ${e.message}`); }
     const ledger = readLedger(ledgerPath(cfg));
     if (ledger.bad) issues.push('ledger has unreadable rows');
     const reviews = listReviewEvidence(cfg, { wp });
@@ -143,7 +143,7 @@ export async function cmdFinish(cfg, args, io) {
       emit(args, io, out);
       return out;
     }
-    const out = { wp, by: args.by, claim_token: authority.token, closed_at: nowIso(), state: cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', run_ids: runs.map((r) => r.id), resources: cleanup.resources };
+    const out = { wp, by: args.by, claim_token: authority.token, closed_at: nowIso(), state: cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', run_ids: runs.map((r) => r.id), ...(orphanRuns.length ? { orphan_runs: orphanRuns.map((o) => o.id) } : {}), resources: cleanup.resources };
     writeJsonAtomic(closureFile(cfg, wp), out); // durable receipt BEFORE claim release
     const release = await cmdRelease(cfg, { _: [wp], by: args.by }, { log() {} });
     if (release.exitCode) { emit(args, io, { ...out, state: 'release-pending' }); return { ...out, state: 'release-pending', exitCode: 3 }; }

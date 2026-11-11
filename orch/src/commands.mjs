@@ -139,22 +139,33 @@ async function runLocked(args, io, opts) {
   fs.writeFileSync(P.stderr, '');
   confirmRunArtifacts(cfg, id);
 
-  const built = adapter.build({
-    model,
-    dir,
-    agent: args.agent || null,
-    flags: args.flag || [],
-    maxTurns: args['max-turns'] != null ? Number(args['max-turns']) : null,
-    maxPrice: args['max-price'] != null ? String(args['max-price']) : null,
-    promptPath: P.prompt,
-    allowNonAscii: !!args['allow-non-ascii'],
-    role,
-    effort: args.effort || null,
-    printTimeout: args['print-timeout'] || null,
-    runDir: P.dir,
-    allow: workflow.scope ? workflow.scope.allow : null,
-    allowBase: workflow.scope ? workflow.scope.repo_top : null,
-  });
+  let built;
+  try {
+    built = adapter.build({
+      model,
+      dir,
+      agent: args.agent || null,
+      flags: args.flag || [],
+      maxTurns: args['max-turns'] != null ? Number(args['max-turns']) : null,
+      maxPrice: args['max-price'] != null ? String(args['max-price']) : null,
+      promptPath: P.prompt,
+      allowNonAscii: !!args['allow-non-ascii'],
+      role,
+      effort: args.effort || null,
+      printTimeout: args['print-timeout'] || null,
+      runDir: P.dir,
+      allow: workflow.scope ? workflow.scope.allow : null,
+      allowBase: workflow.scope ? workflow.scope.repo_top : null,
+    });
+  } catch (e) {
+    // The run folder already exists. Leave a terminal record, not a folder without run.json
+    // (which used to break every later finish/cleanup inventory).
+    try {
+      const at = nowIso();
+      writeJsonAtomic(P.record, { id, cli: cliName, lane: laneName, model_requested: model, dir, role, wp: workflow.wp, slice: workflow.slice, status: 'blocked', reason: `launch-failed: ${String(e && e.message || e).slice(0, 500)}`, exit_code: null, created_at: at, ended_at: at, state_root: cfg.stateRoot, notes: [] });
+    } catch { /* the original error is the one to report */ }
+    throw e;
+  }
 
   // `dir_real` is resolved ONCE, here, and stored (v3 §5).
   let dirReal = dir;
