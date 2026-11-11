@@ -21,9 +21,9 @@ const OLD = ORPHAN_GRACE_MS + 60_000;
 test('an old inert run folder without run.json is reported as an orphan, not fatal', (t) => {
   const c = makeCase('orphan-inert'); t.after(() => c.cleanup());
   const cfg = loadConfig(c.stateRoot);
-  orphan(cfg, '20260926-215056-184fd3', ['prompt.txt', 'stdout.log', 'stderr.log'], OLD);
+  orphan(cfg, 'orphan-inert', ['prompt.txt', 'stdout.log', 'stderr.log'], OLD);
   const inv = runInventory(cfg);
-  assert.deepEqual(inv.orphans.map((o) => o.id), ['20260926-215056-184fd3']);
+  assert.deepEqual(inv.orphans.map((o) => o.id), ['orphan-inert']);
   assert.deepEqual(listRunEvidence(cfg), []);
   assert.deepEqual(listRuns(cfg), []);
 });
@@ -31,14 +31,14 @@ test('an old inert run folder without run.json is reported as an orphan, not fat
 test('a young run folder without run.json may be a launch in progress and still fails', (t) => {
   const c = makeCase('orphan-young'); t.after(() => c.cleanup());
   const cfg = loadConfig(c.stateRoot);
-  orphan(cfg, '20260926-215056-aaaaaa', ['prompt.txt', 'stdout.log', 'stderr.log'], 1000);
+  orphan(cfg, 'orphan-young', ['prompt.txt', 'stdout.log', 'stderr.log'], 1000);
   assert.throws(() => listRunEvidence(cfg), /run inventory unreadable/);
 });
 
 test('an old folder with a keeper trail may hold a live process and still fails', (t) => {
   const c = makeCase('orphan-keeper'); t.after(() => c.cleanup());
   const cfg = loadConfig(c.stateRoot);
-  orphan(cfg, '20260926-215056-bbbbbb', ['prompt.txt', 'keeper.ndjson'], OLD);
+  orphan(cfg, 'orphan-keeper', ['prompt.txt', 'keeper.ndjson'], OLD);
   assert.throws(() => listRunEvidence(cfg), /run inventory unreadable/);
   assert.throws(() => listRuns(cfg), /run inventory unreadable/);
 });
@@ -46,7 +46,7 @@ test('an old folder with a keeper trail may hold a live process and still fails'
 test('a corrupt run.json is still a blocker', (t) => {
   const c = makeCase('orphan-corrupt'); t.after(() => c.cleanup());
   const cfg = loadConfig(c.stateRoot);
-  orphan(cfg, '20260926-215056-cccccc', ['prompt.txt'], OLD);
-  fs.writeFileSync(path.join(cfg.runsDir, '20260926-215056-cccccc', 'run.json'), '{not json');
+  orphan(cfg, 'orphan-corrupt', ['prompt.txt'], OLD);
+  fs.writeFileSync(path.join(cfg.runsDir, 'orphan-corrupt', 'run.json'), '{not json');
   assert.throws(() => listRunEvidence(cfg));
 });
