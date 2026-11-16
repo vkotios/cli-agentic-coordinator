@@ -137,7 +137,7 @@ test('Muse macOS: Keychain-stored device sign-in is accepted by marker only; API
 test('Muse macOS: native muse-bin-<version> beside the launcher resolves without .exe; shims and bad markers do not',t=>{
   const resolve=modules[1].museBinaryInDirectory,ctx=context(t),marker=path.join(ctx.dir,'.muse-version'),bin=path.join(ctx.dir,'muse-bin-1.4.20-R8619.1');
   fs.writeFileSync(marker,'1.4.20-R8619.1\n');assert.equal(resolve(ctx.dir,'darwin'),null,'binary missing');
-  fs.writeFileSync(bin,'fixture',{mode:0o644});assert.equal(resolve(ctx.dir,'darwin'),null,'not executable');fs.chmodSync(bin,0o755);assert.equal(resolve(ctx.dir,'darwin'),bin);
+  fs.writeFileSync(bin,'fixture',{mode:0o644});if(process.platform!=='win32')assert.equal(resolve(ctx.dir,'darwin'),null,'not executable');/* Windows has no executable bit */fs.chmodSync(bin,0o755);assert.equal(resolve(ctx.dir,'darwin'),bin);
   fs.writeFileSync(marker,'../../other');assert.equal(resolve(ctx.dir,'darwin'),null);
   if(process.platform!=='win32'){
     fs.writeFileSync(marker,'1.4.20-R8619.1\n');fs.writeFileSync(path.join(ctx.dir,'muse'),'#!/bin/sh\n',{mode:0o755});const bindir=path.join(ctx.dir,'bin');fs.mkdirSync(bindir);fs.symlinkSync(path.join(ctx.dir,'muse'),path.join(bindir,'muse'));
