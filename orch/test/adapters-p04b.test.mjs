@@ -68,7 +68,7 @@ test('P04b Muse: subscription requires device provenance; ordinary API keys cann
   assert.doesNotThrow(()=>validate({providers:{meta}}));for(const changed of [{access_token:'LLM|fixture'},{obtained_via:'api_key'},{mechanism:'api_key'},{api_base_url:'https://other.example'}])assert.throws(()=>validate({providers:{meta:{...meta,...changed}}}),/subscription/i);
 });
 test('P04b Muse: installation marker resolves exact binary without invoking shim',t=>{
-  const resolve=modules[1].museBinaryInDirectory;assert.equal(typeof resolve,'function');const ctx=context(t);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'1.4.4-R5419.1\n');const exe=path.join(ctx.dir,'muse-bin-1.4.4-R5419.1.exe');fs.writeFileSync(exe,'fixture');assert.equal(resolve(ctx.dir),exe);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'../../other');assert.equal(resolve(ctx.dir),null);
+  const resolve=modules[1].museBinaryInDirectory;assert.equal(typeof resolve,'function');const ctx=context(t);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'1.4.4-R5419.1\n');const exe=path.join(ctx.dir,'muse-bin-1.4.4-R5419.1.exe');fs.writeFileSync(exe,'fixture');assert.equal(resolve(ctx.dir,'win32'),exe);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'../../other');assert.equal(resolve(ctx.dir,'win32'),null);
 });
 test('P04b guard: direct Muse launches are denied; inspection is allowed',()=>{
   assert.equal(checkCommand('muse exec --model example-model "x"',process.cwd()).block,true);assert.equal(checkCommand('muse --workspace . exec --prompt-file p.txt',process.cwd()).block,true);assert.equal(checkCommand('muse exec --help',process.cwd()).block,false);assert.equal(checkCommand('copilot -p "x"',process.cwd()).block,true);
@@ -124,6 +124,27 @@ test('P04b repairs: marker case and native resolution exclude an unverified muse
   const ctx=context(t);fs.writeFileSync(path.join(ctx.dir,'.muse-version'),'1.4.4-r5419.1\n');const exe=path.join(ctx.dir,'muse-bin-1.4.4-r5419.1.exe');fs.writeFileSync(exe,'fixture');assert.equal(modules[1].museBinaryInDirectory(ctx.dir),exe);
   fs.writeFileSync(path.join(ctx.dir,'muse.exe'),'unverified wrapper');fs.writeFileSync(path.join(ctx.dir,'muse.cmd'),'fixture shim');
   env({ORCH_MUSE_EXE:'',PATH:ctx.dir+';'+path.join(process.env.SystemRoot,'System32')},()=>assert.equal(modules[1].resolveMuseExe(),exe));
+});
+
+test('Muse macOS: Keychain-stored device sign-in is accepted by marker only; API keys and tampering are refused',()=>{
+  const validate=modules[1].validateMuseSubscription,meta={storage:'keychain',obtained_via:'device_code',mechanism:'oauth',api_base_url:'https://api.meta.ai/v1',subs_active:true};
+  assert.doesNotThrow(()=>validate({providers:{meta}},'darwin'));
+  assert.doesNotThrow(()=>validate({providers:{meta:{access_token:'dca:fixture',obtained_via:'device_code',mechanism:'oauth',api_base_url:'https://api.meta.ai'}}},'darwin'),'file-style dca token still accepted');
+  assert.throws(()=>validate({providers:{meta}},'win32'),/subscription/i,'keychain marker is macOS-only');assert.throws(()=>validate({providers:{meta}},'linux'),/subscription/i);
+  for(const changed of [{storage:'file'},{storage:undefined},{access_token:'LLM|fixture'},{access_token:'dca-not'},{access_token:''},{obtained_via:'api_key'},{mechanism:'api_key'},{api_base_url:'https://other.example/v1'},{api_base_url:'https://api.meta.ai.evil.example/v1'},{api_base_url:undefined}])assert.throws(()=>validate({providers:{meta:{...meta,...changed}}},'darwin'),/subscription/i,JSON.stringify(changed));
+  for(const doc of [{},{providers:{}},{providers:{meta:null}},null])assert.throws(()=>validate(doc,'darwin'),/subscription/i);
+});
+test('Muse macOS: native muse-bin-<version> beside the launcher resolves without .exe; shims and bad markers do not',t=>{
+  const resolve=modules[1].museBinaryInDirectory,ctx=context(t),marker=path.join(ctx.dir,'.muse-version'),bin=path.join(ctx.dir,'muse-bin-1.4.20-R8619.1');
+  fs.writeFileSync(marker,'1.4.20-R8619.1\n');assert.equal(resolve(ctx.dir,'darwin'),null,'binary missing');
+  fs.writeFileSync(bin,'fixture',{mode:0o644});assert.equal(resolve(ctx.dir,'darwin'),null,'not executable');fs.chmodSync(bin,0o755);assert.equal(resolve(ctx.dir,'darwin'),bin);
+  fs.writeFileSync(marker,'../../other');assert.equal(resolve(ctx.dir,'darwin'),null);
+  if(process.platform!=='win32'){
+    fs.writeFileSync(marker,'1.4.20-R8619.1\n');fs.writeFileSync(path.join(ctx.dir,'muse'),'#!/bin/sh\n',{mode:0o755});const bindir=path.join(ctx.dir,'bin');fs.mkdirSync(bindir);fs.symlinkSync(path.join(ctx.dir,'muse'),path.join(bindir,'muse'));
+    env({ORCH_MUSE_EXE:'',PATH:bindir},()=>assert.equal(modules[1].resolveMuseExe(),bin,'launcher found via PATH, binary beside its real location'));
+    env({ORCH_MUSE_EXE:'',PATH:path.join(ctx.dir,'empty')},()=>assert.throws(()=>modules[1].resolveMuseExe(),/native binary not found/));
+    env({ORCH_MUSE_EXE:bin,PATH:''},()=>assert.equal(modules[1].resolveMuseExe(),bin,'explicit override wins'));
+  }
 });
 
 test('P04b repairs: invalid subscription launches leave no run folders or artifact ownership',async t=>{

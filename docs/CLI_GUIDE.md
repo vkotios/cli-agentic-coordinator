@@ -37,7 +37,7 @@ Common to all workers:
 | vibe | `ORCH_VIBE_EXE` or `exe.vibe` | `vibe.exe` on `PATH`; then `%USERPROFILE%\.local\bin\vibe.exe` |
 
 | copilot | `ORCH_COPILOT_EXE` or `exe.copilot` | `copilot.exe` on `PATH`; then `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` |
-| muse | `ORCH_MUSE_EXE` or `exe.muse` | versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers |
+| muse | `ORCH_MUSE_EXE` or `exe.muse` | Windows: versioned native binary from `.muse-version` beside `muse.cmd`; automatic lookup skips unverified `muse.exe` wrappers. macOS/Linux: `muse-bin-<version>` (no extension, executable) beside the `muse` launcher on `PATH` (symlinks followed) |
 | aider | `ORCH_AIDER_EXE` or `exe.aider` | `aider` (or `aider.exe`) on `PATH` |
 | claude | `ORCH_CLAUDE_EXE` or `exe.claude` | `claude.exe` on `PATH`; then `%USERPROFILE%\.local\bin\claude.exe` |
 
@@ -256,6 +256,17 @@ shims npm installs are deliberately **not** accepted (see opencode below).
 - Worker/reviewer adapter uses `muse exec` with JSONL, prompt file, explicit model and workspace.
   Select the real `.exe` with `ORCH_MUSE_EXE` / `exe.muse`, or let orch resolve the installed
   `.muse-version` marker beside `muse.cmd`. The updater/login launcher is never spawned.
+  On macOS the launcher is the bash script `~/.local/bin/muse` and the native Mach-O binary is
+  `~/.local/bin/muse-bin-<version>` beside it; orch resolves that file from `PATH` without an override.
+- **macOS sign-in (Keychain).** `muse login` on macOS keeps the token in the Keychain, so
+  `~/.config/muse/auth.json` has `providers.meta.storage: "keychain"` and **no `access_token`**.
+  orch accepts that layout on macOS only when `obtained_via` is `device_code`, `mechanism` is `oauth`,
+  the endpoint origin is `https://api.meta.ai`, `storage` is `keychain` and no `access_token` key is
+  present (an `access_token` that is not a `dca:` device token is refused in every layout, so an API key
+  cannot use the marker). orch never reads the Keychain or any token; the native binary reads its own
+  storage. Trade-off: orch no longer proves a token exists before launch, so a missing or expired token
+  fails inside Muse and is classified `blocked-auth` by the status rules. The file-style `dca:` layout
+  is still accepted on every platform. Windows/Linux do not accept the Keychain marker.
 - Saved device-code OAuth provenance at the official Meta endpoint is required. Environment
   API-key/base-URL overrides and raw transport tracing are excluded. No ordinary API key fallback,
   account change, subscription upgrade or credential write is performed. The provider verifies
