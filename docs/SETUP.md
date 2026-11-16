@@ -459,7 +459,7 @@ with or without `--adopt`. Repository adoption is described below; it remains
 separate from this scoped qualification flow. Prepared instructions and MCP configuration live
 in the owned controller workspace, separately from the child source. Inherited MCP,
 hooks or custom-provider configuration refuses this trial rather than changing the
-owner's setup. Muse uses the CLI's native saved device sign-in location; an alternate
+owner's setup. Muse uses the CLI's native saved device sign-in location (on macOS the token is in the Keychain and orch checks only the non-secret `storage: "keychain"` provenance marker, see the CLI guide); an alternate
 adapter auth-path override cannot redirect the controller. No credentials are copied.
 Copilot saved sign-in is established by successful native call/exit evidence rather
 than a separate login-status probe. Missing sign-in can consume the one-shot attempt;
