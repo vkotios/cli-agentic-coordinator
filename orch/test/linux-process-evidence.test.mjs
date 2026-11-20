@@ -29,6 +29,14 @@ test('Linux process identity distinguishes reboot from an unreadable or foreign 
   assert.equal(verifyIdentity(10,native(100),[]).verdict,'unknown','a bare array has no native clock scope and cannot prove absence');
 });
 
+test('Linux boot changes distinguish absent and present PIDs',()=>{
+  const old=native(100,'123','00000000-0000-4000-8000-000000000002');
+  const empty=[];Object.defineProperty(empty,'clockScope',{value:`linux:${boot}:123`});
+  const present=[{pid:42,createdAt:native(100)}];
+  assert.deepEqual(verifyIdentity(42,old,empty),{verdict:'gone',reason:'boot-changed'});
+  assert.deepEqual(verifyIdentity(42,old,present),{verdict:'mismatch',reason:'boot-changed',found:present[0]});
+});
+
 test('Linux malformed procfs metadata remains unknown rather than proving a process gone',{skip:process.platform!=='linux'},async t=>{
   const read=fsp.readFile.bind(fsp);mock.method(fsp,'readFile',async(file,...args)=>String(file)===`/proc/${process.pid}/stat`?'malformed':read(file,...args));t.after(()=>mock.restoreAll());
   const rows=await readProcessTable({pids:[process.pid],deadlineMs:1000});
