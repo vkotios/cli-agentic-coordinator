@@ -37,6 +37,14 @@ test('macOS identity checks refuse reused PIDs and unknown evidence', () => {
   assert.equal(verifyIdentity(42, stamp(100).replace(boot, '00000000-0000-4000-8000-000000000002'), table).reason, 'boot-changed');
 });
 
+test('macOS boot changes distinguish absent and present PIDs', () => {
+  const oldStamp = stamp(100).replace(boot, '00000000-0000-4000-8000-000000000002');
+  const empty = parseDarwinSnapshot(snapshot([]));
+  const present = parseDarwinSnapshot(snapshot([row(42, 1, 100)]));
+  assert.deepEqual(verifyIdentity(42, oldStamp, empty), { verdict: 'gone', reason: 'boot-changed' });
+  assert.deepEqual(verifyIdentity(42, oldStamp, present), { verdict: 'mismatch', reason: 'boot-changed', found: present[0] });
+});
+
 test('macOS ancestry requires native birth ordering and bounds historical root lifetime', () => {
   const table = parseDarwinSnapshot(snapshot([row(42, 1, 100), row(43, 42, 90), row(44, 42, 110)]));
   assert.deepEqual(observeDescendants(42, stamp(100), table).candidates.map(p => p.pid), [44]);

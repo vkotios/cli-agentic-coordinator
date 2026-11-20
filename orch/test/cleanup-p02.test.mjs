@@ -11,6 +11,7 @@ import { loadConfig } from '../src/config.mjs';
 import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock } from '../src/resources.mjs';
 import { cmdFinish } from '../src/cleanup.mjs';
 import { readClaim } from '../src/claims.mjs';
+import { readProcessTable } from '../src/procs.mjs';
 
 async function lockFile(t, file, env, base) {
   if (process.platform !== 'win32') {
@@ -196,6 +197,29 @@ test('P02: finish rejects unrecorded work and accepts an explicit retained resou
   await orch(['claim', 'WP-clean', '--by', 'codex'], c.env);
   r = await orch(['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'], c.env);
   assert.notEqual(r.code, 0, 'a closed receipt cannot authorize cleanup after a new claim');
+});
+
+test('P02: finish handles old-boot and reused monitor identities', { skip: !['darwin', 'linux'].includes(process.platform) }, async (t) => {
+  const table = await readProcessTable({ pids: [process.pid], deadlineMs: 4000 });
+  const current = table.find((p) => p.pid === process.pid).createdAt;
+  const parts = current.split(':');
+  parts[1] = parts[1] === '00000000-0000-4000-8000-000000000001' ? '00000000-0000-4000-8000-000000000002' : '00000000-0000-4000-8000-000000000001';
+  const oldBoot = parts.join(':');
+  const reused = current.replace(/\d+$/, (n) => String(BigInt(n) + 1n));
+  for (const [name, pid, stamp, finishes] of [
+    ['absent-old-boot', 2147483647, oldBoot, true],
+    ['present-old-boot', process.pid, oldBoot, true],
+    ['present-reused', process.pid, reused, false],
+  ]) {
+    const { c, w } = await fixture(t, `p02-${name}`);
+    const id = craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', slice: 's1' });
+    fs.writeFileSync(path.join(c.stateRoot, 'runs', id, 'spawned.json'), JSON.stringify({ monitor_pid: pid, monitor_created_at: stamp }));
+    assert.equal((await orch(['record', id, '--disposition', 'blocked'], c.env)).code, 0);
+    const result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+    assert.equal(result.code, finishes ? 0 : 3, result.stdout + result.stderr);
+    assert.equal(json(result).state, finishes ? 'finished' : 'incomplete');
+    if (!finishes) assert.ok(json(result).issues.includes(`run ${id} process ${pid} still live or uncertain`));
+  }
 });
 
 test('P02: a failed Git removal is pending and retry removes the same verified resource', async (t) => {

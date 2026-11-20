@@ -241,7 +241,10 @@ export async function dependentRunBlock(cfg, r) {
     if (spawned.monitor_pid) checks.push([spawned.monitor_pid, spawned.monitor_created_at]);
     if (checks.length) {
       const table = await readProcessTable({ deadlineMs: 4000, pids: checks.map(([pid]) => pid) });
-      for (const [pid, at] of checks) if (verifyIdentity(pid, at, table).verdict !== 'gone') return `run ${run.id} process ${pid} still live or uncertain`;
+      for (const [pid, at] of checks) {
+        const identity = verifyIdentity(pid, at, table);
+        if (identity.verdict !== 'gone' && !(identity.verdict === 'mismatch' && identity.reason === 'boot-changed')) return `run ${run.id} process ${pid} still live or uncertain`;
+      }
     }
   }
   return null;
