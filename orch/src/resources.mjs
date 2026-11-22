@@ -44,6 +44,21 @@ function stamp(p) {
   const s = fs.statSync(p, { bigint: true });
   return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
 }
+export function sameStamp(recorded, current) {
+  const valid = (s) => typeof s === 'string' && /^-?\d+:-?\d+:-?\d+$/.test(s);
+  if (!valid(recorded) || !valid(current)) return { ok: false };
+  if (recorded === current) return { ok: true };
+  const [dev, ino, birth] = recorded.split(':');
+  const [currentDev, currentIno, currentBirth] = current.split(':');
+  return dev !== currentDev && ino === currentIno && birth === currentBirth ? { ok: true, migrate: true } : { ok: false };
+}
+function persistMigration(cfg, r, migrate) {
+  if (!migrate) return;
+  if (migrate.common_identity) r.common_identity = migrate.common_identity;
+  if (migrate.path) r.identity.path = migrate.path;
+  if (migrate.admin) r.identity.admin = migrate.admin;
+  saveResource(cfg, r);
+}
 // A failed Windows Git removal may have removed the admin record already. Only
 // exact, unchanged files/directories observed BEFORE that attempt can be retried.
 function snapshotFiles(root) {
@@ -186,20 +201,27 @@ export async function confirmResource(cfg, r) {
 
 export async function inspectIdentity(r) {
   try {
+    const migrate = {};
+    const compare = (key, recorded, current) => {
+      const result = sameStamp(recorded, current);
+      if (result.migrate) migrate[key] = current;
+      return result.ok;
+    };
+    const verified = (result) => Object.keys(migrate).length ? { ...result, migrate } : result;
     if (!r.identity) return { ok: false, reason: 'creation intent lacks confirmed identity; inspect before adopting' };
     if (!samePath(r.path, resolvedPath(r.path)) || !samePath(r.root, resolvedPath(r.root)) || !isInside(r.path, r.root) || samePath(r.path, r.root)) return { ok: false, reason: 'path identity changed or link escapes root' };
-    if (stamp(r.common_dir) !== r.common_identity || !samePath(r.common_dir, resolvedPath(r.common_dir))) return { ok: false, reason: 'source repository identity changed' };
+    if (!compare('common_identity', r.common_identity, stamp(r.common_dir)) || !samePath(r.common_dir, resolvedPath(r.common_dir))) return { ok: false, reason: 'source repository identity changed' };
     const list = await worktreeList(r.repo);
     if (!list) return { ok: false, reason: 'registration unreadable' };
     const entry = list.find((w) => samePath(w.path, r.path));
-    if (!entry && !fs.existsSync(r.path)) return { ok: true, absent: true };
-    if (!entry && fs.existsSync(r.path) && stamp(r.path) === r.identity.path && await inspectPartialRemoval(r, entry)) return { ok: true, partial: true };
+    if (!entry && !fs.existsSync(r.path)) return verified({ ok: true, absent: true });
+    if (!entry && fs.existsSync(r.path) && stamp(r.path) === r.identity.path && await inspectPartialRemoval(r, entry)) return verified({ ok: true, partial: true });
     if (!entry || entry.locked || entry.prunable || (r.branch ? entry.branch !== `refs/heads/${r.branch}` : !entry.detached)) return { ok: false, reason: 'registration changed, locked, or shared' };
-    if (!fs.existsSync(r.path) || stamp(r.path) !== r.identity.path) return { ok: false, reason: 'worktree path identity changed' };
+    if (!fs.existsSync(r.path) || !compare('path', r.identity.path, stamp(r.path))) return { ok: false, reason: 'worktree path identity changed' };
     const admin = await git(['rev-parse', '--absolute-git-dir'], { cwd: r.path });
     const common = await git(['rev-parse', '--git-common-dir'], { cwd: r.path });
-    if (!admin.ok || !common.ok || !samePath(resolvedPath(admin.stdout.trim()), r.identity.admin_dir) || stamp(r.identity.admin_dir) !== r.identity.admin || !samePath(resolvedPath(path.resolve(r.path, common.stdout.trim())), r.common_dir)) return { ok: false, reason: 'worktree administrative identity changed' };
-    return { ok: true, entry };
+    if (!admin.ok || !common.ok || !samePath(resolvedPath(admin.stdout.trim()), r.identity.admin_dir) || !compare('admin', r.identity.admin, stamp(r.identity.admin_dir)) || !samePath(resolvedPath(path.resolve(r.path, common.stdout.trim())), r.common_dir)) return { ok: false, reason: 'worktree administrative identity changed' };
+    return verified({ ok: true, entry });
   } catch { return { ok: false, reason: 'resource identity unreadable' }; }
 }
 
@@ -250,13 +272,14 @@ export async function dependentRunBlock(cfg, r) {
   return null;
 }
 
-export async function inspectRemoval(cfg, r, { force = false, review = null } = {}) {
+export async function inspectRemoval(cfg, r, { force = false, review = null, persistIdentity = false } = {}) {
   if (r.wp && r.claim_token) {
     const claim = readClaim(cfg, r.wp);
     if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) return { action: 'retain', reason: 'resource claim identity changed or unreadable' };
   }
   const identity = await inspectIdentity(r);
   if (!identity.ok) return { action: 'retain', reason: identity.reason };
+  if (persistIdentity) persistMigration(cfg, r, identity.migrate);
   const active = await dependentRunBlock(cfg, r);
   if (active) return { action: 'retain', reason: active };
   if (identity.absent) return { action: 'remove', absent: true, dirty: [] };
@@ -288,7 +311,7 @@ export async function inspectRemoval(cfg, r, { force = false, review = null } = 
 }
 
 export async function removeResource(cfg, r, opts = {}) {
-  const decision = await inspectRemoval(cfg, r, opts);
+  const decision = await inspectRemoval(cfg, r, { ...opts, persistIdentity: true });
   if (decision.action !== 'remove') return { id: r.id, state: 'retained', ...decision };
   r.state = 'cleanup-pending';
   if (!decision.absent && !decision.partial) {
@@ -324,7 +347,10 @@ export async function guardRunResource(cfg, dir, fn) {
   if (!r) return fn();
   return withResourceLock(cfg, r, async () => {
     const current = readResource(cfg, r.id);
-    if (!current || current.state !== 'present' || !(await inspectIdentity(current)).ok) throw new OrchError('run resource is not present with verified identity', 'resource-unavailable');
+    if (!current || current.state !== 'present') throw new OrchError('run resource is not present with verified identity', 'resource-unavailable');
+    const identity = await inspectIdentity(current);
+    if (!identity.ok) throw new OrchError('run resource is not present with verified identity', 'resource-unavailable');
+    persistMigration(cfg, current, identity.migrate);
     const result = await fn();
     const run = result && result.id ? readRun(cfg, result.id) : null;
     if (run && run.orch_written && run.orch_written.length) {
