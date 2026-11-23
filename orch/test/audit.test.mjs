@@ -313,7 +313,7 @@ test('the run record carries every field an operator needs, and the launch block
   }
   assert.equal(typeof rec.launch.exe, 'string');
   assert.ok(Array.isArray(rec.launch.args));
-  assert.deepEqual(rec.launch.env_set, { PWD: c.work });
+  assert.deepEqual(rec.launch.env_set, { PWD: c.work, ORCH_RUN_ID: rec.id });
   const expectedPipe = process.platform !== 'win32'
     ? path.join('/tmp', `.orch-${process.getuid()}`, `lane-${rec.lane_id}-${rec.lane}.sock`)
     : `\\\\.\\pipe\\orch-lane-${rec.lane_id}-${rec.lane}`;

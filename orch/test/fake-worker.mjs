@@ -18,6 +18,7 @@
 //   --session-split N   write that line in N-byte chunks (byte-boundary framing test)
 //   --write-file NAME   create NAME in cwd (worktree activity signal)
 //   --stderr TEXT       write TEXT to stderr once
+//   --echo-env NAME     write `ENV NAME=<value>` to stdout (proves an env var reached the worker)
 //   --echo TEXT         write TEXT verbatim to stdout (proves free worker output can
 //                       never reclassify a run)
 //   --wait-for-file P   before doing anything else, wait until file P exists (bounded: 60 s,
@@ -52,6 +53,7 @@ const empty = has('--empty');
 const writeFile = opt('--write-file', null);
 const stderrText = opt('--stderr', null);
 const echoText = opt('--echo', null);
+const echoEnv = opt('--echo-env', null);
 const sessionDir = opt('--session-dir', null);
 const sessionSplit = Number(opt('--session-split', 0)) || 0;
 const selfDestructS = Number(opt('--self-destruct', 120)) || 120;
@@ -228,6 +230,7 @@ async function work(stdinBuf) {
     }
   }
   if (echoText) out(String(echoText));
+  if (echoEnv) out(`ENV ${echoEnv}=${process.env[String(echoEnv)] ?? ''}`);
   if (!silent) {
     const sha = crypto.createHash('sha256').update(stdinBuf).digest('hex');
     out(`STDIN-BYTES ${stdinBuf.length}`);

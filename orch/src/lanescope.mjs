@@ -117,3 +117,11 @@ export function permitScopes(cfg, laneName) {
   const count = lanePermits(cfg, laneName) ?? 1;
   return Array.from({ length: count }, (_, permit) => laneScope(laneName, permit));
 }
+
+/** The name of the one-Foreman-per-state-root lock: a pipe or socket, so the OS releases it at exit. */
+export function foremanPipeName(stateRoot) {
+  const id = crypto.createHash('sha256').update(path.resolve(stateRoot)).digest('hex').slice(0, 12);
+  return process.platform !== 'win32'
+    ? path.join('/tmp', `.orch-${process.getuid()}`, `foreman-${id}.sock`)
+    : `\\\\.\\pipe\\orch-foreman-${id}`;
+}

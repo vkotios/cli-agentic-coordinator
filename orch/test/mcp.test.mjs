@@ -23,6 +23,7 @@ const TOOL_NAMES = [
   'setup_controller_run',
   'setup_repository_smoke','setup_repository_start','setup_repository_run','setup_repository_qualify','setup_repository_qualification','setup_repository_close',
   'setup_task_smoke','setup_task_start','setup_task_step','setup_task_qualify','setup_task_qualification','setup_task_close',
+  'enqueue','foreman_status','foreman_items','foreman_checks','foreman_verdict',
 ];
 
 async function setupConversation(dir,repo,call){
@@ -286,6 +287,22 @@ test('T3: every tool against fake workers and a temp git repo; each within its b
   await equalCli('claims', await srv.call('claims'), ['claims']);
   const pick = await srv.call('pick', { workload: 'implement', size: 'XS' });
   await equalCli('pick', pick, ['pick', '--workload', 'implement', '--size', 'XS']);
+
+  // Foreman: register a project, add an item through the tool, read the queue back.
+  const fmProject = await cliJson(['foreman', 'project', 'add', '--id', 'alpha', '--repo', repo], c.env);
+  assert.equal(fmProject.code, 0, JSON.stringify(fmProject));
+  const enq = await srv.call('enqueue', {
+    item: JSON.stringify({ project: 'alpha', title: 'tool item', goal_ref: 'g1', handoff: 'TASK: x', allowlist: ['src/a.js'], acceptance: [{ kind: 'command', argv: ['node', '--version'] }] }),
+    by: 'claude-code',
+  });
+  assert.equal(enq.isError, false, text(enq));
+  assert.equal(enq.structuredContent.output.id, 'alpha-0001');
+  await equalCli('foreman_status', await srv.call('foreman_status'), ['foreman', 'status']);
+  await equalCli('foreman_items', await srv.call('foreman_items'), ['foreman', 'items']);
+  await equalCli('foreman_checks', await srv.call('foreman_checks'), ['foreman', 'checks']);
+  const noCheck = await srv.call('foreman_verdict', { check: '99', verdict: 'looping', reason: 'x' });
+  assert.equal(noCheck.isError, true, 'an unknown check is refused');
+  assert.equal(noCheck.structuredContent.error, 'foreman-no-check');
 
   // worktree + run (fake implementer)
   const wtc = await srv.call('worktree_create', { repo, wp: 'WP-M', slice: 's1', by: 'claude-code' });
