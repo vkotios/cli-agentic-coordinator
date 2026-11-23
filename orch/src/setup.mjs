@@ -13,6 +13,7 @@ import { validateCatalog } from './catalog.mjs';
 import { resolveOpencodeExe } from './adapters/opencode.mjs';
 import { resolveMuseExe } from './adapters/muse.mjs';
 import { resolveCopilotExe } from './adapters/copilot.mjs';
+import { stampsMatch } from './stamp.mjs';
 const LIMIT = 65536, HARNESSES = ['claude', 'codex', 'opencode', 'vibe', 'copilot', 'muse'], WORKERS = ['codex', 'opencode', 'vibe', 'agy', 'copilot', 'muse', 'aider', 'claude'];
 const authority = { configChanges: false, adoptionChanges: false, credentialChanges: false, launchChanges: false };
 const sha = x => crypto.createHash('sha256').update(x).digest('hex');
@@ -164,7 +165,10 @@ function state(session) {
     text(m.repo);
     if (m.version !== 1 || !HARNESSES.includes(m.harness) || !samePath(m.session, session) || isInside(session, m.repo))
         fail('Invalid setup session binding');
-    if (!safe(m.repo, true) || m.repoIdentity !== repoIdentity(m.repo))
+    if (!safe(m.repo, true))
+        fail('Setup repository identity changed');
+    const recorded = typeof m.repoIdentity === 'string' ? m.repoIdentity.split('/') : [], current = repoIdentity(m.repo).split('/');
+    if (recorded.length !== 2 || current.length !== 2 || !recorded.every((part, i) => stampsMatch(part, current[i])))
         fail('Setup repository identity changed');
     validDiscovery(m.discovery);
     const dir = path.join(session, 'answers');

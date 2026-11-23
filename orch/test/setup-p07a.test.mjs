@@ -54,6 +54,29 @@ test('P07a: private resource paths reject alternate streams and UNC locations', 
     await assert.rejects(submit(c, s, { stateRoot: value, reviewRoot: path.join(c.base, 'reviews'), cleanup: 'retain-unmerged' }), OrchError); assert.equal(setup.setupStatus(c.session).revision, 3); });
 test('P07a: changed repository identity is not silently resumed', async (t) => { const c = fixture(t, 'repo-id'); await start(c); fs.renameSync(c.repo, c.repo + '-original'); makeRepo(c.repo, { 'README.md': 'different repository\n' }); assert.throws(() => setup.setupStatus(c.session), OrchError); await assert.rejects(start(c), OrchError); });
 
+test('P07a: repository identity tolerates changed devices but rejects changed inodes and malformed pairs', async (t) => {
+    const c = fixture(t, 'repo-device'); await start(c);
+    const file = path.join(c.session, 'session.json'), meta = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const parts = meta.repoIdentity.split('/').map(part => { const fields = part.split(':'); fields[0] = String(BigInt(fields[0]) + 1n); return fields; });
+    const writeIdentity = value => { meta.repoIdentity = value; fs.writeFileSync(file, JSON.stringify(meta, null, 2) + '\n'); };
+    const deviceOnly = parts.map(fields => fields.join(':')).join('/');
+    writeIdentity(deviceOnly);
+    const bytes = fs.readFileSync(file);
+    assert.equal(setup.setupStatus(c.session).revision, 0);
+    assert.equal((await start(c)).revision, 0);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+    for (const i of [0, 1]) {
+        const changed = parts.map(fields => [...fields]);
+        changed[i][1] = String(BigInt(changed[i][1]) + 1n);
+        writeIdentity(changed.map(fields => fields.join(':')).join('/'));
+        assert.throws(() => setup.setupStatus(c.session), { code: 'setup-refused', message: 'Setup repository identity changed' });
+    }
+    for (const malformed of [parts[0].join(':'), deviceOnly + '/extra']) {
+        writeIdentity(malformed);
+        assert.throws(() => setup.setupStatus(c.session), { code: 'setup-refused', message: 'Setup repository identity changed' });
+    }
+});
+
 test('P07a: dot segments cannot place private resources inside the target repo',async t=>{const c=fixture(t,'dot-segments');let s=await start(c);for(const a of answers(c).slice(0,3))s=await submit(c,s,a);const stateRoot=c.base+path.sep+'unused'+path.sep+'..'+path.sep+'repo'+path.sep+'private';await assert.rejects(submit(c,s,{stateRoot,reviewRoot:path.join(c.base,'reviews'),cleanup:'retain-unmerged'}),OrchError);});
 test('P07a: invalid config is an error, never persisted as missing CLIs',async t=>{const c=fixture(t,'bad-config'),config=path.join(c.base,'invalid.json');fs.writeFileSync(config,'{invalid');const r=await orch(['setup','start','--repo',c.repo,'--harness','codex','--session',c.session,'--json'],{...c.env,ORCH_CONFIG:config});assert.equal(r.code,2,r.stdout+r.stderr);assert.match(r.stderr,/config file.*not valid JSON/);assert.equal(fs.existsSync(c.session),false);});
 test('P07a: every valid catalogue harness identifier survives discovery readback',async t=>{const c=fixture(t,'catalog-bound'),catalog=path.join(c.base,'catalog.json'),raw=JSON.parse(fs.readFileSync(path.join(REPO_ROOT,'model-catalog.json'),'utf8'));raw.models[0].routes=[{harness:'example-'+'h'.repeat(40),selector:'example/model',billing:'api',resolution:'listed'},{harness:'future-harness',selector:null,billing:'unknown',resolution:'unresolved'}]; raw.models[0].evidence.routes=raw.models[0].evidence.model;fs.writeFileSync(catalog,JSON.stringify(raw));const s=await setup.startSetup({repo:c.repo,harness:'codex',session:c.session,catalog});assert.equal(s.revision,0);assert.ok(s.discovery.models.some(m=>m.harness==='example-'+'h'.repeat(40)));});
