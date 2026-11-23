@@ -117,21 +117,13 @@ export class Dispatcher {
     await this.verify(this.store.getItem(item.id), run, settings);
   }
 
-  /** Acceptance commands, then the scope guard. Anything but a clean pass parks the item. */
+  /**
+   * The scope guard first, then the acceptance commands. Nothing the worker produced is
+   * executed until orch has shown it changed only allowed files; any violation parks the item
+   * without running a single command.
+   */
   async verify(item, run, settings) {
     const actor = settings.actor;
-    const logDir = path.join(this.dir, 'checks');
-    const checks = item.spec.acceptance;
-    const results = await runAcceptance(checks, { root: run.worktree, logDir, defaultTimeoutS: settings.acceptanceTimeoutSeconds, maxLogBytes: settings.maxLogBytes }, `${item.id}-a${item.attempt}`);
-    const failed = results.find((r) => ['fail', 'timeout', 'error'].includes(r.status));
-    this.store.event('acceptance', { item: item.id, run: run.run_id, actor, data: { results: results.map(({ index, kind, status, exit_code, ms, log }) => ({ index, kind, status, exit_code, ms, log })) } });
-    if (failed) {
-      const why = failed.status === 'timeout' ? 'timed out' : failed.status === 'error' ? `could not run (${failed.error})` : `exited ${failed.exit_code}`;
-      const tail = failed.log ? tailOf(failed.log) : '';
-      this.store.transition(item.id, 'parked', { actor, parkTag: failed.status === 'timeout' ? 'timeout' : 'check-failed', reason: `acceptance check ${failed.index} (${(failed.argv || []).join(' ')}) ${why}${tail ? '\n' + tail : ''}` });
-      await this.releaseClaim(item, settings);
-      return;
-    }
     const scope = await this.call(['scope', run.run_id]);
     this.store.event('scope', { item: item.id, run: run.run_id, actor, data: { exit_code: scope.exitCode, result: scope.out?.result ?? null, offending: scope.out?.offending ?? [] } });
     if (scope.exitCode === 3) {
@@ -141,6 +133,18 @@ export class Dispatcher {
     }
     if (scope.exitCode !== 0) {
       this.store.transition(item.id, 'parked', { actor, parkTag: 'needs-input', reason: `scope check was inconclusive: ${scope.error || scope.text.slice(0, 300)}` });
+      await this.releaseClaim(item, settings);
+      return;
+    }
+    const logDir = path.join(this.dir, 'checks');
+    const checks = item.spec.acceptance;
+    const results = await runAcceptance(checks, { root: run.worktree, logDir, defaultTimeoutS: settings.acceptanceTimeoutSeconds, maxLogBytes: settings.maxLogBytes }, `${item.id}-a${item.attempt}`);
+    const failed = results.find((r) => ['fail', 'timeout', 'error'].includes(r.status));
+    this.store.event('acceptance', { item: item.id, run: run.run_id, actor, data: { results: results.map(({ index, kind, status, exit_code, ms, log }) => ({ index, kind, status, exit_code, ms, log })) } });
+    if (failed) {
+      const why = failed.status === 'timeout' ? 'timed out' : failed.status === 'error' ? `could not run (${failed.error})` : `exited ${failed.exit_code}`;
+      const tail = failed.log ? tailOf(failed.log) : '';
+      this.store.transition(item.id, 'parked', { actor, parkTag: failed.status === 'timeout' ? 'timeout' : 'check-failed', reason: `acceptance check ${failed.index} (${(failed.argv || []).join(' ')}) ${why}${tail ? '\n' + tail : ''}` });
       await this.releaseClaim(item, settings);
       return;
     }
@@ -188,6 +192,11 @@ export class Dispatcher {
     }
     if (!adapter) {
       this.store.transition(item.id, 'parked', { actor, parkTag: 'needs-input', reason: `unknown worker CLI "${route.cli}"` });
+      return item.id;
+    }
+    if ((route.flags || []).length && !adapter.testOnly) {
+      // Adapter flags can loosen a worker's own sandbox, so only the test adapter may take them.
+      this.store.transition(item.id, 'parked', { actor, parkTag: 'needs-input', reason: 'route.flags are only accepted for the test adapter; remove them or ask the owner to allow them' });
       return item.id;
     }
     // A local run needs a free lane permit. Not free is not an error: the item stays ready.

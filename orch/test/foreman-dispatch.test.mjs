@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeCase, waitFor } from './helpers.mjs';
+import { makeCase, waitFor, TEST_ROOT } from './helpers.mjs';
 import { makeRepo } from './wf-helpers.mjs';
 import { Store } from '../src/foreman/store.mjs';
 import { Dispatcher } from '../src/foreman/dispatcher.mjs';
@@ -174,4 +174,56 @@ test('dispatcher: a serial lane with no free permit leaves the item ready; concu
   assert.equal(store.getItem(a.id).state, 'running');
   assert.equal(store.getItem(b.id).state, 'ready', 'maxConcurrent 1: the second waits');
   await drive(d, store, b.id, ['needs-review', 'parked']);
+});
+
+test('dispatcher: a scope violation parks the item before any acceptance command runs', { timeout: 120000 }, async (t) => {
+  const { c, store, make } = setup(t, 'fm-scope-first');
+  const marker = path.join(c.base, 'acceptance-ran.txt');
+  const it = enqueue(store, item({
+    title: 'writes outside the allowlist',
+    route: { cli: 'fake', model: 'localai/qwen3-coder-30b', flags: ['--write-file', 'intruder.txt'] },
+    acceptance: [{ kind: 'command', argv: ['node', '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`] }],
+  }), 'test');
+  const parked = await drive(make(), store, it.id, ['parked', 'needs-review']);
+  assert.equal(parked.park_tag, 'scope-violation');
+  assert.equal(fs.existsSync(marker), false, 'no acceptance command ran for a worker that left its allowlist');
+  assert.equal(store.events({ item: it.id }).some((e) => e.kind === 'acceptance'), false);
+});
+
+test('acceptance: the process gets a reduced environment and never resolves programs inside the worktree', { timeout: 60000 }, async (t) => {
+  const { runCheck, safeEnv, resolveExecutable } = await import('../src/foreman/acceptance.mjs');
+  const root = path.join(TEST_ROOT, `fm-env-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(root, { recursive: true });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const secrets = { IGM_CONTROL_KEY: 'control-secret', IGM_INFERENCE_KEY: 'inference-secret', OPENAI_API_KEY: 'sk-test', ORCH_FAKE_WORKER: 'x' };
+  Object.assign(process.env, secrets);
+  t.after(() => { for (const k of Object.keys(secrets)) delete process.env[k]; });
+  assert.deepEqual(Object.keys(safeEnv()).filter((k) => k in secrets), []);
+
+  const logFile = path.join(root, 'env.log');
+  const r = await runCheck({ kind: 'command', argv: ['node', '-e', 'console.log(JSON.stringify(Object.keys(process.env)))'] }, { root, logFile, defaultTimeoutS: 30, maxLogBytes: 100000 });
+  assert.equal(r.status, 'pass', JSON.stringify(r));
+  const seen = JSON.parse(fs.readFileSync(logFile, 'utf8').trim());
+  for (const k of Object.keys(secrets)) assert.equal(seen.includes(k), false, `${k} must not reach acceptance code`);
+
+  // A planted program with a bare-name match in the worktree is never used.
+  const planted = process.platform === 'win32' ? 'node.cmd' : 'node';
+  const body = process.platform === 'win32' ? ['@echo planted>planted.txt', ''].join(String.fromCharCode(13, 10)) : ['#!/bin/sh', 'echo planted > planted.txt', ''].join(String.fromCharCode(10));
+  fs.writeFileSync(path.join(root, planted), body, { mode: 0o755 });
+  const resolved = resolveExecutable('node', root);
+  assert.ok(resolved && !resolved.startsWith(root), `resolved to ${resolved}`);
+  const second = await runCheck({ kind: 'command', argv: ['node', '--version'] }, { root, logFile: path.join(root, 'v.log'), defaultTimeoutS: 30, maxLogBytes: 1000 });
+  assert.equal(second.status, 'pass');
+  assert.equal(fs.existsSync(path.join(root, 'planted.txt')), false, 'the planted program was not run');
+  assert.equal(resolveExecutable('definitely-not-a-program-xyz', root), null);
+  assert.equal(resolveExecutable('../outside', root), null, 'a path leaving the worktree is refused');
+});
+
+test('dispatcher: adapter flags are refused for real adapters', { timeout: 60000 }, async (t) => {
+  const { store, make } = setup(t, 'fm-flags');
+  const it = enqueue(store, item({ route: { cli: 'codex', model: 'gpt-x', flags: ['--dangerously-bypass-approvals-and-sandbox'] } }), 'test');
+  await make().tick();
+  const parked = store.getItem(it.id);
+  assert.equal(parked.state, 'parked');
+  assert.match(parked.park_reason, /only accepted for the test adapter/);
 });

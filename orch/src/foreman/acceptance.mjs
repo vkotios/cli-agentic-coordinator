@@ -4,6 +4,44 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
+// Worker-written code runs inside acceptance commands (that is what a test is), so the process
+// gets a reduced environment: no API keys, no gateway keys, nothing the Foreman itself holds.
+const SAFE_ENV = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'LANG', 'LC_ALL', 'TZ', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'CI']);
+
+export function safeEnv(env = process.env) {
+  /** @type {NodeJS.ProcessEnv} */
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (SAFE_ENV.has(key.toUpperCase()) || key.toUpperCase().startsWith('LC_'))) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Resolve a bare program name through PATH, never through the worktree: on Windows a process is
+ * also looked up in the current directory, so a file the worker planted there would otherwise
+ * win. A name with a path separator must stay inside the worktree (the scope guard has already
+ * limited what the worker may have created there).
+ */
+export function resolveExecutable(name, root, env = process.env) {
+  if (/[\\/]/.test(name)) {
+    const full = path.resolve(root, name);
+    return insideRoot(root, full) ? full : null;
+  }
+  const exts = process.platform === 'win32' ? ['', ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
+  for (const dir of String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean)) {
+    if (insideRoot(root, path.resolve(dir))) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate;
+      } catch { /* not here */ }
+    }
+  }
+  return null;
+}
+
 function insideRoot(root, target) {
   const rel = path.relative(root, target);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
@@ -26,6 +64,8 @@ export function runCheck(check, { root, logFile, defaultTimeoutS, maxLogBytes })
   if (check.kind === 'rubric') return Promise.resolve({ status: 'needs-judgement', kind: 'rubric', text: check.text });
   const cwd = path.resolve(root, check.cwd || '.');
   if (!insideRoot(root, cwd)) return Promise.resolve({ status: 'error', kind: check.kind, argv: check.argv, error: 'cwd leaves the worktree' });
+  const program = resolveExecutable(check.argv[0], root);
+  if (!program) return Promise.resolve({ status: 'error', kind: check.kind, argv: check.argv, error: `cannot find ${check.argv[0]} on PATH (the worktree is never searched)` });
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const out = fs.createWriteStream(logFile, { flags: 'w' });
   const started = Date.now();
@@ -50,13 +90,13 @@ export function runCheck(check, { root, logFile, defaultTimeoutS, maxLogBytes })
       written += chunk.length;
     };
     try {
-      child = spawn(check.argv[0], check.argv.slice(1), { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(program, check.argv.slice(1), { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', env: safeEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       finish({ status: 'error', error: String(error.message || error) });
       return;
     }
-    child.stdout.on('data', sink);
-    child.stderr.on('data', sink);
+    child.stdout?.on('data', sink);
+    child.stderr?.on('data', sink);
     child.on('error', (error) => finish({ status: 'error', error: String(error.message || error) }));
     child.on('close', (code, signal) => {
       if (timedOut) finish({ status: 'timeout', exit_code: null, signal });
