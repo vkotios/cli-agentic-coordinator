@@ -128,7 +128,8 @@ export async function cmdFinish(cfg, args, io) {
       // Resume after interrupted claim release or failed directory removal.
       const cleanup = await cleanupLocked(cfg, { ...args, wp, apply: true });
       const unresolved = needsRetention(cleanup.resources);
-      const out = { ...previous, state: unresolved ? 'retained' : cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', issues: unresolved ? ['explicit retained-resource decisions required'] : [], resources: cleanup.resources, ...(cleanup.blocked_by ? { blocked_by: cleanup.blocked_by } : {}), updated_at: nowIso() };
+      const { blocked_by: previousBlocker, ...priorClosure } = previous;
+      const out = { ...priorClosure, state: unresolved ? 'retained' : cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', issues: unresolved ? ['explicit retained-resource decisions required'] : [], resources: cleanup.resources, ...(cleanup.blocked_by ? { blocked_by: cleanup.blocked_by } : {}), updated_at: nowIso() };
       writeJsonAtomic(closureFile(cfg, wp), out);
       if (current.state === 'ok') {
         const release = await cmdRelease(cfg, { _: [wp], by: args.by }, { log() {} });

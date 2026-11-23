@@ -257,6 +257,25 @@ test('P02: reverify refuses invalid authority and structural identity without re
   }
 });
 
+test('P02: reverify adopts stamps for a review at its baseline HEAD', async (t) => {
+  const { c, w } = await fixture(t, 'p02-reverify-review');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  const originalStamp = record.identity.path;
+  record.kind = 'review';
+  record.baseline = g(w.path, 'rev-parse', 'HEAD').trim();
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const result = await orch(['cleanup', '--reverify', w.id, '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).state, 'reverified');
+  assert.deepEqual(json(result).failures, []);
+  const adopted = readResource(cfg, w.id);
+  assert.equal(adopted.identity.path, originalStamp);
+  assert.equal(adopted.reverified_old_stamps.path, '1:2:3');
+  assert.equal(adopted.reverified_new_stamps.path, originalStamp);
+});
+
 test('P02: finish and cleanup do not implicitly reverify', async (t) => {
   const { c, w } = await fixture(t, 'p02-no-implicit-reverify');
   const cfg = loadConfig(c.stateRoot);
@@ -331,6 +350,27 @@ test('P02: resumed finish carries the cleanup blocker', async (t) => {
   const out = json(result);
   assert.equal(out.blocked_by.check, 'resource-identity');
   assert.deepEqual(out.blocked_by, out.resources.find((r) => r.id === w.id).blocked_by);
+});
+
+test('P02: resumed finish clears an earlier cleanup blocker', async (t) => {
+  const { c, w } = await fixture(t, 'p02-resumed-clear-blocker');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const file = closureFile(cfg, 'WP-clean');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ wp: 'WP-clean', by: 'owner', claim_token: readClaim(cfg, 'WP-clean').value.token, closed_at: '2026-09-23T13:00:00Z', resources: [] }));
+  const blocked = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+  assert.equal(blocked.code, 3, blocked.stderr);
+  assert.equal(json(blocked).blocked_by.check, 'resource-identity');
+  const decisions = path.join(c.base, 'retain.json');
+  fs.writeFileSync(decisions, JSON.stringify([{ id: w.id, reason: 'inspect identity', revisit: 'after inspection' }]));
+  const resolved = await orch(['finish', 'WP-clean', '--by', 'owner', '--retain', decisions, '--json'], c.env);
+  assert.equal(resolved.code, 0, resolved.stderr);
+  assert.equal(json(resolved).state, 'finished');
+  assert.equal(Object.hasOwn(json(resolved), 'blocked_by'), false);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, 'utf8')), 'blocked_by'), false);
 });
 
 test('P02: a queued dependent run prevents even forced worktree removal', async (t) => {
