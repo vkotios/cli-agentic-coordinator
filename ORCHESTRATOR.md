@@ -91,7 +91,7 @@ For a failed or abandoned trial, inspect active jobs and use exact-approved
 - **Judge activity, not speed.** A slow local run that is producing steps is healthy. Do not set short timeouts on local models.
 - Activity = the latest of: worker output, its log file, a structured event, a file change in the worktree. No real activity for 6 min (local: 10 min during model load) → the run is reported `suspected_stall`. Known dead-but-looks-alive signatures are in `docs/CLI_GUIDE.md`.
 - **A stall is advisory. Nothing kills a run automatically.** You inspect, then decide. Before stopping a run, say why. A run stopped without a verdict is `inconclusive-timeout`, not a model failure. "Exit 0 with empty output" is a failure, not a success.
-- Local gateway runs **one model at a time**: never launch two local runs concurrently; batch slices per model to avoid reloads. Cloud runs may go in parallel with a local run.
+- The local gateway serves **one model at a time**, so batch slices per model to avoid reloads. The `local` lane admits `lanes.local.permits` runs at once (default 1: never launch two local runs concurrently). Raise it only to match the gateway's chat slots; the gateway still enforces its own slot limit. Cloud runs may go in parallel with a local run.
 - Close the worker's window when its run has ended and its record is written.
 
 ## 4. Choosing a worker

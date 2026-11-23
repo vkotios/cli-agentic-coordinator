@@ -70,6 +70,7 @@
       "execution": "serial",
       "files": [
         "orch/test/lane.test.mjs",
+        "orch/test/permits.test.mjs",
         "orch/test/keeper.test.mjs",
         "orch/test/monitor.test.mjs",
         "orch/test/cancel.test.mjs",

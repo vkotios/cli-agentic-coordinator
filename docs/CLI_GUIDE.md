@@ -70,8 +70,9 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   Declaring limits or enabling compaction alone does not prove recovery; confirm with a completed live run.
 - An `agent=compaction` step on a 27B model cost about 16 minutes and lost context (verified). Treat it
   as "task too big for this model", not as progress.
-- A local gateway usually serves **one model at a time**: never run two local workers at once (orch's
-  `local` lane enforces this machine-wide), batch slices per model, and set opencode's `small_model` to the
+- A local gateway usually serves **one model at a time**: by default never run two local workers at once (orch's
+  `local` lane enforces this machine-wide; `lanes.local.permits` raises the count for a gateway with several
+  chat slots), batch slices per model, and set opencode's `small_model` to the
   same model as the agent (a different one forces a reload).
 - Adding `$schema` during native configuration loading changed the scoped controller config on
   1.18.31 and caused its integrity check to refuse MCP startup (verified). Generated controller
