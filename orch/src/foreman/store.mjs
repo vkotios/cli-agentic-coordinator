@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { OrchError } from '../errors.mjs';
 import { TRANSITIONS, PRIORITIES, isProjectId, isItemId, STATES, PARK_TAGS } from './schema.mjs';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const MIGRATIONS = [
   // 1
@@ -94,6 +94,24 @@ const MIGRATIONS = [
   );
   CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  // 2: one row per launch attempt, written BEFORE any side effect so a crash leaves evidence.
+  `
+  CREATE TABLE runs(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item TEXT NOT NULL REFERENCES items(id),
+    attempt INTEGER NOT NULL,
+    wp TEXT NOT NULL,
+    slice TEXT NOT NULL,
+    worktree TEXT,
+    run_id TEXT,
+    route_json TEXT,
+    state TEXT NOT NULL CHECK(state IN ('preparing','running','finished','abandoned')),
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    result_json TEXT
+  );
+  CREATE INDEX runs_item ON runs(item, id);
+  `,
 ];
 
 const PRIORITY_RANK = Object.fromEntries(PRIORITIES.map((p, i) => [p, i]));
@@ -114,6 +132,7 @@ export class Store {
   /** @param {string} file */
   constructor(file) {
     this.file = file;
+    this.depth = 0;
     this.db = new DatabaseSync(file);
     try {
       this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
@@ -152,9 +171,14 @@ export class Store {
     }
   }
 
-  /** Run `fn` in one immediate transaction; roll back on any throw. */
+  /**
+   * Run `fn` in one immediate transaction; roll back on any throw. Calls nest: an inner `tx`
+   * joins the outer one, so a method built from other methods is still one atomic change.
+   */
   tx(fn) {
+    if (this.depth > 0) return fn();
     this.db.exec('BEGIN IMMEDIATE');
+    this.depth = 1;
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -162,6 +186,8 @@ export class Store {
     } catch (error) {
       try { this.db.exec('ROLLBACK'); } catch { /* the original error is the one to report */ }
       throw error;
+    } finally {
+      this.depth = 0;
     }
   }
 
@@ -372,6 +398,54 @@ export class Store {
     const next = projects.find((p) => last && p > last) ?? projects[0];
     const chosen = top.find((r) => r.project === next);
     return this.getItem(chosen.id);
+  }
+
+  // ---- runs --------------------------------------------------------------------------
+
+  /** Claim the next launch for an item: ready -> running and a `preparing` run row, atomically. */
+  startRun(itemId, route, actor) {
+    return this.tx(() => {
+      const item = this.q('SELECT * FROM items WHERE id = ?').get(itemId);
+      if (!item) throw new OrchError(`no such item: ${itemId}`, 'foreman-no-item');
+      const attempt = Number(item.attempt) + 1;
+      this.transition(itemId, 'running', { actor, reason: 'launch', patch: { attempt, wp: itemId }, data: { attempt, route } });
+      const info = this.q('INSERT INTO runs(item, attempt, wp, slice, route_json, state, started_at) VALUES (?,?,?,?,?,?,?)').run(itemId, attempt, itemId, 'pending', JSON.stringify(route), 'preparing', nowIso());
+      const id = Number(info.lastInsertRowid);
+      this.q('UPDATE runs SET slice = ? WHERE id = ?').run(`r${id}`, id);
+      return this.getRun(id);
+    });
+  }
+
+  getRun(id) {
+    const row = this.q('SELECT * FROM runs WHERE id = ?').get(id);
+    return row ? { ...row, route: row.route_json ? JSON.parse(row.route_json) : null, result: row.result_json ? JSON.parse(row.result_json) : null } : null;
+  }
+
+  /** The most recent run row of an item, or null. */
+  currentRun(itemId) {
+    const row = this.q('SELECT id FROM runs WHERE item = ? ORDER BY id DESC LIMIT 1').get(itemId);
+    return row ? this.getRun(row.id) : null;
+  }
+
+  runsFor(itemId) {
+    return this.q('SELECT id FROM runs WHERE item = ? ORDER BY id').all(itemId).map((r) => this.getRun(r.id));
+  }
+
+  updateRun(id, fields) {
+    const allowed = new Set(['worktree', 'run_id', 'state', 'ended_at', 'result']);
+    for (const key of Object.keys(fields)) if (!allowed.has(key)) throw new OrchError(`cannot set run field ${key}`, 'foreman-bad-column');
+    const sets = [];
+    const args = [];
+    for (const [key, value] of Object.entries(fields)) {
+      if (key === 'result') { sets.push('result_json = ?'); args.push(JSON.stringify(value)); } else { sets.push(`${key} = ?`); args.push(value); }
+    }
+    this.q(`UPDATE runs SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
+    return this.getRun(id);
+  }
+
+  /** Items the dispatcher must watch: running (a worker may be alive) or verifying (it finished). */
+  activeItems() {
+    return this.q("SELECT id FROM items WHERE state IN ('running', 'verifying') ORDER BY updated_at").all().map((r) => this.getItem(r.id));
   }
 
   // ---- checks ------------------------------------------------------------------------

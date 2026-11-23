@@ -141,7 +141,8 @@ export function validateItem(raw) {
   let route = null;
   if (raw.route !== undefined && raw.route !== null) {
     if (typeof raw.route !== 'object' || !isString(raw.route.cli, 40) || !isString(raw.route.model, 200)) errors.push('route: {cli, model} when given');
-    else route = { cli: raw.route.cli, model: raw.route.model };
+    else if (raw.route.flags !== undefined && (!Array.isArray(raw.route.flags) || raw.route.flags.length > 20 || raw.route.flags.some((f) => typeof f !== 'string' || !f || f.length > 200))) errors.push('route.flags: at most 20 non-empty strings');
+    else route = { cli: raw.route.cli, model: raw.route.model, ...(raw.route.flags ? { flags: raw.route.flags } : {}) };
   }
   if (raw.notes !== undefined && !isString(raw.notes, 2000)) errors.push('notes: at most 2000 characters');
 

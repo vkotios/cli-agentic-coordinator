@@ -232,7 +232,8 @@ async function runLocked(args, io, opts) {
       exe: built.file,
       args: built.args,
       cwd: built.cwd,
-      env_set: built.envSet || {},
+      // The run id reaches the worker, so a gateway client name or header can carry `orch/<run-id>`.
+      env_set: { ...(built.envSet || {}), ORCH_RUN_ID: id },
       env_delete: built.envDelete || [],
       // stdin. An adapter that takes its prompt on argv (agy) supplies an empty file
       // instead, so the prompt is not delivered twice.

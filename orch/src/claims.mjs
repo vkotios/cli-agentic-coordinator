@@ -18,7 +18,7 @@ import { OrchError } from './errors.mjs';
 import { nowIso, readJson } from './util.mjs';
 import { publishExclusive, readRecord } from './exclusive.mjs';
 
-export const CLAIMANTS = ['claude-code', 'codex', 'opencode', 'vibe', 'copilot', 'muse', 'owner'];
+export const CLAIMANTS = ['claude-code', 'codex', 'opencode', 'vibe', 'copilot', 'muse', 'owner', 'foreman'];
 
 /** A WP name is also a file name: restrict it, and fold case (NTFS is case-insensitive). */
 export function wpKey(wp) {

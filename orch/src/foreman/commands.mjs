@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { OrchError } from '../errors.mjs';
 import { openStore, addProject, enqueue, parkItem, requeueItem, archiveItem, summary } from './api.mjs';
+import { runForeman } from './daemon.mjs';
+import { foremanHolder } from './lock.mjs';
+import { readSettings, saveSettings } from './settings.mjs';
+import { loadConfig } from '../config.mjs';
 
 function actorOf(args) {
   const by = args.by;
@@ -52,13 +56,49 @@ export async function cmdEnqueue(args, io = console) {
 export async function cmdForeman(args, io = console) {
   const [sub, a1, a2] = args._;
   const actor = actorOf(args);
+  if (sub === 'start') {
+    // Runs until it is stopped (`orch foreman stop`, Ctrl+C or SIGTERM). One per state root.
+    const stopSignal = { stopped: false };
+    const stop = () => { stopSignal.stopped = true; };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+    try {
+      await runForeman({ stateRoot: args['state-root'] ?? null, once: !!args.once, tickSeconds: args.tick != null ? Number(args.tick) : null, log: (s) => io.log(s), stopSignal });
+    } finally {
+      process.off('SIGINT', stop);
+      process.off('SIGTERM', stop);
+    }
+    return { exitCode: 0 };
+  }
   const store = openStore(args['state-root']);
   try {
     switch (sub) {
       case 'status': {
-        const s = summary(store);
-        out(args, io, s, `items: ${Object.entries(s.counts).map(([k, v]) => `${k} ${v}`).join(', ')}; projects ${s.projects.length}; goals ${s.goals.length}; pending checks ${s.pending_checks}`);
+        const holder = await foremanHolder(loadConfig(args['state-root']).stateRoot);
+        const s = { ...summary(store), running: holder !== null, holder, paused: readSettings(store).paused };
+        out(args, io, s, `foreman ${s.running ? `running (pid ${holder.pid})` : 'not running'}${s.paused ? ', paused' : ''}\nitems: ${Object.entries(s.counts).map(([k, v]) => `${k} ${v}`).join(', ')}; projects ${s.projects.length}; goals ${s.goals.length}; pending checks ${s.pending_checks}`);
         return { ...s, exitCode: 0 };
+      }
+      case 'pause':
+      case 'resume': {
+        saveSettings(store, { paused: sub === 'pause' }, actor);
+        out(args, io, { paused: sub === 'pause' }, sub === 'pause' ? 'paused: running items are finished and watched; nothing new starts' : 'resumed');
+        return { paused: sub === 'pause', exitCode: 0 };
+      }
+      case 'stop': {
+        store.kvSet('stop_requested', '1');
+        store.event('stop-requested', { actor });
+        out(args, io, { stop_requested: true }, 'stop requested: the Foreman exits after its current tick');
+        return { stop_requested: true, exitCode: 0 };
+      }
+      case 'settings': {
+        const patch = {};
+        for (const key of ['tickSeconds', 'maxConcurrent', 'acceptanceTimeoutSeconds']) if (args[key] !== undefined) patch[key] = Number(args[key]);
+        if (args.defaultRoute) patch.defaultRoute = JSON.parse(args.defaultRoute);
+        if (Object.keys(patch).length) saveSettings(store, patch, actor);
+        const now = readSettings(store);
+        out(args, io, now, Object.entries(now).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n'));
+        return { ...now, exitCode: 0 };
       }
       case 'project': {
         if (a1 === 'add') {
@@ -129,7 +169,7 @@ export async function cmdForeman(args, io = console) {
         return { ...item, exitCode: 0 };
       }
       default:
-        throw new OrchError('usage: orch foreman status | project ... | goal ... | items | item <id> | park <id> --reason <r> | requeue <id> | archive <id> | edit <id> --priority P1', 'missing-arg');
+        throw new OrchError('usage: orch foreman start [--once] [--tick <s>] | stop | pause | resume | settings | status | project ... | goal ... | items | item <id> | park <id> --reason <r> | requeue <id> | archive <id> | edit <id> --priority P1', 'missing-arg');
     }
   } finally {
     store.close();
