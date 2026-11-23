@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config.mjs';
 import { withOperationLock, dependentRunBlock } from '../src/resources.mjs';
 import { callTool } from '../src/mcp.mjs';
 import { contendEach } from './wf-helpers.mjs';
-import { cmdMaintain, beginRunArtifacts, confirmRunArtifacts } from '../src/retention.mjs';
+import { cmdMaintain, beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync } from '../src/retention.mjs';
 
 const output = (r) => JSON.parse(r.stdout);
 const old = '2026-01-01T00:00:00.000Z';
@@ -59,6 +59,107 @@ function failOneUnlink(f, target) {
 function fingerprint(dir) {
   return fs.readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((rel) => fs.statSync(path.join(dir, rel)).isFile()).map((rel) => [rel, fs.readFileSync(path.join(dir, rel)).toString('base64')]);
 }
+
+const incrementStamp = (value, part) => { const fields = value.split(':'); fields[part] = String(BigInt(fields[part]) + 1n); return fields.join(':'); };
+function changeOwnedDevice(f) {
+  const file = path.join(f.c.stateRoot, 'retention', 'owned', `${f.id}.json`);
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of ['state_identity', 'runs_identity', 'dir_identity']) doc[key] = incrementStamp(doc[key], 0);
+  for (const key of Object.keys(doc.files)) doc.files[key] = incrementStamp(doc.files[key], 0);
+  fs.writeFileSync(file, JSON.stringify(doc));
+  return file;
+}
+
+test('P03: preview accepts a device change in enrolled authority', async (t) => {
+  const f = fixture(t, 'p03-device-preview'); await enroll(f);
+  const before = await orch(['maintain', '--json'], f.c.env);
+  assert.equal(before.code, 0, before.stderr);
+  assert.equal(output(before).runs[0].state, 'eligible');
+  changeOwnedDevice(f);
+  const after = await orch(['maintain', '--json'], f.c.env);
+  assert.equal(after.code, 0, after.stderr);
+  assert.equal(output(after).runs[0].state, output(before).runs[0].state);
+});
+
+test('P03: collection accepts a device change without rewriting authority', async (t) => {
+  const f = fixture(t, 'p03-device-collect'); await enroll(f);
+  const owned = changeOwnedDevice(f), before = fs.readFileSync(owned);
+  const r = await collect(f);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(output(r).runs[0].state, 'collected');
+  for (const name of ['stdout.log', 'stderr.log', 'prompt.txt']) assert.equal(fs.existsSync(path.join(f.dir, name)), false);
+  assert.deepEqual(fs.readFileSync(owned), before);
+  const result = await orch(['result', f.id, '--json'], f.c.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(output(result).final_message, 'a retained final answer');
+  assert.equal(output(result).transcripts.stdout.state, 'purged');
+});
+
+test('P03: collection rejects inode or birth time changes alongside a device change', async (t) => {
+  for (const part of [1, 2]) {
+    const f = fixture(t, `p03-device-mismatch-${part}`); await enroll(f);
+    const owned = changeOwnedDevice(f), doc = JSON.parse(fs.readFileSync(owned, 'utf8'));
+    doc.files.stdout = incrementStamp(doc.files.stdout, part); fs.writeFileSync(owned, JSON.stringify(doc));
+    const target = path.join(f.dir, 'stdout.log'), before = fs.readFileSync(target);
+    const r = await collect(f);
+    assert.equal(output(r).runs[0].state, 'protected');
+    assert.equal(output(r).runs[0].reason, 'artifact identity changed');
+    assert.deepEqual(fs.readFileSync(target), before);
+  }
+});
+
+test('P03: partial collection accepts a receipt device change but rejects an inode change', async (t) => {
+  for (const part of [0, 1]) {
+    const f = fixture(t, `p03-receipt-device-${part}`); await enroll(f);
+    const target = path.join(f.dir, 'stderr.log'), unlink = fs.unlinkSync;
+    t.mock.method(fs, 'unlinkSync', (file) => { if (file === target) throw new Error('fixture sharing failure'); return unlink(file); });
+    const first = await cmdMaintain(loadConfig(f.c.stateRoot), { apply: true }, { log() {} });
+    t.mock.restoreAll();
+    assert.equal(first.runs[0].state, 'pending');
+    const receipt = path.join(f.c.stateRoot, 'retention', 'receipts', `${f.id}.json`);
+    const doc = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    doc.files.stderr.identity = incrementStamp(doc.files.stderr.identity, 0);
+    if (part === 1) doc.files.stderr.identity = incrementStamp(doc.files.stderr.identity, 1);
+    fs.writeFileSync(receipt, JSON.stringify(doc));
+    const before = fs.readFileSync(target), r = await collect(f);
+    if (part === 0) {
+      assert.equal(r.code, 0, r.stderr); assert.equal(output(r).runs[0].state, 'collected');
+      assert.equal(fs.existsSync(target), false);
+    } else {
+      assert.equal(r.code, 3); assert.equal(output(r).runs[0].state, 'pending');
+      assert.equal(output(r).runs[0].reason, 'artifact content or identity changed before collection');
+      assert.deepEqual(fs.readFileSync(target), before);
+    }
+  }
+});
+
+test('P03: persisted authority accepts device changes without rewriting evidence', async (t) => {
+  const f = fixture(t, 'p03-stamp-device');
+  const cfg = loadConfig(f.c.stateRoot);
+  const file = path.join(f.c.stateRoot, 'retention', 'owned', `${f.id}.json`);
+  const receipt = path.join(f.c.stateRoot, 'retention', 'receipts', `${f.id}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(receipt), { recursive: true });
+  const stamp = (p) => { const s = fs.lstatSync(p, { bigint: true }); return `${s.dev}:${s.ino}:${s.birthtimeNs}`; };
+  const doc = { version: 1, id: f.id, state: 'confirmed', state_root: path.resolve(f.c.stateRoot), state_identity: stamp(f.c.stateRoot), runs_identity: stamp(cfg.runsDir), dir: f.dir, dir_identity: stamp(f.dir), files: Object.fromEntries(Object.entries({ stdout: 'stdout.log', stderr: 'stderr.log', prompt: 'prompt.txt' }).map(([key, name]) => [key, stamp(path.join(f.dir, name))])) };
+  fs.writeFileSync(receipt, '{}'); // Exercise authority validation and file identity checks.
+  fs.writeFileSync(file, JSON.stringify(doc));
+  const expected = transcriptEvidence(cfg, f.id);
+  assert.equal(expected.files.stdout.state, 'available');
+  assert.deepEqual(await transcriptEvidenceAsync(cfg, f.id), expected);
+  const increment = (value, part) => { const fields = value.split(':'); fields[part] = String(BigInt(fields[part]) + 1n); return fields.join(':'); };
+  for (const key of ['state_identity', 'runs_identity', 'dir_identity']) doc[key] = increment(doc[key], 0);
+  for (const key of Object.keys(doc.files)) doc.files[key] = increment(doc.files[key], 0);
+  fs.writeFileSync(file, JSON.stringify(doc));
+  const before = fs.readFileSync(file);
+  assert.deepEqual(transcriptEvidence(cfg, f.id), expected);
+  assert.deepEqual(await transcriptEvidenceAsync(cfg, f.id), expected);
+  assert.deepEqual(fs.readFileSync(file), before);
+  doc.dir_identity = increment(doc.dir_identity, 1);
+  fs.writeFileSync(file, JSON.stringify(doc));
+  assert.throws(() => transcriptEvidence(cfg, f.id), { message: 'artifact ownership incomplete or identity changed', code: 'retention-unowned' });
+  await assert.rejects(transcriptEvidenceAsync(cfg, f.id), { message: 'compact evidence identity changed', code: 'retention-changed' });
+});
 
 test('P03: preview leaves bytes unchanged and legacy data cannot be collected by age', async (t) => {
   const f = fixture(t, 'p03-legacy');
