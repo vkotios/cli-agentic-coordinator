@@ -219,6 +219,33 @@ export async function inspectIdentity(r) {
   } catch { return { ok: false, reason: 'resource identity unreadable' }; }
 }
 
+// Explicit operator adoption checks every structural identity before allowing stamp changes.
+export async function inspectReverification(r) {
+  const failures = [];
+  const old_stamps = { common_identity: r.common_identity, path: r.identity?.path, admin: r.identity?.admin };
+  const new_stamps = {};
+  const check = (name, ok) => { if (!ok) failures.push(name); };
+  try {
+    check('confirmed resource', r.state === 'present' && !!r.identity);
+    check('path and root', !!r.identity && fs.existsSync(r.path) && samePath(r.path, resolvedPath(r.path)) && samePath(r.root, resolvedPath(r.root)) && isInside(r.path, r.root) && !samePath(r.path, r.root));
+    check('source directory path', samePath(r.common_dir, resolvedPath(r.common_dir)));
+    const list = await worktreeList(r.repo);
+    const entry = list && list.find((w) => samePath(w.path, r.path));
+    check('git registration', !!entry && !entry.locked && !entry.prunable);
+    check('branch', !!entry && (r.branch ? entry.branch === `refs/heads/${r.branch}` : !!entry.detached));
+    const admin = await git(['rev-parse', '--absolute-git-dir'], { cwd: r.path });
+    const common = await git(['rev-parse', '--git-common-dir'], { cwd: r.path });
+    check('admin directory path', !!r.identity && admin.ok && samePath(resolvedPath(admin.stdout.trim()), r.identity.admin_dir) && samePath(r.identity.admin_dir, resolvedPath(r.identity.admin_dir)));
+    check('common directory path', common.ok && samePath(resolvedPath(path.resolve(r.path, common.stdout.trim())), r.common_dir));
+    for (const [key, p] of Object.entries({ common_identity: r.common_dir, path: r.path, admin: r.identity?.admin_dir })) {
+      try { new_stamps[key] = stamp(p); } catch { failures.push(`${key} stamp unreadable`); }
+      if (typeof old_stamps[key] !== 'string' || !/^\d+:\d+:\d+$/.test(old_stamps[key])) failures.push(`${key} recorded stamp invalid`);
+    }
+  } catch { failures.push('resource identity unreadable'); }
+  const stamp_differences = Object.keys(old_stamps).filter((key) => old_stamps[key] !== new_stamps[key]);
+  return { ok: failures.length === 0, failures, old_stamps, new_stamps, stamp_differences };
+}
+
 /** Every run referring to this directory is a dependency, regardless of WP. */
 export async function dependentRunBlock(cfg, r) {
   let runs;
@@ -266,16 +293,26 @@ export async function dependentRunBlock(cfg, r) {
   return null;
 }
 
+export function processBlock(reason, resource) {
+  const match = reason.match(/^(?:dependent )?run (\S+)(?: process (\d+))?/);
+  const run = match && match[1];
+  return { check: 'process-liveness', ...(resource ? { resource } : {}), ...(run ? { run } : {}), ...(match && match[2] ? { pid: Number(match[2]) } : {}), detail: reason,
+    operator_action: run ? `Inspect with orch status ${run} and, if the process is truly gone, retry` : 'Inspect the run inventory and retry' };
+}
+
 export async function inspectRemoval(cfg, r, { force = false, review = null, persistIdentity = false } = {}) {
   if (r.wp && r.claim_token) {
     const claim = readClaim(cfg, r.wp);
-    if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) return { action: 'retain', reason: 'resource claim identity changed or unreadable' };
+    if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) {
+      const reason = 'resource claim identity changed or unreadable';
+      return { action: 'retain', reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: reason, operator_action: `orch cleanup --reverify ${r.id}` } };
+    }
   }
   const identity = await inspectIdentity(r);
-  if (!identity.ok) return { action: 'retain', reason: identity.reason };
+  if (!identity.ok) return { action: 'retain', reason: identity.reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: identity.reason, operator_action: `orch cleanup --reverify ${r.id}` } };
   if (persistIdentity) persistMigration(cfg, r, identity.migrate);
   const active = await dependentRunBlock(cfg, r);
-  if (active) return { action: 'retain', reason: active };
+  if (active) return { action: 'retain', reason: active, blocked_by: processBlock(active, r.id) };
   if (identity.absent) return { action: 'remove', absent: true, dirty: [] };
   if (identity.partial) {
     if (r.kind === 'review' && (!review || !review.finished_at || !['clean', 'not-applicable'].includes(review.containment))) return { action: 'retain', reason: 'review incident or incomplete review' };
