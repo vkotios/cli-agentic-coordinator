@@ -21,10 +21,15 @@ export const KIT_ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.ur
 export const REPO_ROOT = path.resolve(KIT_ROOT, '..');
 export const DEFAULT_CONFIG_FILE = path.join(REPO_ROOT, 'orch.config.json');
 
+/** The most runs one serial lane may admit at once. */
+export const MAX_LANE_PERMITS = 16;
+
 export const DEFAULTS = {
   lanes: {
     // Thresholds are in seconds. A stall is advisory: nothing here ever kills a run.
-    local: { serial: true, quietSeconds: 300, stallSeconds: 600 },
+    // `permits` is how many runs the serial lane admits at once (default 1). Each permit is
+    // its own exclusive pipe, so the one-run guarantee holds per permit.
+    local: { serial: true, permits: 1, quietSeconds: 300, stallSeconds: 600 },
     cloud: { serial: false, quietSeconds: 180, stallSeconds: 360 },
   },
   // Monitor polling. The monitor is disposable and off the exclusion path (K2).
@@ -118,6 +123,11 @@ export function loadConfig(stateRootArg) {
   const user = readJson(file, {}) || {};
   const lanes = { ...DEFAULTS.lanes };
   for (const [k, v] of Object.entries(user.lanes || {})) lanes[k] = { ...(lanes[k] || {}), ...v };
+  for (const [k, v] of Object.entries(lanes)) {
+    if (v.permits !== undefined && (!Number.isInteger(v.permits) || v.permits < 1 || v.permits > MAX_LANE_PERMITS)) {
+      throw new OrchError(`lanes.${k}.permits must be a whole number from 1 to ${MAX_LANE_PERMITS}`, 'bad-config');
+    }
+  }
   // NOTE: there is no lane directory under the state root any more (review r2-4).
   // The lane's pipe name and its one advisory file both come from `lanescope.mjs`.
   return {

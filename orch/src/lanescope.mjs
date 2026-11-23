@@ -60,14 +60,20 @@ function sanitizeId(v) {
 
 /**
  * @param {string} lane 'local' | 'cloud'
+ * @param {number} permit 0 for the first (and, by default, only) permit of a serial lane. Permit 0
+ *        keeps the historical pipe and holder file names; permit k > 0 adds a `-pk` suffix.
  * @returns {{laneId:string, lane:string, scope:string, pipeName:string, laneDir:string,
  *            holderFile:string, monitorPipe:(runId:string)=>string, overridden:boolean}}
  */
-export function laneScope(lane = 'local') {
+export function laneScope(lane = 'local', permit = 0) {
   const override = process.env.ORCH_LANE_ID;
   const laneId = override ? sanitizeId(override) : userLaneIdentifier();
+  if (!Number.isInteger(permit) || permit < 0 || permit > 63) {
+    throw new OrchError(`invalid lane permit ${permit}`, 'bad-lane');
+  }
   const scope = `${laneId}-${lane}`;
   const laneDir = path.join(laneHome(), scope);
+  const permitSuffix = permit > 0 ? `-p${permit}` : '';
   const pipePath = (kind, id) => process.platform !== 'win32'
     ? path.join('/tmp', `.orch-${process.getuid()}`, `${kind}-${id}.sock`)
     : `\\\\.\\pipe\\orch-${kind}-${id}`;
@@ -75,10 +81,11 @@ export function laneScope(lane = 'local') {
     laneId,
     lane,
     scope,
+    permit,
     overridden: !!override,
-    pipeName: pipePath('lane', scope),
+    pipeName: pipePath('lane', scope + permitSuffix),
     laneDir,
-    holderFile: path.join(laneDir, 'holder.json'),
+    holderFile: path.join(laneDir, permit > 0 ? `holder-p${permit}.json` : 'holder.json'),
     monitorPipe: (runId) => pipePath('mon', `${laneId}-${runId}`),
   };
 }
@@ -96,4 +103,17 @@ export function assertLaneOverrideAllowed(adapter) {
       'overridden lane would place it outside the machine-wide exclusion. Unset ORCH_LANE_ID.',
     'lane-override-refused',
   );
+}
+
+/** How many runs the lane admits at once: its `permits` when it is serial, else unlimited (null). */
+export function lanePermits(cfg, laneName) {
+  const lane = cfg.lanes[laneName];
+  if (!lane || lane.serial === false) return null;
+  return lane.permits ?? 1;
+}
+
+/** Every permit's scope for a serial lane, permit 0 first. */
+export function permitScopes(cfg, laneName) {
+  const count = lanePermits(cfg, laneName) ?? 1;
+  return Array.from({ length: count }, (_, permit) => laneScope(laneName, permit));
 }
