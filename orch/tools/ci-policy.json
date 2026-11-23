@@ -48,6 +48,7 @@
         "orch/test/process-query.test.mjs",
         "orch/test/keeper-control.test.mjs",
         "orch/test/queuedriver.test.mjs",
+        "orch/test/foreman-store.test.mjs",
         "orch/test/usage-p08b.test.mjs",
         "orch/test/catalog-p06a.test.mjs",
         "orch/test/adviser-p05b.test.mjs",
