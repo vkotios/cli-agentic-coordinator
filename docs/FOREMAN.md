@@ -79,6 +79,19 @@ On each tick the Foreman reads `GET /api/admission/events` with a cursor. An ope
 "options": { "headers": { "X-IGM-Priority": "batch", "X-Client-Name": "orch/{env:ORCH_RUN_ID}" } }
 ```
 
+## Control-plane web GUI
+
+```
+$env:ORCH_GUI_PASSWORD = "a password of at least 12 characters"
+orch gui set-password --env ORCH_GUI_PASSWORD
+orch gui serve --host 0.0.0.0 --port 7842 --allowed-hosts myhost.lan     # the Foreman runs in the same process
+orch gui serve --no-foreman                                              # GUI only (loopback)
+```
+
+`orch gui serve` refuses a non-loopback address until a password is set. Sign-in uses an HttpOnly, SameSite=Strict cookie, a per-session CSRF token on every change, Host and Origin checks, and a login rate limit; the page is plain HTTP, so keep it on a trusted LAN. The password is stored only as a scrypt hash in `<state root>/gui/auth.json`, and never goes on the command line.
+
+Screens: **Overview** (Foreman state with pause/resume, queue counts, local lane permits used, gateway slots and queue when `igmUrl` is set, goals to approve, recent activity), **Queue** (filter, add an item with every schema error shown, details, park/requeue/accept/archive/pause/priority, pending progress checks with a verdict form), **Claims** (claim, release, finish), **Runs** (recent runs, live log tail, result, cancel with a required reason, request a progress check), **Worktrees** (list, cleanup preview, then apply after a dialog that lists exactly what will be removed). Every change calls the same engine functions as the CLI, runs destructive steps behind a native dialog (Cancel focused first, a reason where one is recorded), and is written to the audit log with the browser session. Long operations (finish, cleanup apply) run as jobs. Not in this version: goal editing beyond approve, a review/gate screen, quota, settings and audit screens.
+
 ## Limits in this version
 
 One run at a time by default (`maxConcurrent`); raise it together with `lanes.local.permits`. Dependent items start from the project's default branch, so merge a dependency before accepting it. The tier-2 executor is manual unless one is supplied in code.

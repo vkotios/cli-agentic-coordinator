@@ -28,6 +28,7 @@ import { cmdQuota } from './quota.mjs';
 import { cmdModelrouter } from './catalog.mjs';
 import { cmdSetup } from './setup.mjs';
 import { cmdEnqueue, cmdForeman } from './foreman/commands.mjs';
+import { cmdGui } from './gui/commands.mjs';
 
 export const BOOLEANS = new Set([
   'json', 'all', 'no-window', 'no-monitor', 'allow-non-ascii', 'keeper', 'verbose', 'help', 'version',
@@ -35,6 +36,8 @@ export const BOOLEANS = new Set([
   'force', 'no-wait', 'delete-branch', 'owner-approved-model', 'controller-intervened',
   // slice 3
   'dry-run', 'update', 'apply', 'refresh', 'advice', 'adopt',
+  // foreman / gui
+  'once', 'no-foreman',
 ]);
 export const REPEATABLE = new Set(['flag', 'allow', 'blind', 'harness', 'instruction-file']);
 
@@ -67,7 +70,7 @@ export function parseArgs(argv) {
 /** Commands `runCommand` knows. `mcp` is not one of them: it is a server, started by bin/orch.mjs. */
 export const COMMANDS = [
   'run', 'status', 'result', 'log', 'cancel', 'list', 'wait-lane', 'monitor', 'gc',
-  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt', 'cleanup', 'finish', 'maintain', 'usage', 'quota', 'modelrouter', 'setup', 'enqueue', 'foreman',
+  'claim', 'release', 'claims', 'worktree', 'scope', 'review', 'gate', 'record', 'pick', 'adopt', 'cleanup', 'finish', 'maintain', 'usage', 'quota', 'modelrouter', 'setup', 'enqueue', 'foreman', 'gui',
 ];
 
 /**
@@ -136,6 +139,8 @@ export async function runCommand(cmd, args, io) {
       return cmdEnqueue(args, io);
     case 'foreman':
       return cmdForeman(args, io);
+    case 'gui':
+      return cmdGui(args, io);
     default:
       throw new OrchError(`unknown command: ${cmd}`, 'unknown-command');
   }

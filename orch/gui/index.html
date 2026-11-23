@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orch control plane</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header>
+  <div><span class="eyebrow">ORCH · CONTROL PLANE</span><h1>Foreman<span class="dot">.</span></h1></div>
+  <div class="head-right"><span id="connection" class="badge">DISCONNECTED</span><button id="signout" class="secondary" type="button" hidden>Sign out</button></div>
+</header>
+
+<section id="login" aria-label="Sign in">
+  <form id="login-form" novalidate>
+    <label for="password">Password</label>
+    <div class="row"><input id="password" type="password" autocomplete="current-password" aria-describedby="login-error"><button id="login-submit" type="submit">Sign in</button></div>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<main id="app" hidden>
+  <nav id="tabs" aria-label="Screens">
+    <button data-screen="overview" class="tab" type="button">Overview</button>
+    <button data-screen="queue" class="tab" type="button">Queue</button>
+    <button data-screen="claims" class="tab" type="button">Claims</button>
+    <button data-screen="runs" class="tab" type="button">Runs</button>
+    <button data-screen="worktrees" class="tab" type="button">Worktrees</button>
+  </nav>
+  <div id="notice" role="status"></div>
+  <div id="screen"></div>
+</main>
+
+<dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+  <h2 id="confirm-title"></h2>
+  <p id="confirm-text"></p>
+  <pre id="confirm-detail" hidden></pre>
+  <label id="confirm-reason-field" hidden>Reason (required, recorded)<textarea id="confirm-reason" rows="3" maxlength="500"></textarea></label>
+  <div class="dialog-actions"><button id="confirm-cancel" class="secondary" type="button" autofocus>Cancel</button><button id="confirm-accept" class="danger" type="button">Continue</button></div>
+</dialog>
+</body>
+</html>

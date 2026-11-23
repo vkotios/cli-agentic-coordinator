@@ -270,4 +270,8 @@ test('acceptance: ignored-file listing honours the allowlist and the tolerated c
   const none = ignoredOutsideAllowlist(dir, [], ['.pytest_cache/']);
   assert.deepEqual(none.offending.sort(), ['build/out.js', 'z.log']);
   assert.deepEqual(ignoredOutsideAllowlist(dir, ['build/', 'z.log'], ['.pytest_cache/']).offending, []);
+  // A tolerated name deeper in the tree is not tolerated: it could hide code.
+  fs.mkdirSync(path.join(dir, 'sub', '.pytest_cache'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'sub', '.pytest_cache', 'evil.js'), '1');
+  assert.deepEqual(ignoredOutsideAllowlist(dir, ['build/', 'z.log'], ['.pytest_cache/']).offending, ['sub/.pytest_cache/evil.js']);
 });
