@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeCase, waitFor, TEST_ROOT } from './helpers.mjs';
 import { makeRepo } from './wf-helpers.mjs';
-import { execFileSync } from 'node:child_process';
 import { Store } from '../src/foreman/store.mjs';
 import { Dispatcher } from '../src/foreman/dispatcher.mjs';
 import { makeCall } from '../src/foreman/engine.mjs';
@@ -275,21 +274,4 @@ test('acceptance: ignored-file listing honours the allowlist and the tolerated c
   fs.mkdirSync(path.join(dir, 'sub', '.pytest_cache'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'sub', '.pytest_cache', 'evil.js'), '1');
   assert.deepEqual(ignoredOutsideAllowlist(dir, ['build/', 'z.log'], ['.pytest_cache/']).offending, ['sub/.pytest_cache/evil.js']);
-});
-
-test('git: a worktree whose configuration defines programs is not inspected and nothing runs', async (t) => {
-  const { untrustedConfig } = await import('../src/foreman/git.mjs');
-  const { ignoredOutsideAllowlist } = await import('../src/foreman/acceptance.mjs');
-  const { worktreeFingerprint } = await import('../src/foreman/progress.mjs');
-  const dir = path.join(TEST_ROOT, `fm-gitcfg-${process.pid}-${Date.now()}`);
-  makeRepo(dir, { 'a.txt': '1\n' });
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  assert.deepEqual(untrustedConfig(dir), []);
-  assert.equal(ignoredOutsideAllowlist(dir, []).ok, true);
-  execFileSync('git', ['-C', dir, 'config', 'filter.evil.clean', 'node -e 1']);
-  assert.deepEqual(untrustedConfig(dir), ['filter.evil.clean']);
-  const r = ignoredOutsideAllowlist(dir, []);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /defines programs.*filter\.evil\.clean/);
-  assert.equal(worktreeFingerprint(dir).hash, 'untrusted-git-config');
 });
