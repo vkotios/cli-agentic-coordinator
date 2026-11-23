@@ -7,6 +7,7 @@ import { OrchError } from './errors.mjs';
 import { samePath } from './git.mjs';
 import { wpKey } from './claims.mjs';
 import { projectReviewHeader } from './review-header.mjs';
+import { stampsMatch } from './stamp.mjs';
 
 export const ARCHIVE_LIMIT = 256 * 1024;
 export const DOCUMENT_LIMIT = 2 * 1024 * 1024;
@@ -70,7 +71,7 @@ export async function readDocumentAsync(file, limit = DOCUMENT_LIMIT) {
   finally { if (fd) await fd.close(); }
 }
 function validate(entry, journal, cfg, kind, id, rootIdentity) {
-  if (!entry || !journal || entry.version !== 1 || journal.version !== 1 || entry.kind !== kind || journal.kind !== kind || entry.id !== id || journal.id !== id || entry.state_root !== path.resolve(cfg.stateRoot) || entry.state_identity !== rootIdentity || !entry.data || !entry.data.record || entry.sha256 !== digest(JSON.stringify(entry.data)) || journal.archive_sha256 !== digest(JSON.stringify(entry)) || !['prepared', 'partial', 'complete'].includes(journal.state) || !journal.files || !entry.original || entry.original.path !== (kind === 'run' ? path.join(cfg.runsDir, id) : path.join(cfg.stateRoot, 'reviews', `${id}.json`)) || entry.data.record.id !== id) throw new OrchError('compact evidence or retirement journal is invalid', 'archive-unreadable');
+  if (!entry || !journal || entry.version !== 1 || journal.version !== 1 || entry.kind !== kind || journal.kind !== kind || entry.id !== id || journal.id !== id || entry.state_root !== path.resolve(cfg.stateRoot) || !stampsMatch(entry.state_identity, rootIdentity) || !entry.data || !entry.data.record || entry.sha256 !== digest(JSON.stringify(entry.data)) || journal.archive_sha256 !== digest(JSON.stringify(entry)) || !['prepared', 'partial', 'complete'].includes(journal.state) || !journal.files || !entry.original || entry.original.path !== (kind === 'run' ? path.join(cfg.runsDir, id) : path.join(cfg.stateRoot, 'reviews', `${id}.json`)) || entry.data.record.id !== id) throw new OrchError('compact evidence or retirement journal is invalid', 'archive-unreadable');
   const rec = entry.data.record;
   for (const [source, current] of [[entry.data.source_files, journal.files], [entry.data.control_files, journal.controls]]) {
     if (!source || !current || Object.keys(source).sort().join('\0') !== Object.keys(current).sort().join('\0') || Object.entries(source).some(([name, f]) => !current[name] || f.identity !== current[name].identity || f.sha256 !== current[name].sha256 || f.bytes !== current[name].bytes || !['planned', 'deleting', 'removed'].includes(current[name].state)) || journal.state === 'complete' && Object.values(current).some((f) => f.state !== 'removed')) throw new OrchError('retirement file evidence is invalid', 'archive-unreadable');
@@ -80,7 +81,7 @@ function validate(entry, journal, cfg, kind, id, rootIdentity) {
 }
 function checkOriginal(entry, journal, present, originalIdentity, record) {
   if (present) {
-    if (originalIdentity !== entry.original.identity) throw new OrchError('original evidence identity changed', 'archive-changed');
+    if (!stampsMatch(entry.original.identity, originalIdentity)) throw new OrchError('original evidence identity changed', 'archive-changed');
     if (record) {
       if (digest(JSON.stringify(record)) !== entry.data.record_sha256) throw new OrchError('original record conflicts with compact evidence', 'archive-changed');
     } else if (!['deleting', 'removed'].includes((journal.files['run.json'] || {}).state)) throw new OrchError('original record unexpectedly missing', 'archive-changed');

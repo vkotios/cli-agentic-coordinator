@@ -838,7 +838,7 @@ export function cmdLog(args, io = console) {
     if (archived.metadata.state === 'retirement-pending' && ['keeper', 'events'].includes(which) && fs.existsSync(file)) {
       const expected = archived.source_files[path.basename(file)];
       const text = fs.readFileSync(safe(file));
-      if (!expected || stamp(file) !== expected.identity || digest(text) !== expected.sha256) throw new OrchError('original log conflicts with compact evidence', 'archive-changed');
+      if (!expected || !stampsMatch(expected.identity, stamp(file)) || digest(text) !== expected.sha256) throw new OrchError('original log conflicts with compact evidence', 'archive-changed');
       const lines = text.toString('utf8').split(/\r?\n/), n = Number(args.tail || 0), slice = n > 0 ? lines.slice(-n) : lines;
       io.log(slice.join('\n')); return { file, lines: slice.length, metadata: archived.metadata };
     }
@@ -1329,3 +1329,4 @@ function pad(s, n) {
 }
 
 export { PUBLIC_ADAPTERS, writeRun };
+import { stampsMatch } from './stamp.mjs';
