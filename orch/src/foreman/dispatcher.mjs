@@ -15,7 +15,7 @@ import { getAdapter } from '../adapters/index.mjs';
 import { laneOccupancy } from '../commands.mjs';
 import { foremanDir } from './store.mjs';
 import { readSettings } from './settings.mjs';
-import { runAcceptance, tailOf } from './acceptance.mjs';
+import { runAcceptance, tailOf, ignoredOutsideAllowlist } from './acceptance.mjs';
 import { needsReview } from './schema.mjs';
 
 const TERMINAL_RUN = new Set(['completed', 'failed', 'cancelled', 'interrupted', 'blocked', 'blocked-quota', 'turn-cap']);
@@ -107,9 +107,20 @@ export class Dispatcher {
   async finishRun(item, run, derived, settings) {
     const ended = new Date(this.now()).toISOString();
     this.store.updateRun(run.id, { state: 'finished', ended_at: ended, result: { derived_status: derived } });
+    // A verdict that arrived after the run ended has nothing left to act on; say so instead of leaving it open.
+    for (const check of this.store.listChecks({ item: item.id, status: 'done', tier: 2 })) {
+      if (check.run === run.run_id && !check.applied) {
+        this.store.markCheckApplied(check.id);
+        this.store.event('verdict-moot', { item: item.id, run: run.run_id, actor: settings.actor, data: { check: check.id, verdict: check.verdict, reason: 'the run ended before the verdict was applied' } });
+      }
+    }
     if (derived !== 'completed') {
-      const tag = this.store.getItem(item.id).park_tag || PARK_FOR_STATUS[derived] || 'capability-wall';
-      this.store.transition(item.id, 'parked', { actor: settings.actor, parkTag: tag, reason: `run ${run.run_id} ended ${derived}` });
+      // A cancel the Foreman asked for after a written verdict carries that verdict's tag and reason.
+      const asked = this.store.kvGet(`park:${item.id}`);
+      const override = asked ? JSON.parse(asked) : null;
+      if (asked) this.store.kvDelete(`park:${item.id}`);
+      const tag = override?.tag || PARK_FOR_STATUS[derived] || 'capability-wall';
+      this.store.transition(item.id, 'parked', { actor: settings.actor, parkTag: tag, reason: override ? `${override.reason} (run ${run.run_id} ${derived})` : `run ${run.run_id} ended ${derived}` });
       await this.releaseClaim(item, settings);
       return;
     }
@@ -133,6 +144,19 @@ export class Dispatcher {
     }
     if (scope.exitCode !== 0) {
       this.store.transition(item.id, 'parked', { actor, parkTag: 'needs-input', reason: `scope check was inconclusive: ${scope.error || scope.text.slice(0, 300)}` });
+      await this.releaseClaim(item, settings);
+      return;
+    }
+    // orch's scope guard sees tracked and untracked files but not git-ignored ones; a worker could
+    // hide code there for an acceptance command to run. Nothing executes until that is ruled out.
+    const ignored = ignoredOutsideAllowlist(run.worktree, item.spec.allowlist, settings.toleratedIgnored);
+    if (!ignored.ok || ignored.offending.length) {
+      this.store.event('ignored-files', { item: item.id, run: run.run_id, actor, data: { error: ignored.error, offending: ignored.offending.slice(0, 20) } });
+      this.store.transition(item.id, 'parked', {
+        actor,
+        parkTag: ignored.ok ? 'scope-violation' : 'needs-input',
+        reason: ignored.ok ? `git-ignored files outside the allowlist (nothing was run): ${ignored.offending.slice(0, 5).join(', ')}${ignored.offending.length > 5 ? ` and ${ignored.offending.length - 5} more` : ''}` : ignored.error,
+      });
       await this.releaseClaim(item, settings);
       return;
     }

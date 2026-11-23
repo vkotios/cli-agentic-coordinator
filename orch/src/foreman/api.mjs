@@ -7,6 +7,7 @@ import { OrchError } from '../errors.mjs';
 import { loadConfig } from '../config.mjs';
 import { Store } from './store.mjs';
 import { validateItem, isProjectId, PARK_TAGS } from './schema.mjs';
+import { VERDICTS } from './progress.mjs';
 
 export function openStore(stateRootArg) {
   return Store.open(loadConfig(stateRootArg).stateRoot);
@@ -64,4 +65,28 @@ export function summary(store) {
     goals: store.listGoals().map((g) => ({ id: g.id, project: g.project, status: g.status })),
     pending_checks: store.listChecks({ status: 'pending' }).length,
   };
+}
+
+/** Answer a pending tier-2 check. The dispatcher applies the verdict on its next tick. */
+export function answerCheck(store, id, { verdict, reason, tag = null }, actor) {
+  if (!VERDICTS.includes(verdict)) throw new OrchError(`verdict must be one of ${VERDICTS.join(', ')}`, 'foreman-bad-verdict');
+  if (!reason || !String(reason).trim()) throw new OrchError('a verdict needs a one-line reason', 'foreman-reason');
+  if (tag !== null && !PARK_TAGS.includes(tag)) throw new OrchError(`unknown park tag ${tag}`, 'foreman-park-tag');
+  const check = store.getCheck(id);
+  if (!check) throw new OrchError(`no such check: ${id}`, 'foreman-no-check');
+  if (check.status !== 'pending') throw new OrchError(`check ${id} was already answered (${check.verdict})`, 'foreman-check-answered');
+  const answered = store.answerCheck(id, { verdict, reason: String(reason).trim().slice(0, 500), executor: actor, tag });
+  store.event('verdict-given', { item: check.item, run: check.run, actor, data: { check: id, verdict } });
+  return answered;
+}
+
+/** Ask for a tier-2 check of a running item on the next tick. */
+export function requestCheckNow(store, itemId, actor) {
+  const item = store.getItem(itemId);
+  if (!item) throw new OrchError(`no such item: ${itemId}`, 'foreman-no-item');
+  const run = store.currentRun(itemId);
+  if (item.state !== 'running' || !run?.run_id) throw new OrchError(`item ${itemId} is not running`, 'foreman-not-running');
+  store.kvSet(`check_now:${run.run_id}`, actor);
+  store.event('check-now-requested', { item: itemId, run: run.run_id, actor });
+  return { item: itemId, run: run.run_id };
 }

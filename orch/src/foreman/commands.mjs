@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { OrchError } from '../errors.mjs';
-import { openStore, addProject, enqueue, parkItem, requeueItem, archiveItem, summary } from './api.mjs';
+import { openStore, addProject, enqueue, parkItem, requeueItem, archiveItem, summary, answerCheck, requestCheckNow } from './api.mjs';
 import { runForeman } from './daemon.mjs';
 import { foremanHolder } from './lock.mjs';
 import { readSettings, saveSettings } from './settings.mjs';
@@ -94,6 +94,8 @@ export async function cmdForeman(args, io = console) {
       case 'settings': {
         const patch = {};
         for (const key of ['tickSeconds', 'maxConcurrent', 'acceptanceTimeoutSeconds']) if (args[key] !== undefined) patch[key] = Number(args[key]);
+        if (args.igmUrl !== undefined) patch.igmUrl = args.igmUrl === 'off' ? null : String(args.igmUrl);
+        if (args.progress) patch.progress = JSON.parse(args.progress);
         if (args.defaultRoute) patch.defaultRoute = JSON.parse(args.defaultRoute);
         if (Object.keys(patch).length) saveSettings(store, patch, actor);
         const now = readSettings(store);
@@ -144,9 +146,29 @@ export async function cmdForeman(args, io = console) {
         out(args, io, view, `${item.id}  ${item.state}  ${item.priority}  ${item.title}`);
         return { ...view, exitCode: 0 };
       }
+      case 'checks': {
+        const checks = store.listChecks({ item: args.item, status: args.status, tier: args.tier ? Number(args.tier) : undefined });
+        out(args, io, { checks }, checks.map((c) => `#${c.id}  ${c.status}  ${c.item}  tier ${c.tier}${c.verdict ? '  ' + c.verdict : ''}${c.packet_path ? '  ' + c.packet_path : ''}`).join('\n') || 'no checks');
+        return { checks, exitCode: 0 };
+      }
+      case 'verdict': {
+        const c = answerCheck(store, Number(a1), { verdict: args.verdict, reason: args.reason, tag: args.tag ?? null }, actor);
+        out(args, io, c, `check #${c.id} answered: ${c.verdict}`);
+        return { ...c, exitCode: 0 };
+      }
+      case 'check-now': {
+        const r = requestCheckNow(store, a1, actor);
+        out(args, io, r, `a progress check of ${r.item} will run on the next tick`);
+        return { ...r, exitCode: 0 };
+      }
       case 'park': {
         const item = parkItem(store, a1, args.reason, actor, args.tag || 'operator');
         out(args, io, item, `${item.id} parked`);
+        return { ...item, exitCode: 0 };
+      }
+      case 'accept': {
+        const item = store.transition(a1, 'done', { actor, reason: args.note || 'accepted by the operator (merged outside the Foreman)' });
+        out(args, io, item, `${item.id} accepted`);
         return { ...item, exitCode: 0 };
       }
       case 'requeue': {
@@ -169,7 +191,7 @@ export async function cmdForeman(args, io = console) {
         return { ...item, exitCode: 0 };
       }
       default:
-        throw new OrchError('usage: orch foreman start [--once] [--tick <s>] | stop | pause | resume | settings | status | project ... | goal ... | items | item <id> | park <id> --reason <r> | requeue <id> | archive <id> | edit <id> --priority P1', 'missing-arg');
+        throw new OrchError('usage: orch foreman start [--once] [--tick <s>] | stop | pause | resume | settings | status | checks | verdict <check-id> --verdict <v> --reason <r> | check-now <item> | project ... | goal ... | items | item <id> | park <id> --reason <r> | accept <id> | requeue <id> | archive <id> | edit <id> --priority P1', 'missing-arg');
     }
   } finally {
     store.close();

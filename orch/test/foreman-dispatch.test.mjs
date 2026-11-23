@@ -227,3 +227,47 @@ test('dispatcher: adapter flags are refused for real adapters', { timeout: 60000
   assert.equal(parked.state, 'parked');
   assert.match(parked.park_reason, /only accepted for the test adapter/);
 });
+
+test('dispatcher: a git-ignored file the worker planted parks the item before any command runs', { timeout: 120000 }, async (t) => {
+  const c = makeCase('fm-ignored');
+  const saved = {};
+  for (const key of ['ORCH_STATE_ROOT', 'ORCH_LANE_ID', 'ORCH_ALLOW_FAKE', 'ORCH_FAKE_WORKER']) { saved[key] = process.env[key]; process.env[key] = c.env[key]; }
+  const repo = path.join(c.base, 'repo');
+  makeRepo(repo, { 'README.md': 'r\n', '.gitignore': '*.log\n.pytest_cache/\n' });
+  const store = Store.open(c.stateRoot);
+  t.after(() => { store.close(); c.cleanup(); for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  addProject(store, { id: 'alpha', repo }, 'test');
+  store.ensureGoal('alpha', 'g1', 'test');
+  store.setGoalStatus('alpha', 'g1', 'approved', 'test');
+  const marker = path.join(c.base, 'ran.txt');
+  const check = { kind: 'command', argv: ['node', '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`] };
+  const planted = enqueue(store, item({ title: 'plants an ignored file', allowlist: ['out.txt'], route: { cli: 'fake', model: 'localai/qwen3-coder-30b', flags: ['--write-file', 'hidden.log'] }, acceptance: [check] }), 'test');
+  const d = new Dispatcher({ store, stateRoot: c.stateRoot, call: makeCall(c.stateRoot) });
+  const parked = await drive(d, store, planted.id, ['parked', 'needs-review']);
+  assert.equal(parked.park_tag, 'scope-violation');
+  assert.match(parked.park_reason, /git-ignored files outside the allowlist.*hidden\.log/);
+  assert.equal(fs.existsSync(marker), false, 'no command ran');
+  // The same file is fine when the item says so.
+  const allowed = enqueue(store, item({ title: 'ignored file is allowed', allowlist: ['hidden.log'], route: { cli: 'fake', model: 'localai/qwen3-coder-30b', flags: ['--write-file', 'hidden.log'] }, acceptance: [check] }), 'test');
+  const ok = await drive(d, store, allowed.id, ['parked', 'needs-review']);
+  assert.equal(ok.state, 'needs-review', ok.park_reason);
+});
+
+test('acceptance: ignored-file listing honours the allowlist and the tolerated cache directories', async (t) => {
+  const { ignoredOutsideAllowlist, underAllowlist } = await import('../src/foreman/acceptance.mjs');
+  assert.equal(underAllowlist('src/a.js', ['src/']), true);
+  assert.equal(underAllowlist('src/a.js', ['src']), true);
+  assert.equal(underAllowlist('srcx/a.js', ['src']), false);
+  assert.equal(underAllowlist('a/b.log', ['a/b.log']), true);
+  const dir = path.join(TEST_ROOT, `fm-ign-${process.pid}-${Date.now()}`);
+  makeRepo(dir, { '.gitignore': '*.log\n.pytest_cache/\nbuild/\n', 'a.txt': '1\n' });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, '.pytest_cache'));
+  fs.writeFileSync(path.join(dir, '.pytest_cache', 'x'), '1');
+  fs.mkdirSync(path.join(dir, 'build'));
+  fs.writeFileSync(path.join(dir, 'build', 'out.js'), '1');
+  fs.writeFileSync(path.join(dir, 'z.log'), '1');
+  const none = ignoredOutsideAllowlist(dir, [], ['.pytest_cache/']);
+  assert.deepEqual(none.offending.sort(), ['build/out.js', 'z.log']);
+  assert.deepEqual(ignoredOutsideAllowlist(dir, ['build/', 'z.log'], ['.pytest_cache/']).offending, []);
+});

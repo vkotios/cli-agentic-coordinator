@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { OrchError } from '../errors.mjs';
 import { TRANSITIONS, PRIORITIES, isProjectId, isItemId, STATES, PARK_TAGS } from './schema.mjs';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const MIGRATIONS = [
   // 1
@@ -111,6 +111,11 @@ const MIGRATIONS = [
     result_json TEXT
   );
   CREATE INDEX runs_item ON runs(item, id);
+  `,
+  // 3: a verdict is applied exactly once; an off-track verdict may name the park tag.
+  `
+  ALTER TABLE checks ADD COLUMN applied INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE checks ADD COLUMN tag TEXT;
   `,
 ];
 
@@ -458,9 +463,13 @@ export class Store {
     return Number(info.lastInsertRowid);
   }
 
-  answerCheck(id, { verdict, reason, executor }) {
-    this.q("UPDATE checks SET status = 'done', verdict = ?, reason = ?, executor = ?, at = ? WHERE id = ? AND status = 'pending'").run(verdict, reason, executor, nowIso(), id);
+  answerCheck(id, { verdict, reason, executor, tag = null }) {
+    this.q("UPDATE checks SET status = 'done', verdict = ?, reason = ?, executor = ?, tag = ?, at = ? WHERE id = ? AND status = 'pending'").run(verdict, reason, executor, tag, nowIso(), id);
     return this.getCheck(id);
+  }
+
+  markCheckApplied(id) {
+    this.q('UPDATE checks SET applied = 1 WHERE id = ?').run(id);
   }
 
   getCheck(id) {
@@ -503,6 +512,10 @@ export class Store {
   kvGet(key) {
     const row = this.q('SELECT value FROM kv WHERE key = ?').get(key);
     return row ? row.value : null;
+  }
+
+  kvDelete(key) {
+    this.q('DELETE FROM kv WHERE key = ?').run(key);
   }
 
   kvSet(key, value) {

@@ -11,6 +11,14 @@ export const DEFAULT_SETTINGS = {
   actor: 'foreman',
   acceptanceTimeoutSeconds: 600,
   maxLogBytes: 262144,
+  /** Ignored directories a worker may create without it being a scope violation (tests often make these). */
+  toleratedIgnored: ['.pytest_cache/', '.mypy_cache/', '.ruff_cache/', '.cache/'],
+  /** Gateway base URL (for example http://gateway.example:9000); null turns IGM event reading off. */
+  igmUrl: null,
+  /** The environment variable holding the gateway control key. The key itself is never stored. */
+  igmKeyEnv: 'IGM_CONTROL_KEY',
+  /** Overrides for the progress thresholds (see PROGRESS_DEFAULTS). */
+  progress: {},
 };
 
 export function readSettings(store) {

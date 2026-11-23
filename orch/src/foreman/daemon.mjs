@@ -7,6 +7,8 @@ import { Store } from './store.mjs';
 import { Dispatcher } from './dispatcher.mjs';
 import { makeCall } from './engine.mjs';
 import { readSettings } from './settings.mjs';
+import { Progress } from './progress.mjs';
+import { IgmClient } from './igm.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,8 +21,12 @@ export async function runForeman({ stateRoot = null, once = false, tickSeconds =
   const lock = await acquireForemanLock(cfg.stateRoot);
   const store = Store.open(cfg.stateRoot);
   try {
-    const progress = progressFactory ? progressFactory(store, cfg.stateRoot) : null;
-    const dispatcher = new Dispatcher({ store, stateRoot: cfg.stateRoot, call: makeCall(cfg.stateRoot), progress });
+    const settings = readSettings(store);
+    const call = makeCall(cfg.stateRoot);
+    const progress = progressFactory
+      ? progressFactory(store, cfg.stateRoot)
+      : new Progress({ store, stateRoot: cfg.stateRoot, call, igm: settings.igmUrl ? new IgmClient({ baseUrl: settings.igmUrl, keyEnv: settings.igmKeyEnv }) : null, thresholds: settings.progress });
+    const dispatcher = new Dispatcher({ store, stateRoot: cfg.stateRoot, call, progress });
     store.event('foreman-started', { actor: 'foreman', data: { pid: process.pid } });
     log(`foreman started (pid ${process.pid})`);
     for (;;) {

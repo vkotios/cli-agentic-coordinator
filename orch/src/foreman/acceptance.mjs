@@ -21,8 +21,9 @@ export function safeEnv(env = process.env) {
 /**
  * Resolve a bare program name through PATH, never through the worktree: on Windows a process is
  * also looked up in the current directory, so a file the worker planted there would otherwise
- * win. A name with a path separator must stay inside the worktree (the scope guard has already
- * limited what the worker may have created there).
+ * win. A name with a path separator must stay inside the worktree. What the worker may have put
+ * there is bounded before anything runs: orch's scope guard covers tracked and untracked files, and
+ * `ignoredOutsideAllowlist` (below) covers git-ignored files, which that guard does not see.
  */
 export function resolveExecutable(name, root, env = process.env) {
   if (/[\\/]/.test(name)) {
@@ -130,4 +131,27 @@ export function tailOf(file, maxChars = 800) {
   } catch {
     return '';
   }
+}
+
+/** Does `file` fall under an allowlist entry (an exact path, or a directory prefix)? */
+export function underAllowlist(file, allowlist) {
+  const f = file.replace(/\\/g, '/');
+  return allowlist.some((entry) => {
+    const e = String(entry).replace(/\\/g, '/').replace(/^\.\//, '');
+    return f === e || f.startsWith(e.endsWith('/') ? e : e + '/');
+  });
+}
+
+/**
+ * Git-ignored files in a worktree that are not covered by the item's allowlist or by the
+ * tolerated cache directories. A freshly created worktree has none, so anything here was made by
+ * the worker, and the scope guard (tracked and untracked files only) cannot see it. Acceptance
+ * commands execute worker-written code, so this is checked before any of them runs.
+ */
+export function ignoredOutsideAllowlist(dir, allowlist, tolerated = []) {
+  const r = spawnSync('git', ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
+  const files = r.stdout.split('\0').filter(Boolean);
+  const offending = files.filter((f) => !underAllowlist(f, allowlist) && !tolerated.some((t) => underAllowlist(f, [t]) || f.split('/').includes(t.replace(/\/$/, ''))));
+  return { ok: true, error: null, offending };
 }

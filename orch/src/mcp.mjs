@@ -353,6 +353,20 @@ export const TOOLS = {
     description: 'List Foreman work items, optionally for one project or state (ready, blocked, running, verifying, needs-review, parked, done). Read only.',
     opts: { project: S('--project <id>'), state: S('--state <state>') },
   },
+  foreman_checks: {
+    cmd: 'foreman',
+    sub: ['checks'],
+    description: 'List Foreman progress checks. A pending tier-2 check holds a packet file (goal, acceptance, log tail, diff stat, signals) to judge; answer it with foreman_verdict. Read only.',
+    opts: { status: S('--status pending|done'), item: S('--item <id>') },
+  },
+  foreman_verdict: {
+    cmd: 'foreman',
+    sub: ['verdict'],
+    description: 'Answer a pending tier-2 progress check: progressing, looping, off-track, blocked or unsure, with a one-line reason. The Foreman acts on its next tick: looping or off-track or blocked cancels the run with your verdict as the recorded reason and parks the item; progressing and unsure continue. Nothing is cancelled without a verdict.',
+    pos: [{ key: 'check', desc: 'the check id (a number)', required: true }],
+    opts: { verdict: S('--verdict progressing|looping|off-track|blocked|unsure'), reason: S('--reason <one line>'), tag: S('--tag <park tag>, for off-track: spec-ambiguous or scope-violation'), by: S('--by <who is answering>') },
+    required: ['verdict', 'reason'],
+  },
 };
 
 export function toolList() {
