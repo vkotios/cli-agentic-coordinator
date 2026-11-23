@@ -412,3 +412,9 @@ Muse installation markers accept `major.minor.patch-Rrevision[.revision]` (case-
 Native repository-controller evidence uses the complete structured tool result, including its exact offer/request proof. Copilot display text can be joined or truncated; it is not a substitute for its separate structured result. Text-only transports receive the same complete structured data without a duplicate human-readable output. A malformed structured channel is refused, even when display text looks valid.
 
 Read-only access trial reviewers use the exact review root recorded in their offer. A default directory cannot substitute for the owned trial directory.
+
+## Resource identity after reboot
+
+After a macOS reboot, only the device number (`st_dev`) of a recorded filesystem stamp may differ. A changed inode or birth time still refuses identity verification. For a worktree resource record, a device-only difference is verified and its refreshed stamp is persisted under the resource lock. Sealed retention, archive and metadata evidence is compared tolerantly but never rewritten. Messages from `orch cleanup`, `finish` or `status` saying identity changed after a reboot indicate replacement rather than renumbering unless only the device part differs.
+
+When an operator has independently inspected a resource whose stamp changed, `orch cleanup --reverify <resource-id> --dry-run --by <holder>` reports the old and current stamps and failing checks. Omit `--dry-run` to explicitly adopt the current stamps, provided the path, root, Git registration, branch and administrative paths still verify. This does not remove the resource or bypass dirty-tree checks. Authority must match the resource's work package claim or recorded closing identity.

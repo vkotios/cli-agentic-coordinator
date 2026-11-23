@@ -219,6 +219,33 @@ export async function inspectIdentity(r) {
   } catch { return { ok: false, reason: 'resource identity unreadable' }; }
 }
 
+// Explicit operator adoption checks every structural identity before allowing stamp changes.
+export async function inspectReverification(r) {
+  const failures = [];
+  const old_stamps = { common_identity: r.common_identity, path: r.identity?.path, admin: r.identity?.admin };
+  const new_stamps = {};
+  const check = (name, ok) => { if (!ok) failures.push(name); };
+  try {
+    check('confirmed resource', r.state === 'present' && !!r.identity);
+    check('path and root', !!r.identity && fs.existsSync(r.path) && samePath(r.path, resolvedPath(r.path)) && samePath(r.root, resolvedPath(r.root)) && isInside(r.path, r.root) && !samePath(r.path, r.root));
+    check('source directory path', samePath(r.common_dir, resolvedPath(r.common_dir)));
+    const list = await worktreeList(r.repo);
+    const entry = list && list.find((w) => samePath(w.path, r.path));
+    check('git registration', !!entry && !entry.locked && !entry.prunable);
+    check('branch', !!entry && (r.branch ? entry.branch === `refs/heads/${r.branch}` : !!entry.detached));
+    const admin = await git(['rev-parse', '--absolute-git-dir'], { cwd: r.path });
+    const common = await git(['rev-parse', '--git-common-dir'], { cwd: r.path });
+    check('admin directory path', !!r.identity && admin.ok && samePath(resolvedPath(admin.stdout.trim()), r.identity.admin_dir) && samePath(r.identity.admin_dir, resolvedPath(r.identity.admin_dir)));
+    check('common directory path', common.ok && samePath(resolvedPath(path.resolve(r.path, common.stdout.trim())), r.common_dir));
+    for (const [key, p] of Object.entries({ common_identity: r.common_dir, path: r.path, admin: r.identity?.admin_dir })) {
+      try { new_stamps[key] = stamp(p); } catch { failures.push(`${key} stamp unreadable`); }
+      if (typeof old_stamps[key] !== 'string' || !/^\d+:\d+:\d+$/.test(old_stamps[key])) failures.push(`${key} recorded stamp invalid`);
+    }
+  } catch { failures.push('resource identity unreadable'); }
+  const stamp_differences = Object.keys(old_stamps).filter((key) => old_stamps[key] !== new_stamps[key]);
+  return { ok: failures.length === 0, failures, old_stamps, new_stamps, stamp_differences };
+}
+
 /** Every run referring to this directory is a dependency, regardless of WP. */
 export async function dependentRunBlock(cfg, r) {
   let runs;

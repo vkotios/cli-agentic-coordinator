@@ -7,7 +7,7 @@ import { listRuns, TERMINAL } from './store.mjs';
 import { nowIso, writeJsonAtomic } from './util.mjs';
 import { ledgerPath, readLedger } from './ledger.mjs';
 import { readRounds, computeGate } from './gate.mjs';
-import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, removeResource, dependentRunBlock, processBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
+import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, inspectReverification, removeResource, dependentRunBlock, processBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
 import { maintainOnUse } from './retention.mjs';
 import { runInventory, listReviewEvidence } from './archive.mjs';
 
@@ -76,6 +76,28 @@ async function cleanupLocked(cfg, args) {
   return { wp, state: pending ? 'cleanup-pending' : unresolved ? 'retained' : 'complete', dry_run: !args.apply, resources, ...(blocked ? { blocked_by: blocked.blocked_by } : {}), exitCode: args.apply && (pending || unresolved) ? 3 : 0 };
 }
 export async function cmdCleanup(cfg, args, io) {
+  if (args.reverify) {
+    if (typeof args.reverify !== 'string' || !args.by || args.wp || args.apply || args.retain || args.force || args['delete-branch']) throw new OrchError('usage: orch cleanup --reverify <resource-id> [--dry-run] --by <holder>', 'bad-cleanup-option');
+    const initial = readResource(cfg, args.reverify);
+    if (!initial || !initial.wp) throw new OrchError('resource with work package authority required', 'resource-unavailable');
+    return withWpOperation(cfg, initial.wp, () => withResourceLock(cfg, initial, async () => {
+      const r = readResource(cfg, initial.id);
+      if (!r || !sameWp(r.wp, initial.wp) || r.path !== initial.path) throw new OrchError('resource changed while acquiring lock', 'resource-unavailable');
+      const authority = cleanupAuthority(cfg, r.wp, args.by);
+      if (r.claim_token && r.claim_token !== authority.token) throw new OrchError('resource belongs to an earlier claim', 'not-claimed');
+      const inspection = await inspectReverification(r);
+      const out = { id: r.id, dry_run: !!args['dry-run'], ...inspection, state: inspection.ok ? (args['dry-run'] ? 'verified' : 'reverified') : 'refused', exitCode: inspection.ok ? 0 : 3 };
+      if (inspection.ok && !args['dry-run']) {
+        r.common_identity = inspection.new_stamps.common_identity;
+        r.identity.path = inspection.new_stamps.path;
+        r.identity.admin = inspection.new_stamps.admin;
+        Object.assign(r, { reverified_by: args.by, reverified_at: nowIso(), reverified_old_stamps: inspection.old_stamps, reverified_new_stamps: inspection.new_stamps });
+        saveResource(cfg, r);
+      }
+      io.log(args.json ? JSON.stringify(out, null, 2) : [`${r.id}: ${out.state}`, ...Object.keys(inspection.old_stamps).map((key) => `  ${key}: ${inspection.old_stamps[key]} -> ${inspection.new_stamps[key]}`), ...inspection.failures.map((f) => `  failed: ${f}`)].join('\n'));
+      return out;
+    }));
+  }
   if (!args.wp || args.wp === true) throw new OrchError('usage: orch cleanup --wp <WP> --dry-run | --apply --by <holder>', 'missing-arg');
   wpKey(args.wp);
   if (!!args.apply === !!args['dry-run']) throw new OrchError('choose exactly one of --dry-run and --apply', 'missing-arg');
