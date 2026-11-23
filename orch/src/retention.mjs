@@ -17,6 +17,7 @@ import { publishExclusive } from './exclusive.mjs';
 import { readArchived, readArchivedAsync, assertLive, listReviewEvidence, readEvidence } from './archive.mjs';
 import { maintainMetadata, enrollMetadata } from './metadata.mjs';
 import { reconcileHelpers } from './helper-reconciliation.mjs';
+import { stampsMatch } from './stamp.mjs';
 
 const FILES = { stdout: 'stdout.log', stderr: 'stderr.log', prompt: 'prompt.txt' };
 const DAY = 86400000;
@@ -102,7 +103,7 @@ function owned(cfg, id) {
   const doc = readStrict(retentionFile(cfg, 'owned', id));
   if (!doc) return null;
   const dir = safe(paths(cfg, id).dir);
-  if (doc.version !== 1 || doc.id !== id || doc.state !== 'confirmed' || doc.state_root !== path.resolve(cfg.stateRoot) || doc.dir !== dir || doc.state_identity !== stamp(safe(cfg.stateRoot)) || doc.runs_identity !== stamp(safe(cfg.runsDir)) || doc.dir_identity !== stamp(dir) || !doc.files || Object.keys(FILES).some((k) => typeof doc.files[k] !== 'string')) throw new OrchError('artifact ownership incomplete or identity changed', 'retention-unowned');
+  if (doc.version !== 1 || doc.id !== id || doc.state !== 'confirmed' || doc.state_root !== path.resolve(cfg.stateRoot) || doc.dir !== dir || !stampsMatch(doc.state_identity, stamp(safe(cfg.stateRoot))) || !stampsMatch(doc.runs_identity, stamp(safe(cfg.runsDir))) || !stampsMatch(doc.dir_identity, stamp(dir)) || !doc.files || Object.keys(FILES).some((k) => typeof doc.files[k] !== 'string')) throw new OrchError('artifact ownership incomplete or identity changed', 'retention-unowned');
   return doc;
 }
 function snapshotValid(doc, id) {
@@ -128,7 +129,7 @@ export function transcriptEvidence(cfg, id) {
   for (const [key, name] of Object.entries(FILES)) {
     const file = safe(path.join(P.dir, name));
     const exists = fs.existsSync(file);
-    const verified = exists && (!error || fs.lstatSync(file).isFile() && stamp(file) === authority.files[key]);
+    const verified = exists && (!error || fs.lstatSync(file).isFile() && stampsMatch(authority.files[key], stamp(file)));
     out[key] = { state: error ? verified ? 'available' : 'unknown' : exists ? 'available' : doc && ['deleting', 'purged'].includes(doc.files[key].state) ? 'purged' : 'missing', ...(doc ? { original_bytes: doc.files[key].bytes } : {}) };
   }
   return { files: out, snapshot: doc ? doc.snapshot : null, ...(error ? { error } : {}) };
@@ -162,7 +163,7 @@ export async function transcriptEvidenceAsync(cfg, id) {
   let doc, error, authority;
   const readAuthority = async () => {
     const a = await jsonAsync(path.join(cfg.stateRoot, 'retention', 'owned', `${id}.json`));
-    if (!a || a.version !== 1 || a.id !== id || a.state !== 'confirmed' || a.state_root !== path.resolve(cfg.stateRoot) || a.dir !== P.dir || a.state_identity !== await stampAsync(cfg.stateRoot) || a.runs_identity !== await stampAsync(cfg.runsDir) || a.dir_identity !== await stampAsync(P.dir) || !a.files || Object.keys(FILES).some((k) => typeof a.files[k] !== 'string')) throw new OrchError('compact evidence identity changed', 'retention-changed');
+    if (!a || a.version !== 1 || a.id !== id || a.state !== 'confirmed' || a.state_root !== path.resolve(cfg.stateRoot) || a.dir !== P.dir || !stampsMatch(a.state_identity, await stampAsync(cfg.stateRoot)) || !stampsMatch(a.runs_identity, await stampAsync(cfg.runsDir)) || !stampsMatch(a.dir_identity, await stampAsync(P.dir)) || !a.files || Object.keys(FILES).some((k) => typeof a.files[k] !== 'string')) throw new OrchError('compact evidence identity changed', 'retention-changed');
     return a;
   };
   try {
@@ -182,7 +183,7 @@ export async function transcriptEvidenceAsync(cfg, id) {
     try {
       const file = await safeAsync(path.join(P.dir, name));
       const s = await fsp.lstat(file);
-      if (error) verified = s.isFile() && await stampAsync(file) === authority.files[key];
+      if (error) verified = s.isFile() && stampsMatch(authority.files[key], await stampAsync(file));
     }
     catch (e) { if (e.code === 'ENOENT') exists = false; else throw e; }
     files[key] = { state: error ? exists && verified ? 'available' : 'unknown' : exists ? 'available' : doc && ['deleting', 'purged'].includes(doc.files[key].state) ? 'purged' : 'missing', ...(doc ? { original_bytes: doc.files[key].bytes } : {}) };
@@ -291,7 +292,7 @@ async function planRun(cfg, id, policy, deadline) {
         if (!receipt || !['deleting', 'purged'].includes(receipt.files[key].state)) return { ...base, reason: 'artifact unexpectedly missing' };
       } else {
         const s = fs.lstatSync(file);
-        if (!s.isFile() || stamp(file) !== authority.files[key]) return { ...base, reason: 'artifact identity changed' };
+        if (!s.isFile() || !stampsMatch(authority.files[key], stamp(file))) return { ...base, reason: 'artifact identity changed' };
         if (s.size > MAX_PAYLOAD_BYTES) return { ...base, reason: 'payload exceeds the 8 MiB read limit' };
         if (s.mtimeMs > since) return { ...base, reason: 'artifact changed after finalization' };
       }
@@ -307,7 +308,7 @@ function createSnapshot(cfg, id, authority) {
   for (const [key, name] of Object.entries(FILES)) {
     const f = safe(path.join(P.dir, name));
     const b = readPayload(f);
-    if (stamp(f) !== authority.files[key]) throw new OrchError('artifact replaced while snapshotting', 'retention-changed');
+    if (!stampsMatch(authority.files[key], stamp(f))) throw new OrchError('artifact replaced while snapshotting', 'retention-changed');
     const sha256 = digest(b);
     if (authority.sealed_hashes && authority.sealed_hashes[key] !== sha256) throw new OrchError('enrolled artifact content changed', 'retention-changed');
     files[key] = { state: 'planned', sha256, identity: stamp(f), bytes: b.length };
@@ -341,10 +342,10 @@ async function collectRun(cfg, id, policy, deadline, authorization = null) {
       const check = await planRun(cfg, id, policy, deadline);
       if (!['eligible', 'collected'].includes(check.state)) throw new OrchError(check.reason || 'dependency changed', 'retention-changed');
       if (fs.existsSync(target)) {
-        if (stamp(target) !== previous.identity || digest(readPayload(target)) !== previous.sha256) throw new OrchError('artifact content or identity changed before collection', 'retention-changed');
+        if (!stampsMatch(previous.identity, stamp(target)) || digest(readPayload(target)) !== previous.sha256) throw new OrchError('artifact content or identity changed before collection', 'retention-changed');
         previous.state = 'deleting'; write(file, receipt);
         // Revalidate after receipt publication, immediately before the exact unlink.
-        if (stamp(safe(target)) !== previous.identity || digest(readPayload(target)) !== previous.sha256) throw new OrchError('artifact changed during collection', 'retention-changed');
+        if (!stampsMatch(previous.identity, stamp(safe(target))) || digest(readPayload(target)) !== previous.sha256) throw new OrchError('artifact changed during collection', 'retention-changed');
         fs.unlinkSync(target);
       } else if (!['deleting', 'purged'].includes(previous.state)) throw new OrchError('artifact unexpectedly missing', 'retention-changed');
       previous.state = 'purged'; receipt.state = 'partial'; write(file, receipt);

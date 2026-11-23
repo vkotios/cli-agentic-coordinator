@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config.mjs';
 import { withOperationLock, dependentRunBlock } from '../src/resources.mjs';
 import { callTool } from '../src/mcp.mjs';
 import { contendEach } from './wf-helpers.mjs';
-import { cmdMaintain, beginRunArtifacts, confirmRunArtifacts } from '../src/retention.mjs';
+import { cmdMaintain, beginRunArtifacts, confirmRunArtifacts, transcriptEvidence, transcriptEvidenceAsync } from '../src/retention.mjs';
 
 const output = (r) => JSON.parse(r.stdout);
 const old = '2026-01-01T00:00:00.000Z';
@@ -59,6 +59,34 @@ function failOneUnlink(f, target) {
 function fingerprint(dir) {
   return fs.readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((rel) => fs.statSync(path.join(dir, rel)).isFile()).map((rel) => [rel, fs.readFileSync(path.join(dir, rel)).toString('base64')]);
 }
+
+test('P03: persisted authority accepts device changes without rewriting evidence', async (t) => {
+  const f = fixture(t, 'p03-stamp-device');
+  const cfg = loadConfig(f.c.stateRoot);
+  const file = path.join(f.c.stateRoot, 'retention', 'owned', `${f.id}.json`);
+  const receipt = path.join(f.c.stateRoot, 'retention', 'receipts', `${f.id}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(receipt), { recursive: true });
+  const stamp = (p) => { const s = fs.lstatSync(p, { bigint: true }); return `${s.dev}:${s.ino}:${s.birthtimeNs}`; };
+  const doc = { version: 1, id: f.id, state: 'confirmed', state_root: path.resolve(f.c.stateRoot), state_identity: stamp(f.c.stateRoot), runs_identity: stamp(cfg.runsDir), dir: f.dir, dir_identity: stamp(f.dir), files: Object.fromEntries(Object.entries({ stdout: 'stdout.log', stderr: 'stderr.log', prompt: 'prompt.txt' }).map(([key, name]) => [key, stamp(path.join(f.dir, name))])) };
+  fs.writeFileSync(receipt, '{}'); // Exercise authority validation and file identity checks.
+  fs.writeFileSync(file, JSON.stringify(doc));
+  const expected = transcriptEvidence(cfg, f.id);
+  assert.equal(expected.files.stdout.state, 'available');
+  assert.deepEqual(await transcriptEvidenceAsync(cfg, f.id), expected);
+  const increment = (value, part) => { const fields = value.split(':'); fields[part] = String(BigInt(fields[part]) + 1n); return fields.join(':'); };
+  for (const key of ['state_identity', 'runs_identity', 'dir_identity']) doc[key] = increment(doc[key], 0);
+  for (const key of Object.keys(doc.files)) doc.files[key] = increment(doc.files[key], 0);
+  fs.writeFileSync(file, JSON.stringify(doc));
+  const before = fs.readFileSync(file);
+  assert.deepEqual(transcriptEvidence(cfg, f.id), expected);
+  assert.deepEqual(await transcriptEvidenceAsync(cfg, f.id), expected);
+  assert.deepEqual(fs.readFileSync(file), before);
+  doc.dir_identity = increment(doc.dir_identity, 1);
+  fs.writeFileSync(file, JSON.stringify(doc));
+  assert.throws(() => transcriptEvidence(cfg, f.id), { message: 'artifact ownership incomplete or identity changed', code: 'retention-unowned' });
+  await assert.rejects(transcriptEvidenceAsync(cfg, f.id), { message: 'compact evidence identity changed', code: 'retention-changed' });
+});
 
 test('P03: preview leaves bytes unchanged and legacy data cannot be collected by age', async (t) => {
   const f = fixture(t, 'p03-legacy');

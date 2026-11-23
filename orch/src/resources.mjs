@@ -12,6 +12,8 @@ import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { sha256File } from './scope.mjs';
 import { listRunEvidence, readArchived } from './archive.mjs';
 import { reconcileHelpers } from './helper-reconciliation.mjs';
+import { sameStamp } from './stamp.mjs';
+export { sameStamp } from './stamp.mjs';
 
 const directory = (cfg) => path.join(cfg.stateRoot, 'resources');
 export const resourceFile = (cfg, id) => {
@@ -43,14 +45,6 @@ export function resolvedPath(p) {
 function stamp(p) {
   const s = fs.statSync(p, { bigint: true });
   return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
-}
-export function sameStamp(recorded, current) {
-  const valid = (s) => typeof s === 'string' && /^-?\d+:-?\d+:-?\d+$/.test(s);
-  if (!valid(recorded) || !valid(current)) return { ok: false };
-  if (recorded === current) return { ok: true };
-  const [dev, ino, birth] = recorded.split(':');
-  const [currentDev, currentIno, currentBirth] = current.split(':');
-  return dev !== currentDev && ino === currentIno && birth === currentBirth ? { ok: true, migrate: true } : { ok: false };
 }
 function persistMigration(cfg, r, migrate) {
   if (!migrate) return;
