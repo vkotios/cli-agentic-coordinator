@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { foremanDir } from './store.mjs';
-import { gitSafe } from './git.mjs';
+import { gitSafe, untrustedConfig } from './git.mjs';
 
 export const VERDICTS = ['progressing', 'looping', 'off-track', 'blocked', 'unsure'];
 
@@ -32,8 +32,9 @@ const git = (cwd, args) => {
 
 /** A fingerprint of what the worker has changed so far: tracked diff plus untracked files. */
 export function worktreeFingerprint(dir) {
+  if (untrustedConfig(dir).length) return { hash: 'untrusted-git-config', diffStat: '(git configuration defines programs; not inspected)', files: 0 };
   const status = git(dir, ['status', '--porcelain']);
-  const diff = git(dir, ['diff', '--stat']);
+  const diff = git(dir, ['diff', '--stat', '--no-ext-diff', '--no-textconv']);
   return { hash: crypto.createHash('sha256').update(status).update('\0').update(diff).digest('hex').slice(0, 16), diffStat: diff.trim(), files: status.split('\n').filter(Boolean).length };
 }
 

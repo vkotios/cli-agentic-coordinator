@@ -87,7 +87,7 @@ export class Sessions {
   /** Reserve the one login attempt an address may have in flight (and a global cap). */
   beginLogin(ip) {
     this.inflight = this.inflight || new Set();
-    if (this.inflight.has(ip) || this.inflight.size >= 4) return false;
+    if (this.inflight.has(ip) || this.inflight.size >= 8) return false;
     this.inflight.add(ip);
     return true;
   }

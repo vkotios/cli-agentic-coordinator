@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 import { safeEnv } from './env.mjs';
-import { gitSafe } from './git.mjs';
+import { gitSafe, untrustedConfig } from './git.mjs';
 
 export { safeEnv };
 
@@ -140,6 +140,8 @@ export function underAllowlist(file, allowlist) {
  * commands execute worker-written code, so this is checked before any of them runs.
  */
 export function ignoredOutsideAllowlist(dir, allowlist, tolerated = []) {
+  const programs = untrustedConfig(dir);
+  if (programs.length) return { ok: false, error: `the worktree's git configuration defines programs (${programs.slice(0, 4).join(', ')}); nothing was run`, offending: [] };
   const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
   const files = r.stdout.split('\0').filter(Boolean);

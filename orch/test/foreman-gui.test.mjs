@@ -249,3 +249,23 @@ test('gui runs: list, status, log, and a cancel that needs a reason and a confir
   store.close();
   assert.equal(e.data.reason, 'wrong model for this task');
 });
+
+test('gui sign-in: a client that never finishes its body cannot block other sign-ins', async (t) => {
+  const { base, gui } = await withGui(t, 'slowbody');
+  const net = await import('node:net');
+  const stalled = [];
+  for (let i = 0; i < 10; i++) {
+    const socket = net.connect(gui.port, '127.0.0.1');
+    socket.on('error', () => {});
+    socket.write(`POST /api/auth/login HTTP/1.1
+Host: 127.0.0.1:${gui.port}
+Content-Type: application/json
+Content-Length: 100
+
+{"pass`);
+    stalled.push(socket);
+  }
+  t.after(() => stalled.forEach((s) => s.destroy()));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await browser(base).post('/api/auth/login', { password: PASSWORD })).status, 200, 'stalled bodies hold no sign-in slot');
+});

@@ -304,10 +304,18 @@ export async function startGui(options = {}) {
   async function readBody(req) {
     const chunks = [];
     let size = 0;
-    for await (const chunk of req) {
-      size += chunk.length;
-      if (size > MAX_BODY) throw new HttpError(413, 'body too large');
-      chunks.push(chunk);
+    const timer = setTimeout(() => req.destroy(new Error('body timeout')), 15000);
+    try {
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > MAX_BODY) throw new HttpError(413, 'body too large');
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(408, 'the request body did not arrive in time');
+    } finally {
+      clearTimeout(timer);
     }
     if (!size) return {};
     try {
@@ -348,14 +356,15 @@ export async function startGui(options = {}) {
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return send(res, 415, { error: 'JSON required' });
       const wait = sessions.blocked(ip);
       if (wait) return send(res, 429, { error: `too many attempts; try again in ${wait} s` }, { 'Retry-After': String(wait) });
-      // The hash takes tens of milliseconds, so a burst could pass the check above before any failure is
-      // counted. One attempt per address at a time, and a small global cap, closes that.
-      if (!sessions.beginLogin(ip)) return send(res, 429, { error: 'another sign-in attempt is in progress; try again in a moment' }, { 'Retry-After': '1' });
       const origin = req.headers.origin;
       if (origin && origin !== `http://${req.headers.host}`) return send(res, 403, { error: 'Cross-origin sign-in refused' });
+      // Read the body first (size cap and a time limit), so a slow client never holds a slot.
+      const body = await readBody(req);
+      // The hash takes tens of milliseconds, so a burst could pass the lockout check before any failure is
+      // counted: one hash per address at a time, and a global cap, closes that. The slot covers the hash only.
+      if (!sessions.beginLogin(ip)) return send(res, 429, { error: 'another sign-in attempt is in progress; try again in a moment' }, { 'Retry-After': '1' });
       let good = false;
       try {
-        const body = await readBody(req);
         good = await verifyPassword(cfg.stateRoot, body.password);
       } finally {
         sessions.endLogin(ip);
