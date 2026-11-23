@@ -10,12 +10,23 @@ import { safeEnv } from './env.mjs';
 
 const NO_HOOKS = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
-// An empty file to stand in for the global git config and attributes file (os.devNull is not usable
-// as a config path on every platform).
-const EMPTY = path.join(os.tmpdir(), 'orch-foreman-empty-gitconfig');
-try { fs.writeFileSync(EMPTY, '', { flag: 'a' }); } catch { /* a read-only temp dir: git then reads no global file anyway */ }
+// An empty file to stand in for the global git config and attributes file (the null device is not
+// usable as a config path on every platform). It lives in a private directory made for this process,
+// not at a predictable path in the shared temp directory.
+let emptyFile = null;
+function empty() {
+  if (emptyFile) return emptyFile;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-foreman-git-'));
+  try { fs.chmodSync(dir, 0o700); } catch { /* best effort on Windows */ }
+  const file = path.join(dir, 'empty-gitconfig');
+  fs.writeFileSync(file, '', { flag: 'w', mode: 0o600 });
+  process.once('exit', () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* a leftover empty temp directory is harmless */ } });
+  emptyFile = file;
+  return file;
+}
 
-export const HARDENING = ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${NO_HOOKS}`, '-c', 'core.pager=cat', '-c', 'diff.external=', '-c', 'core.untrackedCache=false', '-c', `core.attributesFile=${EMPTY}`];
+/** The per-command overrides; built on first use so importing this module creates nothing. */
+export const hardening = () => ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${NO_HOOKS}`, '-c', 'core.pager=cat', '-c', 'diff.external=', '-c', 'core.untrackedCache=false', '-c', 'submodule.recurse=false', '-c', `core.attributesFile=${empty()}`];
 
 /**
  * @param {string} cwd
@@ -23,13 +34,13 @@ export const HARDENING = ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${
  * @param {{timeout?: number, maxBuffer?: number}} [options]
  */
 export function gitSafe(cwd, args, { timeout = 20000, maxBuffer = 4 * 1024 * 1024 } = {}) {
-  return spawnSync('git', [...HARDENING, ...args], {
+  return spawnSync('git', [...hardening(), ...args], {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
     timeout,
     maxBuffer,
-    env: { ...safeEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: EMPTY, GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    env: { ...safeEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty(), GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
   });
 }
 

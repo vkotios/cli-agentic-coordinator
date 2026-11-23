@@ -33,8 +33,8 @@ const git = (cwd, args) => {
 /** A fingerprint of what the worker has changed so far: tracked diff plus untracked files. */
 export function worktreeFingerprint(dir) {
   if (untrustedConfig(dir).length) return { hash: 'untrusted-git-config', diffStat: '(git configuration defines programs; not inspected)', files: 0 };
-  const status = git(dir, ['status', '--porcelain']);
-  const diff = git(dir, ['diff', '--stat', '--no-ext-diff', '--no-textconv']);
+  const status = git(dir, ['status', '--porcelain', '--ignore-submodules=all']);
+  const diff = git(dir, ['diff', '--stat', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all']);
   return { hash: crypto.createHash('sha256').update(status).update('\0').update(diff).digest('hex').slice(0, 16), diffStat: diff.trim(), files: status.split('\n').filter(Boolean).length };
 }
 

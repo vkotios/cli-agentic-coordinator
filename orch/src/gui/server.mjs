@@ -363,6 +363,9 @@ export async function startGui(options = {}) {
       // The hash takes tens of milliseconds, so a burst could pass the lockout check before any failure is
       // counted: one hash per address at a time, and a global cap, closes that. The slot covers the hash only.
       if (!sessions.beginLogin(ip)) return send(res, 429, { error: 'another sign-in attempt is in progress; try again in a moment' }, { 'Retry-After': '1' });
+      // A lockout that began while the body was arriving still applies.
+      const waitNow = sessions.blocked(ip);
+      if (waitNow) { sessions.endLogin(ip); return send(res, 429, { error: `too many attempts; try again in ${waitNow} s` }, { 'Retry-After': String(waitNow) }); }
       let good = false;
       try {
         good = await verifyPassword(cfg.stateRoot, body.password);
