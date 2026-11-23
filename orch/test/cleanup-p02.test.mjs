@@ -167,6 +167,7 @@ test('P02: explicit reverify previews and adopts changed stamps', async (t) => {
   const file = resourceFile(cfg, w.id);
   fs.writeFileSync(file, JSON.stringify(changed));
   const before = fs.readFileSync(file);
+  await assert.rejects(cmdCleanup(cfg, { reverify: '', by: 'owner' }, { log() {} }), { code: 'bad-cleanup-option' });
   const unauthorized = await orch(['cleanup', '--reverify', w.id, '--by', 'other', '--json'], c.env);
   assert.notEqual(unauthorized.code, 0);
   assert.deepEqual(fs.readFileSync(file), before);
@@ -186,6 +187,21 @@ test('P02: explicit reverify previews and adopts changed stamps', async (t) => {
   assert.equal(record.reverified_old_stamps.path, changed.identity.path);
   assert.equal(record.reverified_new_stamps.path, original.identity.path);
   assert.equal(await guardRunResource(cfg, w.path, () => 'ran'), 'ran');
+});
+
+test('P02: negative recorded stamp components are valid for reverify', async (t) => {
+  const { c, w } = await fixture(t, 'p02-reverify-negative');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '-1:-2:-3';
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  const before = fs.readFileSync(file);
+  const result = await orch(['cleanup', '--reverify', w.id, '--dry-run', '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).state, 'verified');
+  assert.deepEqual(json(result).failures, []);
+  assert.deepEqual(fs.readFileSync(file), before);
 });
 
 test('P02: MCP cleanup passes explicit reverify and dry-run flags', () => {
@@ -210,7 +226,7 @@ test('P02: reverify refuses missing or differently registered worktrees without 
 });
 
 test('P02: reverify refuses invalid authority and structural identity without record changes', async (t) => {
-  for (const scenario of ['claim', 'registration', 'admin', 'common', 'confirmed']) {
+  for (const scenario of ['claim', 'registration', 'admin', 'common', 'confirmed', 'review-head']) {
     const { c, repo, w } = await fixture(t, `p02-reverify-${scenario}`);
     const cfg = loadConfig(c.stateRoot);
     const record = readResource(cfg, w.id);
@@ -220,6 +236,7 @@ test('P02: reverify refuses invalid authority and structural identity without re
     if (scenario === 'admin') record.identity.admin_dir = c.base;
     if (scenario === 'common') record.common_dir = c.base;
     if (scenario === 'confirmed') record.state = 'retained';
+    if (scenario === 'review-head') { record.kind = 'review'; record.baseline = 'different-commit'; }
     const file = resourceFile(cfg, w.id);
     fs.writeFileSync(file, JSON.stringify(record));
     const before = fs.readFileSync(file);
@@ -233,7 +250,7 @@ test('P02: reverify refuses invalid authority and structural identity without re
       assert.match(result.stderr, /resource belongs to an earlier claim/);
     } else {
       assert.equal(result.code, 3, result.stderr);
-      const check = { registration: 'git registration', admin: 'admin directory path', common: 'common directory path', confirmed: 'confirmed resource' }[scenario];
+      const check = { registration: 'git registration', admin: 'admin directory path', common: 'common directory path', confirmed: 'confirmed resource', 'review-head': 'review HEAD' }[scenario];
       assert.deepEqual(json(result).failures, [check], scenario);
     }
     assert.deepEqual(fs.readFileSync(file), before, scenario);
@@ -268,12 +285,52 @@ test('P02: identity blockers explain the check and operator action', async (t) =
     assert.equal(result.code, 3);
     const out = json(result);
     if (args[0] === 'finish') assert.equal(out.state, 'incomplete');
-    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: 'worktree path identity changed', operator_action: `orch cleanup --reverify ${w.id}` });
+    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: 'worktree path identity changed', operator_action: `orch cleanup --reverify ${w.id} --by <holder> (preview first with --dry-run)` });
     assert.deepEqual(out.resources.find((r) => r.id === w.id).blocked_by, out.blocked_by);
     const human = await orch(args, c.env);
     assert.equal(human.code, 3);
-    assert.ok(human.stdout.includes(`blocked by resource-identity: worktree path identity changed; orch cleanup --reverify ${w.id}`));
+    assert.ok(human.stdout.includes(`blocked by resource-identity: worktree path identity changed; orch cleanup --reverify ${w.id} --by <holder> (preview first with --dry-run)`));
   }
+});
+
+test('P02: non-present and earlier-claim identity blockers give actionable guidance', async (t) => {
+  const { c, w } = await fixture(t, 'p02-identity-other-guidance');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.state = 'cleanup-pending';
+  record.identity.path = '1:2:3';
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  let result = await orch(['cleanup', '--wp', 'WP-clean', '--dry-run', '--json'], c.env);
+  assert.equal(json(result).blocked_by.operator_action, 'Resource is cleanup-pending; --reverify applies only to present resources. Inspect the worktree and retry orch cleanup --apply');
+  record.state = 'present';
+  record.claim_token = 'earlier-claim';
+  fs.writeFileSync(file, JSON.stringify(record));
+  const action = 'Resource belongs to an earlier or unreadable claim; --reverify cannot be used. Retain it explicitly with orch cleanup --wp <WP> --retain <decision-file>';
+  for (const args of [['--dry-run'], ['--apply', '--by', 'owner']]) {
+    result = await orch(['cleanup', '--wp', 'WP-clean', ...args, '--json'], c.env);
+    const out = json(result);
+    const reason = args[0] === '--dry-run' ? 'resource claim identity changed or unreadable' : 'resource belongs to an earlier claim; explicit retention required';
+    assert.equal(result.code, args[0] === '--dry-run' ? 0 : 3, result.stderr);
+    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: reason, operator_action: action });
+    assert.deepEqual(out.resources.find((r) => r.id === w.id).blocked_by, out.blocked_by);
+  }
+});
+
+test('P02: resumed finish carries the cleanup blocker', async (t) => {
+  const { c, w } = await fixture(t, 'p02-resumed-blocker');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const file = closureFile(cfg, 'WP-clean');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ wp: 'WP-clean', by: 'owner', claim_token: readClaim(cfg, 'WP-clean').value.token, closed_at: '2026-09-23T13:00:00Z', resources: [] }));
+  const result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 3, result.stderr);
+  const out = json(result);
+  assert.equal(out.blocked_by.check, 'resource-identity');
+  assert.deepEqual(out.blocked_by, out.resources.find((r) => r.id === w.id).blocked_by);
 });
 
 test('P02: a queued dependent run prevents even forced worktree removal', async (t) => {

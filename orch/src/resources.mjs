@@ -233,13 +233,14 @@ export async function inspectReverification(r) {
     const entry = list && list.find((w) => samePath(w.path, r.path));
     check('git registration', !!entry && !entry.locked && !entry.prunable);
     check('branch', !!entry && (r.branch ? entry.branch === `refs/heads/${r.branch}` : !!entry.detached));
+    if (r.kind === 'review') check('review HEAD', !!entry && entry.head === r.baseline);
     const admin = await git(['rev-parse', '--absolute-git-dir'], { cwd: r.path });
     const common = await git(['rev-parse', '--git-common-dir'], { cwd: r.path });
     check('admin directory path', !!r.identity && admin.ok && samePath(resolvedPath(admin.stdout.trim()), r.identity.admin_dir) && samePath(r.identity.admin_dir, resolvedPath(r.identity.admin_dir)));
     check('common directory path', common.ok && samePath(resolvedPath(path.resolve(r.path, common.stdout.trim())), r.common_dir));
     for (const [key, p] of Object.entries({ common_identity: r.common_dir, path: r.path, admin: r.identity?.admin_dir })) {
       try { new_stamps[key] = stamp(p); } catch { failures.push(`${key} stamp unreadable`); }
-      if (typeof old_stamps[key] !== 'string' || !/^\d+:\d+:\d+$/.test(old_stamps[key])) failures.push(`${key} recorded stamp invalid`);
+      if (typeof old_stamps[key] !== 'string' || !/^-?\d+:-?\d+:-?\d+$/.test(old_stamps[key])) failures.push(`${key} recorded stamp invalid`);
     }
   } catch { failures.push('resource identity unreadable'); }
   const stamp_differences = Object.keys(old_stamps).filter((key) => old_stamps[key] !== new_stamps[key]);
@@ -300,16 +301,20 @@ export function processBlock(reason, resource) {
     operator_action: run ? `Inspect with orch status ${run} and, if the process is truly gone, retry` : 'Inspect the run inventory and retry' };
 }
 
+export function claimIdentityBlock(r, reason) {
+  return { check: 'resource-identity', resource: r.id, detail: reason, operator_action: 'Resource belongs to an earlier or unreadable claim; --reverify cannot be used. Retain it explicitly with orch cleanup --wp <WP> --retain <decision-file>' };
+}
+
 export async function inspectRemoval(cfg, r, { force = false, review = null, persistIdentity = false } = {}) {
   if (r.wp && r.claim_token) {
     const claim = readClaim(cfg, r.wp);
     if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) {
       const reason = 'resource claim identity changed or unreadable';
-      return { action: 'retain', reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: reason, operator_action: `orch cleanup --reverify ${r.id}` } };
+      return { action: 'retain', reason, blocked_by: claimIdentityBlock(r, reason) };
     }
   }
   const identity = await inspectIdentity(r);
-  if (!identity.ok) return { action: 'retain', reason: identity.reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: identity.reason, operator_action: `orch cleanup --reverify ${r.id}` } };
+  if (!identity.ok) return { action: 'retain', reason: identity.reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: identity.reason, operator_action: r.state === 'present' ? `orch cleanup --reverify ${r.id} --by <holder> (preview first with --dry-run)` : `Resource is ${r.state}; --reverify applies only to present resources. Inspect the worktree and retry orch cleanup --apply` } };
   if (persistIdentity) persistMigration(cfg, r, identity.migrate);
   const active = await dependentRunBlock(cfg, r);
   if (active) return { action: 'retain', reason: active, blocked_by: processBlock(active, r.id) };

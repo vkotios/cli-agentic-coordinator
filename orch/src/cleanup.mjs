@@ -7,7 +7,7 @@ import { listRuns, TERMINAL } from './store.mjs';
 import { nowIso, writeJsonAtomic } from './util.mjs';
 import { ledgerPath, readLedger } from './ledger.mjs';
 import { readRounds, computeGate } from './gate.mjs';
-import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, inspectReverification, removeResource, dependentRunBlock, processBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
+import { listResources, recordsIn, readResource, saveResource, withWpOperation, withResourceLock, inspectRemoval, inspectReverification, removeResource, dependentRunBlock, processBlock, claimIdentityBlock, cleanupAuthority, readClosure, closureFile } from './resources.mjs';
 import { maintainOnUse } from './retention.mjs';
 import { runInventory, listReviewEvidence } from './archive.mjs';
 
@@ -60,7 +60,10 @@ async function cleanupLocked(cfg, args) {
       const review = reviews.find((v) => v.id === r.review_id);
       if (!args.apply) return { id: r.id, state: r.state, artifacts, ...await inspectRemoval(cfg, r, { review }) };
       const authority = cleanupAuthority(cfg, wp, args.by); // recheck authorization at deletion
-      if (r.claim_token && r.claim_token !== authority.token) return { id: r.id, state: 'retained', action: 'retain', reason: 'resource belongs to an earlier claim; explicit retention required', artifacts };
+      if (r.claim_token && r.claim_token !== authority.token) {
+        const reason = 'resource belongs to an earlier claim; explicit retention required';
+        return { id: r.id, state: 'retained', action: 'retain', reason, blocked_by: claimIdentityBlock(r, reason), artifacts };
+      }
       return { ...await removeResource(cfg, r, { review }), artifacts };
     };
     resources.push(args.apply ? await withResourceLock(cfg, initial, inspect) : await inspect());
@@ -76,8 +79,8 @@ async function cleanupLocked(cfg, args) {
   return { wp, state: pending ? 'cleanup-pending' : unresolved ? 'retained' : 'complete', dry_run: !args.apply, resources, ...(blocked ? { blocked_by: blocked.blocked_by } : {}), exitCode: args.apply && (pending || unresolved) ? 3 : 0 };
 }
 export async function cmdCleanup(cfg, args, io) {
-  if (args.reverify) {
-    if (typeof args.reverify !== 'string' || !args.by || args.wp || args.apply || args.retain || args.force || args['delete-branch']) throw new OrchError('usage: orch cleanup --reverify <resource-id> [--dry-run] --by <holder>', 'bad-cleanup-option');
+  if (args.reverify !== undefined) {
+    if (typeof args.reverify !== 'string' || !args.reverify || !args.by || args.wp || args.apply || args.retain || args.force || args['delete-branch']) throw new OrchError('usage: orch cleanup --reverify <resource-id> [--dry-run] --by <holder>', 'bad-cleanup-option');
     const initial = readResource(cfg, args.reverify);
     if (!initial || !initial.wp) throw new OrchError('resource with work package authority required', 'resource-unavailable');
     return withWpOperation(cfg, initial.wp, () => withResourceLock(cfg, initial, async () => {
@@ -125,7 +128,7 @@ export async function cmdFinish(cfg, args, io) {
       // Resume after interrupted claim release or failed directory removal.
       const cleanup = await cleanupLocked(cfg, { ...args, wp, apply: true });
       const unresolved = needsRetention(cleanup.resources);
-      const out = { ...previous, state: unresolved ? 'retained' : cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', issues: unresolved ? ['explicit retained-resource decisions required'] : [], resources: cleanup.resources, updated_at: nowIso() };
+      const out = { ...previous, state: unresolved ? 'retained' : cleanup.state === 'cleanup-pending' ? 'cleanup-pending' : 'finished', issues: unresolved ? ['explicit retained-resource decisions required'] : [], resources: cleanup.resources, ...(cleanup.blocked_by ? { blocked_by: cleanup.blocked_by } : {}), updated_at: nowIso() };
       writeJsonAtomic(closureFile(cfg, wp), out);
       if (current.state === 'ok') {
         const release = await cmdRelease(cfg, { _: [wp], by: args.by }, { log() {} });
