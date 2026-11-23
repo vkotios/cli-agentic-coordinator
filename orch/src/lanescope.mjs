@@ -62,7 +62,7 @@ function sanitizeId(v) {
  * @param {string} lane 'local' | 'cloud'
  * @param {number} permit 0 for the first (and, by default, only) permit of a serial lane. Permit 0
  *        keeps the historical pipe and holder file names; permit k > 0 adds a `-pk` suffix.
- * @returns {{laneId:string, lane:string, scope:string, pipeName:string, laneDir:string,
+ * @returns {{laneId:string, lane:string, scope:string, permit:number, pipeName:string, laneDir:string,
  *            holderFile:string, monitorPipe:(runId:string)=>string, overridden:boolean}}
  */
 export function laneScope(lane = 'local', permit = 0) {

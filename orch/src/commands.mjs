@@ -226,8 +226,6 @@ async function runLocked(args, io, opts) {
     lane_id: scope.laneId,
     lane_pipe: scope.pipeName,
     lane_dir: scope.laneDir,
-    // Absent means permit 0, so records of single-permit lanes are unchanged.
-    ...(scope.permit > 0 ? { lane_permit: scope.permit } : {}),
     notes: [...(pre.notes || []), ...(built.notes || [])],
     // The keeper's ENTIRE input. It parses this once and nothing else.
     launch: {
@@ -249,6 +247,8 @@ async function runLocked(args, io, opts) {
       lane_exclusive: cfg.lanes[laneName].serial !== false,
     },
   };
+  // Absent means permit 0, so records of single-permit lanes are unchanged.
+  if (scope.permit > 0) rec.lane_permit = scope.permit;
   Object.assign(rec, pre.extra || {});
   Object.assign(rec, opts.recordExtra || {});
   if (quota) rec.quota = quota;
