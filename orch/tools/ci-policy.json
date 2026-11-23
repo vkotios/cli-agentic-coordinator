@@ -154,6 +154,7 @@
       "inputs": [
         "orch/src/cleanup.mjs",
         "orch/src/retention.mjs",
+        "orch/src/stamp.mjs",
         "orch/src/archive.mjs",
         "orch/src/metadata.mjs",
         "orch/src/helper-reconciliation.mjs",
