@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { makeCase, orch } from './helpers.mjs';
 import { makeRepo, g, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { loadConfig } from '../src/config.mjs';
-import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock } from '../src/resources.mjs';
+import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock, inspectIdentity, guardRunResource, inspectRemoval, removeResource } from '../src/resources.mjs';
 import { cmdFinish } from '../src/cleanup.mjs';
 import { readClaim } from '../src/claims.mjs';
 import { readProcessTable } from '../src/procs.mjs';
@@ -116,6 +116,47 @@ async function fixture(t, name) {
   return { c, repo, w: json(r) };
 }
 
+test('P02: changed device stamps are verified and migrated under the resource lock', async (t) => {
+  const { c, w } = await fixture(t, 'p02-device-migrate');
+  const cfg = loadConfig(c.stateRoot);
+  const original = readResource(cfg, w.id);
+  const changed = structuredClone(original);
+  const changeDev = (stamp) => stamp.replace(/^[^:]+/, (dev) => String(BigInt(dev) + 1n));
+  changed.common_identity = changeDev(changed.common_identity);
+  changed.identity.path = changeDev(changed.identity.path);
+  changed.identity.admin = changeDev(changed.identity.admin);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(changed));
+  const before = fs.readFileSync(file);
+  const identity = await inspectIdentity(changed);
+  assert.equal(identity.ok, true);
+  assert.deepEqual(identity.migrate, { common_identity: original.common_identity, path: original.identity.path, admin: original.identity.admin });
+  assert.deepEqual(fs.readFileSync(file), before);
+  await inspectRemoval(cfg, changed);
+  assert.deepEqual(fs.readFileSync(file), before, 'dry inspection is read-only');
+  assert.equal(await guardRunResource(cfg, w.path, () => 'ran'), 'ran');
+  const refreshed = readResource(cfg, w.id);
+  assert.equal(refreshed.common_identity, original.common_identity);
+  assert.deepEqual(refreshed.identity, original.identity);
+  assert.equal((await inspectIdentity(refreshed)).migrate, undefined);
+  fs.writeFileSync(file, JSON.stringify(changed));
+  await withResourceLock(cfg, changed, () => removeResource(cfg, changed, { review: null }));
+  assert.equal(readResource(cfg, w.id).common_identity, original.common_identity);
+});
+
+test('P02: changed inode refuses the run without rewriting its resource record', async (t) => {
+  const { c, w } = await fixture(t, 'p02-inode-mismatch');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.common_identity = record.common_identity.replace(/^[^:]+/, (dev) => String(BigInt(dev) + 1n));
+  record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  const before = fs.readFileSync(file);
+  await assert.rejects(guardRunResource(cfg, w.path, () => assert.fail('must not run')), { code: 'resource-unavailable' });
+  assert.deepEqual(fs.readFileSync(file), before);
+});
+
 test('P02: a queued dependent run prevents even forced worktree removal', async (t) => {
   const { c, w } = await fixture(t, 'p02-active');
   craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', extra: { status: 'queued' } });
@@ -210,6 +251,7 @@ test('P02: finish handles old-boot and reused monitor identities', { skip: !['da
     ['absent-old-boot', 2147483647, oldBoot, true],
     ['present-old-boot', process.pid, oldBoot, true],
     ['present-reused', process.pid, reused, false],
+    ['present-live', process.pid, current, false],
   ]) {
     const { c, w } = await fixture(t, `p02-${name}`);
     const id = craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', slice: 's1' });
