@@ -4,19 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
-// Worker-written code runs inside acceptance commands (that is what a test is), so the process
-// gets a reduced environment: no API keys, no gateway keys, nothing the Foreman itself holds.
-const SAFE_ENV = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
-  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'LANG', 'LC_ALL', 'TZ', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'CI']);
+import { safeEnv } from './env.mjs';
+import { gitSafe } from './git.mjs';
 
-export function safeEnv(env = process.env) {
-  /** @type {NodeJS.ProcessEnv} */
-  const out = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (SAFE_ENV.has(key.toUpperCase()) || key.toUpperCase().startsWith('LC_'))) out[key] = value;
-  }
-  return out;
-}
+export { safeEnv };
 
 /**
  * Resolve a bare program name through PATH, never through the worktree: on Windows a process is
@@ -149,7 +140,7 @@ export function underAllowlist(file, allowlist) {
  * commands execute worker-written code, so this is checked before any of them runs.
  */
 export function ignoredOutsideAllowlist(dir, allowlist, tolerated = []) {
-  const r = spawnSync('git', ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
   const files = r.stdout.split('\0').filter(Boolean);
   // Tolerated cache directories count only at the worktree root: a `.cache` folder deeper down

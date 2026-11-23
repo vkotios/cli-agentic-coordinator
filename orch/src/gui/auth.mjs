@@ -84,6 +84,18 @@ export class Sessions {
     if (token) this.map.delete(sha(token));
   }
 
+  /** Reserve the one login attempt an address may have in flight (and a global cap). */
+  beginLogin(ip) {
+    this.inflight = this.inflight || new Set();
+    if (this.inflight.has(ip) || this.inflight.size >= 4) return false;
+    this.inflight.add(ip);
+    return true;
+  }
+
+  endLogin(ip) {
+    this.inflight?.delete(ip);
+  }
+
   /** Seconds a client must wait after repeated failures; 0 when it may try. */
   blocked(ip) {
     const f = this.failures.get(ip);

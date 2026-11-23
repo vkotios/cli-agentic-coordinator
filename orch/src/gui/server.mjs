@@ -348,10 +348,19 @@ export async function startGui(options = {}) {
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return send(res, 415, { error: 'JSON required' });
       const wait = sessions.blocked(ip);
       if (wait) return send(res, 429, { error: `too many attempts; try again in ${wait} s` }, { 'Retry-After': String(wait) });
+      // The hash takes tens of milliseconds, so a burst could pass the check above before any failure is
+      // counted. One attempt per address at a time, and a small global cap, closes that.
+      if (!sessions.beginLogin(ip)) return send(res, 429, { error: 'another sign-in attempt is in progress; try again in a moment' }, { 'Retry-After': '1' });
       const origin = req.headers.origin;
       if (origin && origin !== `http://${req.headers.host}`) return send(res, 403, { error: 'Cross-origin sign-in refused' });
-      const body = await readBody(req);
-      if (!(await verifyPassword(cfg.stateRoot, body.password))) {
+      let good = false;
+      try {
+        const body = await readBody(req);
+        good = await verifyPassword(cfg.stateRoot, body.password);
+      } finally {
+        sessions.endLogin(ip);
+      }
+      if (!good) {
         sessions.failed(ip);
         return send(res, 401, { error: 'Invalid password' });
       }

@@ -9,8 +9,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { foremanDir } from './store.mjs';
+import { gitSafe } from './git.mjs';
 
 export const VERDICTS = ['progressing', 'looping', 'off-track', 'blocked', 'unsure'];
 
@@ -26,7 +26,7 @@ export const PROGRESS_DEFAULTS = {
 };
 
 const git = (cwd, args) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 4 * 1024 * 1024 });
+  const r = gitSafe(cwd, args);
   return r.status === 0 ? r.stdout : '';
 };
 

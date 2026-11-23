@@ -125,6 +125,18 @@ test('gui sign-in: password, cookie flags, CSRF, Host, Origin and the rate limit
   assert.equal((await attacker.post('/api/auth/login', { password: PASSWORD })).status, 429, 'even the right password waits');
 });
 
+test('gui sign-in: a burst of simultaneous guesses cannot get past the limit', async (t) => {
+  const { base } = await withGui(t, 'burst');
+  const results = await Promise.all(Array.from({ length: 30 }, (_, i) => browser(base).post('/api/auth/login', { password: `guess number ${i} nope` })));
+  const checked = results.filter((r) => r.status === 401).length;
+  assert.ok(checked <= 5, `at most 5 guesses were checked, got ${checked}`);
+  assert.ok(results.filter((r) => r.status === 429).length >= 25);
+  // Simultaneous attempts from one address are serialised, so the burst checked very few guesses and the
+  // sequential lockout test above covers the five-failure rule; the right password still works afterwards.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await browser(base).post('/api/auth/login', { password: PASSWORD })).status, 200);
+});
+
 test('gui static pages: security headers, a fixed file list and no traversal', async (t) => {
   const { base } = await withGui(t, 'static');
   const page = await fetch(base + '/');
