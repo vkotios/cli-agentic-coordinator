@@ -266,16 +266,26 @@ export async function dependentRunBlock(cfg, r) {
   return null;
 }
 
+export function processBlock(reason, resource) {
+  const match = reason.match(/^(?:dependent )?run (\S+)(?: process (\d+))?/);
+  const run = match && match[1];
+  return { check: 'process-liveness', ...(resource ? { resource } : {}), ...(run ? { run } : {}), ...(match && match[2] ? { pid: Number(match[2]) } : {}), detail: reason,
+    operator_action: run ? `Inspect with orch status ${run} and, if the process is truly gone, retry` : 'Inspect the run inventory and retry' };
+}
+
 export async function inspectRemoval(cfg, r, { force = false, review = null, persistIdentity = false } = {}) {
   if (r.wp && r.claim_token) {
     const claim = readClaim(cfg, r.wp);
-    if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) return { action: 'retain', reason: 'resource claim identity changed or unreadable' };
+    if (claim.state === 'unreadable' || claim.state === 'ok' && claim.value.token !== r.claim_token) {
+      const reason = 'resource claim identity changed or unreadable';
+      return { action: 'retain', reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: reason, operator_action: `orch cleanup --reverify ${r.id}` } };
+    }
   }
   const identity = await inspectIdentity(r);
-  if (!identity.ok) return { action: 'retain', reason: identity.reason };
+  if (!identity.ok) return { action: 'retain', reason: identity.reason, blocked_by: { check: 'resource-identity', resource: r.id, detail: identity.reason, operator_action: `orch cleanup --reverify ${r.id}` } };
   if (persistIdentity) persistMigration(cfg, r, identity.migrate);
   const active = await dependentRunBlock(cfg, r);
-  if (active) return { action: 'retain', reason: active };
+  if (active) return { action: 'retain', reason: active, blocked_by: processBlock(active, r.id) };
   if (identity.absent) return { action: 'remove', absent: true, dirty: [] };
   if (identity.partial) {
     if (r.kind === 'review' && (!review || !review.finished_at || !['clean', 'not-applicable'].includes(review.containment))) return { action: 'retain', reason: 'review incident or incomplete review' };

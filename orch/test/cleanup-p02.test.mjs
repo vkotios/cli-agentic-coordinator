@@ -157,6 +157,25 @@ test('P02: changed inode refuses the run without rewriting its resource record',
   assert.deepEqual(fs.readFileSync(file), before);
 });
 
+test('P02: identity blockers explain the check and operator action', async (t) => {
+  const { c, w } = await fixture(t, 'p02-identity-guidance');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  for (const args of [['finish', 'WP-clean', '--by', 'owner'], ['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner']]) {
+    const result = await orch([...args, '--json'], c.env);
+    assert.equal(result.code, 3);
+    const out = json(result);
+    if (args[0] === 'finish') assert.equal(out.state, 'incomplete');
+    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: 'worktree path identity changed', operator_action: `orch cleanup --reverify ${w.id}` });
+    assert.deepEqual(out.resources.find((r) => r.id === w.id).blocked_by, out.blocked_by);
+    const human = await orch(args, c.env);
+    assert.equal(human.code, 3);
+    assert.ok(human.stdout.includes(`blocked by resource-identity: worktree path identity changed; orch cleanup --reverify ${w.id}`));
+  }
+});
+
 test('P02: a queued dependent run prevents even forced worktree removal', async (t) => {
   const { c, w } = await fixture(t, 'p02-active');
   craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', extra: { status: 'queued' } });
@@ -260,7 +279,17 @@ test('P02: finish handles old-boot and reused monitor identities', { skip: !['da
     const result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
     assert.equal(result.code, finishes ? 0 : 3, result.stdout + result.stderr);
     assert.equal(json(result).state, finishes ? 'finished' : 'incomplete');
-    if (!finishes) assert.ok(json(result).issues.includes(`run ${id} process ${pid} still live or uncertain`));
+    if (!finishes) {
+      const detail = `run ${id} process ${pid} still live or uncertain`;
+      assert.ok(json(result).issues.includes(detail));
+      assert.deepEqual(json(result).blocked_by, { check: 'process-liveness', run: id, pid, detail, operator_action: `Inspect with orch status ${id} and, if the process is truly gone, retry` });
+      const human = await orch(['finish', 'WP-clean', '--by', 'owner'], c.env);
+      assert.equal(human.code, 3);
+      assert.ok(human.stdout.includes(`blocked by process-liveness: ${detail}; Inspect with orch status ${id} and, if the process is truly gone, retry`));
+      const cleanup = await orch(['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'], c.env);
+      assert.equal(cleanup.code, 3);
+      assert.deepEqual(json(cleanup).blocked_by, { ...json(result).blocked_by, resource: w.id });
+    }
   }
 });
 
