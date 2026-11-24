@@ -257,3 +257,68 @@ test('acceptance: the ignored-file baseline accepts unchanged files and rejects 
   assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, ['node_modules/pkg/extra.js']);
   assert.equal(snapshotIgnored(dir, { maxFiles: 1 }).ok, false, 'a runaway setup is refused');
 });
+
+test('acceptance: a same-size change, a changed target outside the worktree, and a changed nested tree are all caught', (t) => {
+  const base = path.join(TEST_ROOT, `fm-baseline2-${process.pid}-${Date.now()}`);
+  const dir = path.join(base, 'repo');
+  makeRepo(dir, { '.gitignore': 'node_modules/\n.venv/\n', 'a.txt': '1\n' });
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'dep.js'), 'one');
+  // the shared tool a venv would link to: outside the worktree, so the file hash alone would not see it change
+  const outside = path.join(base, 'shared-python');
+  fs.mkdirSync(path.join(outside, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'python.js'), 'interpreter v1');
+  fs.writeFileSync(path.join(outside, 'lib', 'site.js'), 'stdlib v1');
+  let linked = true;
+  try { fs.symlinkSync(outside, path.join(dir, '.venv'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { linked = false; }
+  const snap = snapshotIgnored(dir);
+  assert.equal(snap.ok, true, snap.error);
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, [], 'everything is as setup left it');
+  // a same-size change is found by hashing, not by the size
+  fs.writeFileSync(path.join(dir, 'node_modules', 'dep.js'), 'two');
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, ['node_modules/dep.js']);
+  fs.writeFileSync(path.join(dir, 'node_modules', 'dep.js'), 'one');
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, []);
+  if (!linked) return t.diagnostic('this platform would not create the directory link; the outside-target part was skipped');
+  // a change to what the link resolves to, outside the worktree, is a change
+  fs.writeFileSync(path.join(outside, 'lib', 'site.js'), 'stdlib v2 (planted)');
+  assert.ok(ignoredOutsideAllowlist(dir, [], [], snap.files).offending.length > 0, 'a changed target outside the worktree is offending');
+  fs.writeFileSync(path.join(outside, 'lib', 'site.js'), 'stdlib v1');
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, []);
+});
+
+test('acceptance: what cannot be hashed within the budget is refused when recording and offending when checking', (t) => {
+  const dir = path.join(TEST_ROOT, `fm-baseline3-${process.pid}-${Date.now()}`);
+  makeRepo(dir, { '.gitignore': 'node_modules/\n', 'a.txt': '1\n' });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'big.bin'), Buffer.alloc(4096, 7));
+  const refused = snapshotIgnored(dir, { maxBytes: 1024 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /node_modules[\/]big\.bin.*cannot be recorded/);
+  const snap = snapshotIgnored(dir);
+  assert.equal(snap.ok, true);
+  // a verify-time budget smaller than what the baseline needs: nothing is hashed past it, and the rest is offending
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files, { maxBytes: 1024 }).offending, ['node_modules/big.bin']);
+  // a file that grew is reported without being read
+  fs.appendFileSync(path.join(dir, 'node_modules', 'big.bin'), 'x');
+  assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files, { maxBytes: 1 }).offending, ['node_modules/big.bin']);
+});
+
+test('dispatcher: a baseline file that no longer matches the digest the Foreman recorded is not used', { timeout: 150000 }, async (t) => {
+  const { store, dispatcher } = setupCase(t, 'fm-setup-digest', MAKE_DEP);
+  const run = { id: 4242 };
+  const file = dispatcher.setupBaselineFile(run);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const text = JSON.stringify({ 'node_modules/dep.js': '8:abc' });
+  fs.writeFileSync(file, text);
+  assert.equal(dispatcher.setupBaseline(run), null, 'a file with no recorded digest is not trusted');
+  store.kvSet('setup-baseline:4242', (await import('node:crypto')).createHash('sha256').update(text).digest('hex'));
+  assert.deepEqual(dispatcher.setupBaseline(run), { 'node_modules/dep.js': '8:abc' }, 'with its digest it is used');
+  fs.writeFileSync(file, JSON.stringify({ 'node_modules/dep.js': '8:abc', 'node_modules/evil.js': '4:def' })); // someone widens it
+  assert.equal(dispatcher.setupBaseline(run), null, 'a changed file is rejected');
+  const rejected = store.events().filter((e) => e.kind === 'setup-baseline-rejected');
+  assert.equal(rejected.length, 2);
+  assert.deepEqual(rejected.map((e) => e.data.reason), ['no digest recorded', 'digest mismatch']);
+});

@@ -10,6 +10,7 @@
 // on a number (tier-1 signals only raise a check; see progress.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { loadConfig } from '../config.mjs';
 import { getAdapter } from '../adapters/index.mjs';
 import { laneOccupancy } from '../commands.mjs';
@@ -247,10 +248,26 @@ export class Dispatcher {
     return path.join(this.dir, 'setup', `run-${run.id}.baseline.json`);
   }
 
-  /** The ignored files the project's setup made for this run (path to signature), or null when no setup ran. */
+  /**
+   * The ignored files the project's setup made for this run (path to signature), or null when no setup ran, or when the
+   * file is missing or no longer matches the digest the Foreman recorded in its store when it wrote it. Null means no
+   * baseline, which is the strict direction: every ignored file outside the allowlist is then a violation.
+   */
   setupBaseline(run) {
+    const file = this.setupBaselineFile(run);
+    let text;
     try {
-      return JSON.parse(fs.readFileSync(this.setupBaselineFile(run), 'utf8'));
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+    const recorded = this.store.kvGet(`setup-baseline:${run.id}`);
+    if (!recorded || crypto.createHash('sha256').update(text).digest('hex') !== recorded) {
+      this.store.event('setup-baseline-rejected', { actor: 'foreman', data: { run: run.id, file, reason: recorded ? 'digest mismatch' : 'no digest recorded' } });
+      return null;
+    }
+    try {
+      return JSON.parse(text);
     } catch {
       return null;
     }
@@ -286,7 +303,9 @@ export class Dispatcher {
     const snapshot = snapshotIgnored(worktree);
     if (!snapshot.ok) return finish(false, `setup (${command}) finished, but its output could not be recorded: ${snapshot.error}`);
     fs.mkdirSync(path.dirname(this.setupBaselineFile(run)), { recursive: true });
-    fs.writeFileSync(this.setupBaselineFile(run), JSON.stringify(snapshot.files));
+    const text = JSON.stringify(snapshot.files);
+    fs.writeFileSync(this.setupBaselineFile(run), text);
+    this.store.kvSet(`setup-baseline:${run.id}`, crypto.createHash('sha256').update(text).digest('hex'));
     return finish(true, '', { ignored_files: snapshot.count, ignored_bytes: snapshot.bytes });
   }
 

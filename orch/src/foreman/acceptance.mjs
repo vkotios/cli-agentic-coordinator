@@ -173,8 +173,55 @@ function fileDigest(file) {
   return hash.digest('hex');
 }
 
-/** A comparable signature of one file under `dir`: a symlink by its target, a file by size and content hash. */
-function signatureOf(dir, rel) {
+const EXTERNAL_MAX_ENTRIES = 20000;
+
+/**
+ * A digest of a directory tree (or a single file) that a baseline entry depends on: names, symlink texts, sizes and
+ * contents. Nested symlinks are recorded by their text, not followed. Spends the shared hashing budget; null when the
+ * target has too many entries, is too big for what is left of the budget, or cannot be read (so it cannot be verified).
+ * @param {string} target
+ * @param {{left: number}} ctx
+ */
+function treeDigest(target, ctx) {
+  const hash = crypto.createHash('sha256');
+  let entries = 0;
+  const walk = (p, name) => {
+    if (++entries > EXTERNAL_MAX_ENTRIES) return false;
+    const st = fs.lstatSync(p);
+    if (st.isSymbolicLink()) { hash.update(`L${name}\0${fs.readlinkSync(p)}\0`); return true; }
+    if (st.isDirectory()) {
+      hash.update(`D${name}\0`);
+      for (const entry of fs.readdirSync(p).sort()) if (!walk(path.join(p, entry), `${name}/${entry}`)) return false;
+      return true;
+    }
+    if (st.isFile()) {
+      if (st.size > ctx.left) return false;
+      ctx.left -= st.size;
+      hash.update(`F${name}\0${st.size}\0${fileDigest(p)}\0`);
+      return true;
+    }
+    return false; // a socket, device or pipe: not something a baseline can vouch for
+  };
+  try {
+    return walk(target, '') ? hash.digest('hex') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A comparable signature of one entry under `dir`, or null when it cannot be vouched for (a special file, or something
+ * too big or too deep to hash within the budget). A regular file is its size and SHA-256; a symlink is its text plus, when
+ * it resolves outside the worktree, a digest of what it points at (a venv's `python` links to a shared interpreter, and
+ * an acceptance command would run it); a directory entry (a nested repository, for instance) is a digest of its tree.
+ * `expected` is the baseline's signature: a size that no longer matches is reported without reading the file.
+ * @param {string} dir
+ * @param {string} rel
+ * @param {{root: string, left: number}} ctx `root` is the real path of `dir`; `left` is the remaining hashing budget in bytes
+ * @param {string} [expected]
+ * @returns {string | null}
+ */
+function signatureOf(dir, rel, ctx, expected) {
   const full = path.join(dir, rel);
   let st;
   try {
@@ -182,9 +229,36 @@ function signatureOf(dir, rel) {
   } catch {
     return 'missing';
   }
-  if (st.isSymbolicLink()) return `link:${fs.readlinkSync(full)}`;
-  if (st.isFile()) return `${st.size}:${fileDigest(full)}`;
-  return 'other';
+  if (st.isSymbolicLink()) {
+    const text = `link:${fs.readlinkSync(full)}`;
+    let real;
+    try {
+      real = fs.realpathSync(full);
+    } catch {
+      return `${text}|dangling`;
+    }
+    if (insideRoot(ctx.root, real)) return text; // what it points at is itself an entry that is checked (ignored) or watched (tracked)
+    const digest = treeDigest(real, ctx);
+    return digest ? `${text}|outside:${digest}` : null;
+  }
+  if (st.isFile()) {
+    const recorded = expected === undefined ? null : /^(\d+):/.exec(expected);
+    if (recorded && Number(recorded[1]) !== st.size) return `${st.size}:resized`; // changed; no need to read it
+    if (st.size > ctx.left) return null;
+    ctx.left -= st.size;
+    return `${st.size}:${fileDigest(full)}`;
+  }
+  if (st.isDirectory()) {
+    const digest = treeDigest(full, ctx);
+    return digest ? `dir:${digest}` : null;
+  }
+  return null;
+}
+
+function hashingContext(dir, left) {
+  let root = dir;
+  try { root = fs.realpathSync(dir); } catch { /* use the path as given */ }
+  return { root, left };
 }
 
 /**
@@ -201,15 +275,13 @@ export function snapshotIgnored(dir, { maxFiles = 200000, maxBytes = 4 * 1024 **
   if (names.length > maxFiles) return { ok: false, error: `setup left ${names.length} ignored files (the limit is ${maxFiles})` };
   /** @type {Record<string, string>} */
   const files = Object.create(null);
-  let bytes = 0;
+  const ctx = hashingContext(dir, maxBytes);
   for (const name of names) {
-    const sig = signatureOf(dir, name);
-    const size = /^(\d+):/.exec(sig);
-    if (size) bytes += Number(size[1]);
-    if (bytes > maxBytes) return { ok: false, error: `setup left more than ${Math.round(maxBytes / 1024 ** 3)} GiB of ignored files` };
+    const sig = signatureOf(dir, name, ctx);
+    if (sig === null) return { ok: false, error: `setup left "${name}", which cannot be recorded (a special file, or more than ${Math.round(maxBytes / 1024 ** 3)} GiB or ${EXTERNAL_MAX_ENTRIES} entries to hash)` };
     files[name] = sig;
   }
-  return { ok: true, files, count: names.length, bytes };
+  return { ok: true, files, count: names.length, bytes: maxBytes - ctx.left };
 }
 
 /**
@@ -222,7 +294,8 @@ export function snapshotIgnored(dir, { maxFiles = 200000, maxBytes = 4 * 1024 **
  * setup made. Those are accepted only while they are byte-for-byte what setup left: a new file, or a changed one,
  * is still offending, so a worker cannot hide code inside `node_modules`.
  */
-export function ignoredOutsideAllowlist(dir, allowlist, tolerated = [], baseline = null) {
+export function ignoredOutsideAllowlist(dir, allowlist, tolerated = [], baseline = null, { maxBytes = 4 * 1024 ** 3 } = {}) {
+  const ctx = hashingContext(dir, maxBytes); // one budget for everything hashed in this check
   const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 30000, maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
   const files = r.stdout.split('\0').filter(Boolean);
@@ -230,7 +303,10 @@ export function ignoredOutsideAllowlist(dir, allowlist, tolerated = [], baseline
   // could hide code, and a nested one the item really needs can be named in its allowlist.
   const offending = files.filter((f) => {
     if (underAllowlist(f, allowlist) || tolerated.some((t) => underAllowlist(f, [t]))) return false;
-    if (baseline && Object.hasOwn(baseline, f)) return signatureOf(dir, f) !== baseline[f];
+    if (baseline && Object.hasOwn(baseline, f)) {
+      const sig = signatureOf(dir, f, ctx, baseline[f]);
+      return sig === null || sig !== baseline[f]; // what cannot be verified is not accepted
+    }
     return true;
   });
   return { ok: true, error: null, offending };
