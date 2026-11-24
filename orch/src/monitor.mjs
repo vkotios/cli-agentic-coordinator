@@ -82,7 +82,7 @@ process.on('unhandledRejection', (e) => {
 async function main() {
   const rec0 = readRun(cfg, ID);
   if (!rec0) return;
-  const scope = laneScope(rec0.lane || 'local');
+  const scope = laneScope(rec0.lane || 'local', rec0.lane_permit || 0);
 
   // Single-writer election.
   const bind = await tryListen(scope.monitorPipe(ID));

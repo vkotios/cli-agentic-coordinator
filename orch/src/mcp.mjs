@@ -334,6 +334,38 @@ export const TOOLS = {
     opts: { workload: S('--workload implement|review'), size: S('--size XS|S|M'), 'for-run': S('--for-run <id> (review picks)'), ledger: S('--ledger <file>'), roster: S('--roster <file>'), 'quota-policy': S('--quota-policy <file>'), capability: S('--capability <equivalence group>'), 'quota-purpose': S('--quota-purpose normal|retry'), refresh: B('--refresh'), 'routing-policy': S('--routing-policy <private task-fit policy>'), task: S('--task <typed task JSON>'), 'routing-mode': S('--routing-mode qualified|qualification'), advice: B('--advice: request explicitly enabled Jev advice'), 'advice-policy': S('--advice-policy <private adviser policy>') },
     required: ['workload', 'size'],
   },
+  enqueue: {
+    cmd: 'enqueue',
+    description: 'Add one work item to the Foreman queue. The item is a JSON object (project, title, handoff, allowlist, acceptance, and optional goal_ref, size, priority, latency, depends_on, route). It is refused, with every problem listed, when it has no acceptance check. The Foreman runs an item only when its goal is approved. Nothing starts from this call.',
+    opts: { item: S('the work item as a JSON object, passed as a string'), by: S('--by <who is adding it>') },
+    required: ['item'],
+  },
+  foreman_status: {
+    cmd: 'foreman',
+    sub: ['status'],
+    description: 'Foreman queue counts by state, registered projects, goals and pending progress checks. Read only.',
+    opts: {},
+  },
+  foreman_items: {
+    cmd: 'foreman',
+    sub: ['items'],
+    description: 'List Foreman work items, optionally for one project or state (ready, blocked, running, verifying, needs-review, parked, done). Read only.',
+    opts: { project: S('--project <id>'), state: S('--state <state>') },
+  },
+  foreman_checks: {
+    cmd: 'foreman',
+    sub: ['checks'],
+    description: 'List Foreman progress checks. A pending tier-2 check holds a packet file (goal, acceptance, log tail, diff stat, signals) to judge; answer it with foreman_verdict. Read only.',
+    opts: { status: S('--status pending|done'), item: S('--item <id>') },
+  },
+  foreman_verdict: {
+    cmd: 'foreman',
+    sub: ['verdict'],
+    description: 'Answer a pending tier-2 progress check: progressing, looping, off-track, blocked or unsure, with a one-line reason. The Foreman acts on its next tick: looping or off-track or blocked cancels the run with your verdict as the recorded reason and parks the item; progressing and unsure continue. Nothing is cancelled without a verdict.',
+    pos: [{ key: 'check', desc: 'the check id (a number)', required: true }],
+    opts: { verdict: S('--verdict progressing|looping|off-track|blocked|unsure'), reason: S('--reason <one line>'), tag: S('--tag <park tag>, for off-track: spec-ambiguous or scope-violation'), by: S('--by <who is answering>') },
+    required: ['verdict', 'reason'],
+  },
 };
 
 export function toolList() {

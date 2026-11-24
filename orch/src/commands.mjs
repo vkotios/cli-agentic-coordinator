@@ -15,7 +15,7 @@ import { paths, readRun, writeRun, listRuns, listRunIds, TERMINAL, keeperFacts }
 import { getAdapter, PUBLIC_ADAPTERS } from './adapters/index.mjs';
 import { assertModelPermitted } from './models.mjs';
 import { OrchError } from './errors.mjs';
-import { laneScope, assertLaneOverrideAllowed } from './lanescope.mjs';
+import { laneScope, lanePermits, permitScopes, assertLaneOverrideAllowed } from './lanescope.mjs';
 import { connectHello, recoverLinuxSocket } from './lanepipe.mjs';
 import { readProcessTable, verifyIdentity, creationTimesOf, ownChildCreationTime, killChecked, treeKillChecked, IDENTITY_QUERY_MS } from './procs.mjs';
 import { deriveStatus } from './statusrules.mjs';
@@ -113,11 +113,12 @@ async function runLocked(args, io, opts) {
   if (adapter.lane === 'local' && laneName !== 'local') {
     throw new OrchError(
       `--cli ${cliName} drives a LOCAL model and may only run in the serial local lane (asked for --lane ${laneName}). ` +
-        'Two local-model workers must never run at once.',
+        'Local-model workers run only within the number of local lane permits (default 1).',
       'local-adapter-off-lane',
     );
   }
-  const scope = laneScope(laneName);
+  const permits = lanePermits(cfg, laneName) ?? 1;
+  const scope = await chooseLanePermit(cfg, laneName);
   fs.mkdirSync(scope.laneDir, { recursive: true });
 
   const id = newRunId();
@@ -231,7 +232,8 @@ async function runLocked(args, io, opts) {
       exe: built.file,
       args: built.args,
       cwd: built.cwd,
-      env_set: built.envSet || {},
+      // The run id reaches the worker, so a gateway client name or header can carry `orch/<run-id>`.
+      env_set: { ...(built.envSet || {}), ORCH_RUN_ID: id },
       env_delete: built.envDelete || [],
       // stdin. An adapter that takes its prompt on argv (agy) supplies an empty file
       // instead, so the prompt is not delivered twice.
@@ -246,6 +248,8 @@ async function runLocked(args, io, opts) {
       lane_exclusive: cfg.lanes[laneName].serial !== false,
     },
   };
+  // Absent means permit 0, so records of single-permit lanes are unchanged.
+  if (scope.permit > 0) rec.lane_permit = scope.permit;
   Object.assign(rec, pre.extra || {});
   Object.assign(rec, opts.recordExtra || {});
   if (quota) rec.quota = quota;
@@ -302,9 +306,9 @@ async function runLocked(args, io, opts) {
     rec.keeper_pid = keeper.pid;
     rec.holder = admission.holder || null;
     writeJsonAtomic(P.record, rec); // no monitor was started; `orch run` is still the writer
-    const out = { id, admission: 'lane-busy', holder: admission.holder || null, holder_text: holderText, lane: laneName };
+    const out = { id, admission: 'lane-busy', holder: admission.holder || null, holder_text: holderText, lane: laneName, ...(permits > 1 ? { permits } : {}) };
     if (args.json) io.log(JSON.stringify(out, null, 2));
-    else io.log(`lane-busy: ${holderText}`);
+    else io.log(`lane-busy: ${holderText}${permits > 1 ? ` (all ${permits} permits taken or contended)` : ''}`);
     return { ...out, exitCode: 3 };
   }
 
@@ -520,7 +524,7 @@ export async function inspect(cfg, id, dl) {
   if (!rec) {
     return { id, status: 'record-unreadable', reason: 'run.json missing or malformed', paths: P, undetermined: dl.expired() ? dl.text() : null };
   }
-  const scope = laneScope(rec.lane || 'local');
+  const scope = laneScope(rec.lane || 'local', rec.lane_permit || 0);
 
   const keeperLines = await withDeadline(() => readTailLinesAsync(P.keeper, 8192), dl.at('read keeper.ndjson').remaining(), [], dl);
   const facts = keeperFacts(keeperLines);
@@ -867,36 +871,49 @@ export function cmdLog(args, io = console) {
  */
 export async function cmdWaitLane(args, io = console) {
   const laneName = args.lane || 'local';
-  const scope = laneScope(laneName);
+  const cfg = loadConfig(args['state-root']);
+  const scopes = permitScopes(cfg, laneName);
+  const permits = scopes.length;
   // There is ALWAYS a deadline, with or without --timeout (codex M1).
   const defaultS = Number(process.env.ORCH_WAIT_LANE_DEFAULT_S || 300);
   const timeoutS = args.timeout != null ? Number(args.timeout) : defaultS;
   const dl = new Deadline(timeoutS * 1000, 'wait-lane');
+  const probeAll = async () => {
+    const probes = [];
+    for (const s of scopes) {
+      probes.push(await connectHello(s.pipeName, { deadlineMs: Math.min(HELLO_DEADLINE_MS, Math.max(1, dl.remaining())) }));
+    }
+    return probes;
+  };
+  const holders = (ms) => Promise.all(scopes.map((s) => withDeadline(() => readJsonAsync(s.holderFile, null), ms, null)));
   let last = null;
   for (;;) {
     dl.at('probe lane pipe');
-    last = await connectHello(scope.pipeName, { deadlineMs: Math.min(HELLO_DEADLINE_MS, Math.max(1, dl.remaining())) });
-    if (last.state === 'free') {
-      const out = { lane: laneName, state: 'free', waited_ms: Math.round(dl.elapsed()) };
+    last = await probeAll();
+    const free = last.map((p, i) => (p.state === 'free' ? i : -1)).filter((i) => i >= 0);
+    if (free.length) {
+      const out = { lane: laneName, state: 'free', waited_ms: Math.round(dl.elapsed()), ...(permits > 1 ? { permits, free_permits: free.length, permit: free[0] } : {}) };
       if (args.json) io.log(JSON.stringify(out, null, 2));
       else io.log('lane free');
       return { ...out, exitCode: 0 };
     }
     if (dl.expired()) break;
-    const holder = await withDeadline(() => readJsonAsync(scope.holderFile, null), Math.min(1000, Math.max(1, dl.remaining())), null);
     if (args.verbose) {
-      io.log(last.state === 'held-unresponsive' ? 'held, unresponsive' : `lane held by run ${holder ? holder.run_id : 'unknown (holder starting)'}`);
+      const held = await holders(Math.min(1000, Math.max(1, dl.remaining())));
+      io.log(last.every((p) => p.state === 'held-unresponsive') ? 'held, unresponsive' : `lane held by run ${held.map((h) => (h ? h.run_id : 'unknown (holder starting)')).join(', ')}`);
     }
     await sleep(Math.min(1000, Math.max(1, dl.remaining())));
     if (dl.expired()) break;
   }
-  const holder = await withDeadline(() => readJsonAsync(scope.holderFile, null), 1000, null);
-  const state = last && last.state === 'held-unresponsive' ? 'held, unresponsive' : 'held';
+  const held = await holders(1000);
+  const holder = held[0];
+  const unresponsive = last && last.every((p) => p.state === 'held-unresponsive');
+  const state = unresponsive ? 'held, unresponsive' : 'held';
   const text =
     state === 'held, unresponsive'
       ? 'held, unresponsive'
-      : `lane held by run ${holder ? holder.run_id : 'unknown (holder starting)'}`;
-  const out = { lane: laneName, state, holder_run: holder ? holder.run_id : null, waited_ms: Math.round(dl.elapsed()), timed_out: true };
+      : `lane held by run ${held.map((h) => (h ? h.run_id : 'unknown (holder starting)')).join(', ')}`;
+  const out = { lane: laneName, state, holder_run: holder ? holder.run_id : null, waited_ms: Math.round(dl.elapsed()), timed_out: true, ...(permits > 1 ? { permits, holder_runs: held.map((h) => (h ? h.run_id : null)) } : {}) };
   if (args.json) io.log(JSON.stringify(out, null, 2));
   else io.log(text);
   return { ...out, exitCode: 3 };
@@ -1156,7 +1173,7 @@ async function cancelKeeper(cfg, rec, args, io) {
     workerId = workerPid ? verifyIdentity(workerPid, workerCreatedAt, table) : { verdict: 'unknown', reason: 'no-worker-pid-recorded' };
   }
 
-  const scope = laneScope(rec.lane || 'local');
+  const scope = laneScope(rec.lane || 'local', rec.lane_permit || 0);
   const lane = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
   const keeperGone = keeperId.verdict === 'gone' || keeperId.verdict === 'mismatch';
   // Positive evidence only (A3, astra H2): a recorded exit, or the recorded pid gone from a
@@ -1213,7 +1230,7 @@ async function monitorLocked(cfg, id, args, io) {
   const rec = readRun(cfg, id);
   if (!rec) throw new OrchError(`no such run: ${id}`, 'no-such-run');
   const P = paths(cfg, id);
-  const scope = laneScope(rec.lane || 'local');
+  const scope = laneScope(rec.lane || 'local', rec.lane_permit || 0);
 
   if (TERMINAL.has(rec.status)) {
     const out = { id, monitor: 'not-started', reason: `run is terminal (${rec.status})` };
@@ -1254,28 +1271,69 @@ async function monitorLocked(cfg, id, args, io) {
 /** Removes stale advisory files and verified Linux orphan sockets. Kills nothing. */
 export async function cmdGc(args, io = console) {
   const cfg = loadConfig(args['state-root']);
-  const scope = laneScope(args.lane || 'local');
-  const holder = readJson(scope.holderFile, null);
-  const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
-  const out = { lane: scope.lane, lane_state: probe.state, holder_run: holder ? holder.run_id : null, removed: [] };
-  if (process.platform !== 'win32' && probe.state === 'free') {
-    const recovery = await recoverLinuxSocket(scope.pipeName);
-    out.removed.push(...recovery.removed);
-    if (!['absent', 'recovered'].includes(recovery.state)) out.lane_state = 'unknown';
-  }
-  if (holder && out.lane_state === 'free') {
-    const rec = readRun(cfg, holder.run_id);
-    if (!rec || TERMINAL.has(rec.status)) {
-      try {
-        fs.unlinkSync(scope.holderFile);
-        out.removed.push(scope.holderFile);
-      } catch {
-        /* advisory only */
+  const laneName = args.lane || 'local';
+  const scopes = permitScopes(cfg, laneName);
+  const results = [];
+  for (const scope of scopes) {
+    const holder = readJson(scope.holderFile, null);
+    const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
+    const one = { lane: scope.lane, lane_state: probe.state, holder_run: holder ? holder.run_id : null, removed: [] };
+    if (process.platform !== 'win32' && probe.state === 'free') {
+      const recovery = await recoverLinuxSocket(scope.pipeName);
+      one.removed.push(...recovery.removed);
+      if (!['absent', 'recovered'].includes(recovery.state)) one.lane_state = 'unknown';
+    }
+    if (holder && one.lane_state === 'free') {
+      const rec = readRun(cfg, holder.run_id);
+      if (!rec || TERMINAL.has(rec.status)) {
+        try {
+          fs.unlinkSync(scope.holderFile);
+          one.removed.push(scope.holderFile);
+        } catch {
+          /* advisory only */
+        }
       }
     }
+    results.push(one);
   }
-  emit(args, io, out, `lane ${scope.lane}: ${out.lane_state}; removed ${out.removed.length} stale lane file(s)`);
+  // One permit keeps the historical output shape exactly.
+  const out = results.length === 1
+    ? results[0]
+    : { ...results[0], removed: results.flatMap((r) => r.removed), permits: results.map((r, permit) => ({ permit, lane_state: r.lane_state, holder_run: r.holder_run })) };
+  emit(args, io, out, `lane ${laneName}: ${results.map((r) => r.lane_state).join(', ')}; removed ${out.removed.length} stale lane file(s)`);
   return { ...out, exitCode: 0 };
+}
+
+/**
+ * Which permits of a serial lane are taken, by whom. Connects only (never binds) and writes
+ * nothing, so it is safe for a dashboard or a dispatcher to call at any time.
+ */
+export async function laneOccupancy(cfg, laneName = 'local') {
+  const scopes = permitScopes(cfg, laneName);
+  const permits = [];
+  for (const scope of scopes) {
+    const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
+    const holder = probe.state === 'free' ? null : readJson(scope.holderFile, null);
+    permits.push({ permit: scope.permit, state: probe.state, holder_run: holder ? holder.run_id : null });
+  }
+  const free = permits.filter((p) => p.state === 'free').length;
+  return { lane: laneName, serial: lanePermits(cfg, laneName) !== null, total: permits.length, free, used: permits.length - free, permits };
+}
+
+/**
+ * The scope of the first permit nobody holds. When every permit is taken it returns permit 0,
+ * so the keeper's own bind reports `lane-busy` with the usual holder facts. Two `orch run`
+ * calls that start in the same instant can both pick the same permit; the loser then gets
+ * `lane-busy` and retries. A dispatcher that launches one run at a time never sees that.
+ */
+async function chooseLanePermit(cfg, laneName) {
+  const scopes = permitScopes(cfg, laneName);
+  if (scopes.length === 1) return scopes[0];
+  for (const scope of scopes) {
+    const probe = await connectHello(scope.pipeName, { deadlineMs: HELLO_DEADLINE_MS });
+    if (probe.state === 'free') return scope;
+  }
+  return scopes[0];
 }
 
 /* ---------------------------------------------------------------- helpers -- */

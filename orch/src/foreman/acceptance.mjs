@@ -1,0 +1,150 @@
+// Runs an item's acceptance commands in its worktree: argv only (never a shell), a bounded
+// time, output captured to a log file with a size cap. A command that exits 0 passes.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+
+import { safeEnv } from './env.mjs';
+import { gitSafe } from './git.mjs';
+
+export { safeEnv };
+
+/**
+ * Resolve a bare program name through PATH, never through the worktree: on Windows a process is
+ * also looked up in the current directory, so a file the worker planted there would otherwise
+ * win. A name with a path separator must stay inside the worktree. What the worker may have put
+ * there is bounded before anything runs: orch's scope guard covers tracked and untracked files, and
+ * `ignoredOutsideAllowlist` (below) covers git-ignored files, which that guard does not see.
+ */
+export function resolveExecutable(name, root, env = process.env) {
+  if (/[\\/]/.test(name)) {
+    const full = path.resolve(root, name);
+    return insideRoot(root, full) ? full : null;
+  }
+  const exts = process.platform === 'win32' ? ['', ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
+  for (const dir of String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean)) {
+    if (insideRoot(root, path.resolve(dir))) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate;
+      } catch { /* not here */ }
+    }
+  }
+  return null;
+}
+
+function insideRoot(root, target) {
+  const rel = path.relative(root, target);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function killTree(child) {
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 15000 });
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+  }
+}
+
+/**
+ * @param {{kind:string, argv?:string[], cwd?:string, timeout_s?:number, text?:string}} check
+ * @param {{root:string, logFile:string, defaultTimeoutS:number, maxLogBytes:number}} o
+ */
+export function runCheck(check, { root, logFile, defaultTimeoutS, maxLogBytes }) {
+  if (check.kind === 'rubric') return Promise.resolve({ status: 'needs-judgement', kind: 'rubric', text: check.text });
+  const cwd = path.resolve(root, check.cwd || '.');
+  if (!insideRoot(root, cwd)) return Promise.resolve({ status: 'error', kind: check.kind, argv: check.argv, error: 'cwd leaves the worktree' });
+  const program = resolveExecutable(check.argv[0], root);
+  if (!program) return Promise.resolve({ status: 'error', kind: check.kind, argv: check.argv, error: `cannot find ${check.argv[0]} on PATH (the worktree is never searched)` });
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const out = fs.createWriteStream(logFile, { flags: 'w' });
+  const started = Date.now();
+  const timeoutMs = (check.timeout_s || defaultTimeoutS) * 1000;
+  return new Promise((resolve) => {
+    let written = 0;
+    let finished = false;
+    let timedOut = false;
+    let child;
+    const finish = (result) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      out.end();
+      resolve({ kind: check.kind, argv: check.argv, ms: Date.now() - started, log: logFile, ...result });
+    };
+    const sink = (chunk) => {
+      if (written < maxLogBytes) {
+        const room = maxLogBytes - written;
+        out.write(chunk.length > room ? chunk.subarray(0, room) : chunk);
+      }
+      written += chunk.length;
+    };
+    try {
+      child = spawn(program, check.argv.slice(1), { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', env: safeEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      finish({ status: 'error', error: String(error.message || error) });
+      return;
+    }
+    child.stdout?.on('data', sink);
+    child.stderr?.on('data', sink);
+    child.on('error', (error) => finish({ status: 'error', error: String(error.message || error) }));
+    child.on('close', (code, signal) => {
+      if (timedOut) finish({ status: 'timeout', exit_code: null, signal });
+      else finish({ status: code === 0 ? 'pass' : 'fail', exit_code: code, signal });
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+}
+
+/** Run every check in order and stop at the first failure (later checks would only repeat it). */
+export async function runAcceptance(checks, options, prefix) {
+  const results = [];
+  for (let i = 0; i < checks.length; i++) {
+    const logFile = path.join(options.logDir, `${prefix}-${i + 1}.log`);
+    const result = await runCheck(checks[i], { root: options.root, logFile, defaultTimeoutS: options.defaultTimeoutS, maxLogBytes: options.maxLogBytes });
+    results.push({ index: i + 1, ...result });
+    if (['fail', 'timeout', 'error'].includes(result.status)) break;
+  }
+  return results;
+}
+
+/** The last lines of a log file, for a park reason. */
+export function tailOf(file, maxChars = 800) {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    return text.length > maxChars ? '...' + text.slice(-maxChars) : text;
+  } catch {
+    return '';
+  }
+}
+
+/** Does `file` fall under an allowlist entry (an exact path, or a directory prefix)? */
+export function underAllowlist(file, allowlist) {
+  const f = file.replace(/\\/g, '/');
+  return allowlist.some((entry) => {
+    const e = String(entry).replace(/\\/g, '/').replace(/^\.\//, '');
+    return f === e || f.startsWith(e.endsWith('/') ? e : e + '/');
+  });
+}
+
+/**
+ * Git-ignored files in a worktree that are not covered by the item's allowlist or by the
+ * tolerated cache directories. A freshly created worktree has none, so anything here was made by
+ * the worker, and the scope guard (tracked and untracked files only) cannot see it. Acceptance
+ * commands execute worker-written code, so this is checked before any of them runs.
+ */
+export function ignoredOutsideAllowlist(dir, allowlist, tolerated = []) {
+  const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
+  const files = r.stdout.split('\0').filter(Boolean);
+  // Tolerated cache directories count only at the worktree root: a `.cache` folder deeper down
+  // could hide code, and a nested one the item really needs can be named in its allowlist.
+  const offending = files.filter((f) => !underAllowlist(f, allowlist) && !tolerated.some((t) => underAllowlist(f, [t])));
+  return { ok: true, error: null, offending };
+}
