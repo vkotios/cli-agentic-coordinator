@@ -8,9 +8,11 @@ import { spawn } from 'node:child_process';
 import { makeCase, orch } from './helpers.mjs';
 import { makeRepo, g, commitAll, craftFinishedRun, contendEach } from './wf-helpers.mjs';
 import { loadConfig } from '../src/config.mjs';
-import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock } from '../src/resources.mjs';
-import { cmdFinish } from '../src/cleanup.mjs';
+import { beginResource, confirmResource, readResource, resourceFile, closureFile, withResourceLock, withOperationLock, inspectIdentity, guardRunResource, inspectRemoval, removeResource } from '../src/resources.mjs';
+import { cmdCleanup, cmdFinish } from '../src/cleanup.mjs';
 import { readClaim } from '../src/claims.mjs';
+import { readProcessTable } from '../src/procs.mjs';
+import { toArgv, toolList } from '../src/mcp.mjs';
 
 async function lockFile(t, file, env, base) {
   if (process.platform !== 'win32') {
@@ -115,6 +117,262 @@ async function fixture(t, name) {
   return { c, repo, w: json(r) };
 }
 
+test('P02: changed device stamps are verified and migrated under the resource lock', async (t) => {
+  const { c, w } = await fixture(t, 'p02-device-migrate');
+  const cfg = loadConfig(c.stateRoot);
+  const original = readResource(cfg, w.id);
+  const changed = structuredClone(original);
+  const changeDev = (stamp) => stamp.replace(/^[^:]+/, (dev) => String(BigInt(dev) + 1n));
+  changed.common_identity = changeDev(changed.common_identity);
+  changed.identity.path = changeDev(changed.identity.path);
+  changed.identity.admin = changeDev(changed.identity.admin);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(changed));
+  const before = fs.readFileSync(file);
+  const identity = await inspectIdentity(changed);
+  assert.equal(identity.ok, true);
+  assert.deepEqual(identity.migrate, { common_identity: original.common_identity, path: original.identity.path, admin: original.identity.admin });
+  assert.deepEqual(fs.readFileSync(file), before);
+  await inspectRemoval(cfg, changed);
+  assert.deepEqual(fs.readFileSync(file), before, 'dry inspection is read-only');
+  assert.equal(await guardRunResource(cfg, w.path, () => 'ran'), 'ran');
+  const refreshed = readResource(cfg, w.id);
+  assert.equal(refreshed.common_identity, original.common_identity);
+  assert.deepEqual(refreshed.identity, original.identity);
+  assert.equal((await inspectIdentity(refreshed)).migrate, undefined);
+  fs.writeFileSync(file, JSON.stringify(changed));
+  await withResourceLock(cfg, changed, () => removeResource(cfg, changed, { review: null }));
+  assert.equal(readResource(cfg, w.id).common_identity, original.common_identity);
+});
+
+test('P02: changed inode refuses the run without rewriting its resource record', async (t) => {
+  const { c, w } = await fixture(t, 'p02-inode-mismatch');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.common_identity = record.common_identity.replace(/^[^:]+/, (dev) => String(BigInt(dev) + 1n));
+  record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  const before = fs.readFileSync(file);
+  await assert.rejects(guardRunResource(cfg, w.path, () => assert.fail('must not run')), { code: 'resource-unavailable' });
+  assert.deepEqual(fs.readFileSync(file), before);
+});
+
+test('P02: explicit reverify previews and adopts changed stamps', async (t) => {
+  const { c, w } = await fixture(t, 'p02-reverify');
+  const cfg = loadConfig(c.stateRoot);
+  const original = readResource(cfg, w.id);
+  const changed = structuredClone(original);
+  changed.identity.path = changed.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(changed));
+  const before = fs.readFileSync(file);
+  await assert.rejects(cmdCleanup(cfg, { reverify: '', by: 'owner' }, { log() {} }), { code: 'bad-cleanup-option' });
+  const unauthorized = await orch(['cleanup', '--reverify', w.id, '--by', 'other', '--json'], c.env);
+  assert.notEqual(unauthorized.code, 0);
+  assert.deepEqual(fs.readFileSync(file), before);
+  await assert.rejects(guardRunResource(cfg, w.path, () => assert.fail('must not run')), { code: 'resource-unavailable' });
+  const dry = await orch(['cleanup', '--reverify', w.id, '--dry-run', '--by', 'owner', '--json'], c.env);
+  assert.equal(dry.code, 0, dry.stderr);
+  assert.deepEqual(json(dry).stamp_differences, ['path']);
+  assert.equal(json(dry).old_stamps.path, changed.identity.path);
+  assert.equal(json(dry).new_stamps.path, original.identity.path);
+  assert.deepEqual(fs.readFileSync(file), before);
+  const applied = await orch(['cleanup', '--reverify', w.id, '--by', 'owner', '--json'], c.env);
+  assert.equal(applied.code, 0, applied.stderr);
+  const record = readResource(cfg, w.id);
+  assert.equal(record.identity.path, original.identity.path);
+  assert.equal(record.reverified_by, 'owner');
+  assert.ok(record.reverified_at);
+  assert.equal(record.reverified_old_stamps.path, changed.identity.path);
+  assert.equal(record.reverified_new_stamps.path, original.identity.path);
+  assert.equal(await guardRunResource(cfg, w.path, () => 'ran'), 'ran');
+});
+
+test('P02: negative recorded stamp components are valid for reverify', async (t) => {
+  const { c, w } = await fixture(t, 'p02-reverify-negative');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '-1:-2:-3';
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  const before = fs.readFileSync(file);
+  const result = await orch(['cleanup', '--reverify', w.id, '--dry-run', '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).state, 'verified');
+  assert.deepEqual(json(result).failures, []);
+  assert.deepEqual(fs.readFileSync(file), before);
+});
+
+test('P02: MCP cleanup passes explicit reverify and dry-run flags', () => {
+  const schema = toolList().find((tool) => tool.name === 'cleanup').inputSchema;
+  assert.equal(schema.properties.reverify.type, 'string');
+  assert.deepEqual(toArgv('cleanup', { reverify: 'wt-example', 'dry-run': true, by: 'owner' }), ['--reverify', 'wt-example', '--dry-run', '--by', 'owner']);
+});
+
+test('P02: reverify refuses missing or differently registered worktrees without record changes', async (t) => {
+  for (const scenario of ['missing', 'branch']) {
+    const { c, repo, w } = await fixture(t, `p02-reverify-${scenario}`);
+    const cfg = loadConfig(c.stateRoot);
+    if (scenario === 'missing') g(repo, 'worktree', 'move', w.path, path.join(c.base, 'moved'));
+    else g(w.path, 'checkout', '--detach');
+    const file = resourceFile(cfg, w.id);
+    const before = fs.readFileSync(file);
+    const result = await orch(['cleanup', '--reverify', w.id, '--by', 'owner', '--json'], c.env);
+    assert.equal(result.code, 3, result.stderr);
+    assert.ok(json(result).failures.includes(scenario === 'missing' ? 'path and root' : 'branch'));
+    assert.deepEqual(fs.readFileSync(file), before);
+  }
+});
+
+test('P02: reverify refuses invalid authority and structural identity without record changes', async (t) => {
+  for (const scenario of ['claim', 'registration', 'admin', 'common', 'confirmed', 'review-head']) {
+    const { c, repo, w } = await fixture(t, `p02-reverify-${scenario}`);
+    const cfg = loadConfig(c.stateRoot);
+    const record = readResource(cfg, w.id);
+    record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+    if (scenario === 'claim') record.claim_token = 'earlier-claim';
+    if (scenario === 'registration') g(repo, 'worktree', 'lock', w.path);
+    if (scenario === 'admin') record.identity.admin_dir = c.base;
+    if (scenario === 'common') record.common_dir = c.base;
+    if (scenario === 'confirmed') record.state = 'retained';
+    if (scenario === 'review-head') { record.kind = 'review'; record.baseline = 'different-commit'; }
+    const file = resourceFile(cfg, w.id);
+    fs.writeFileSync(file, JSON.stringify(record));
+    const before = fs.readFileSync(file);
+    if (scenario === 'claim') {
+      await assert.rejects(cmdCleanup(cfg, { reverify: w.id, by: 'owner', json: true }, { log() {} }), { code: 'not-claimed' });
+      assert.deepEqual(fs.readFileSync(file), before);
+    }
+    const result = await orch(['cleanup', '--reverify', w.id, '--by', 'owner', '--json'], c.env);
+    if (scenario === 'claim') {
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /resource belongs to an earlier claim/);
+    } else {
+      assert.equal(result.code, 3, result.stderr);
+      const check = { registration: 'git registration', admin: 'admin directory path', common: 'common directory path', confirmed: 'confirmed resource', 'review-head': 'review HEAD' }[scenario];
+      assert.deepEqual(json(result).failures, [check], scenario);
+    }
+    assert.deepEqual(fs.readFileSync(file), before, scenario);
+  }
+});
+
+test('P02: reverify adopts stamps for a review at its baseline HEAD', async (t) => {
+  const { c, w } = await fixture(t, 'p02-reverify-review');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  const originalStamp = record.identity.path;
+  record.kind = 'review';
+  record.baseline = g(w.path, 'rev-parse', 'HEAD').trim();
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const result = await orch(['cleanup', '--reverify', w.id, '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(json(result).state, 'reverified');
+  assert.deepEqual(json(result).failures, []);
+  const adopted = readResource(cfg, w.id);
+  assert.equal(adopted.identity.path, originalStamp);
+  assert.equal(adopted.reverified_old_stamps.path, '1:2:3');
+  assert.equal(adopted.reverified_new_stamps.path, originalStamp);
+});
+
+test('P02: finish and cleanup do not implicitly reverify', async (t) => {
+  const { c, w } = await fixture(t, 'p02-no-implicit-reverify');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  const before = fs.readFileSync(file);
+  for (const args of [['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner'], ['finish', 'WP-clean', '--by', 'owner']]) {
+    const result = await orch([...args, '--json'], c.env);
+    assert.equal(result.code, 3, result.stderr);
+    assert.equal(json(result).blocked_by.check, 'resource-identity');
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.ok(fs.existsSync(w.path));
+  }
+});
+
+test('P02: identity blockers explain the check and operator action', async (t) => {
+  const { c, w } = await fixture(t, 'p02-identity-guidance');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = record.identity.path.replace(/^([^:]+):([^:]+)/, (_, dev, ino) => `${dev}:${BigInt(ino) + 1n}`);
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  for (const args of [['finish', 'WP-clean', '--by', 'owner'], ['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner']]) {
+    const result = await orch([...args, '--json'], c.env);
+    assert.equal(result.code, 3);
+    const out = json(result);
+    if (args[0] === 'finish') assert.equal(out.state, 'incomplete');
+    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: 'worktree path identity changed', operator_action: `orch cleanup --reverify ${w.id} --by <holder> (preview first with --dry-run)` });
+    assert.deepEqual(out.resources.find((r) => r.id === w.id).blocked_by, out.blocked_by);
+    const human = await orch(args, c.env);
+    assert.equal(human.code, 3);
+    assert.ok(human.stdout.includes(`blocked by resource-identity: worktree path identity changed; orch cleanup --reverify ${w.id} --by <holder> (preview first with --dry-run)`));
+  }
+});
+
+test('P02: non-present and earlier-claim identity blockers give actionable guidance', async (t) => {
+  const { c, w } = await fixture(t, 'p02-identity-other-guidance');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.state = 'cleanup-pending';
+  record.identity.path = '1:2:3';
+  const file = resourceFile(cfg, w.id);
+  fs.writeFileSync(file, JSON.stringify(record));
+  let result = await orch(['cleanup', '--wp', 'WP-clean', '--dry-run', '--json'], c.env);
+  assert.equal(json(result).blocked_by.operator_action, 'Resource is cleanup-pending; --reverify applies only to present resources. Inspect the worktree and retry orch cleanup --apply');
+  record.state = 'present';
+  record.claim_token = 'earlier-claim';
+  fs.writeFileSync(file, JSON.stringify(record));
+  const action = 'Resource belongs to an earlier or unreadable claim; --reverify cannot be used. Retain it explicitly with orch cleanup --wp <WP> --retain <decision-file>';
+  for (const args of [['--dry-run'], ['--apply', '--by', 'owner']]) {
+    result = await orch(['cleanup', '--wp', 'WP-clean', ...args, '--json'], c.env);
+    const out = json(result);
+    const reason = args[0] === '--dry-run' ? 'resource claim identity changed or unreadable' : 'resource belongs to an earlier claim; explicit retention required';
+    assert.equal(result.code, args[0] === '--dry-run' ? 0 : 3, result.stderr);
+    assert.deepEqual(out.blocked_by, { check: 'resource-identity', resource: w.id, detail: reason, operator_action: action });
+    assert.deepEqual(out.resources.find((r) => r.id === w.id).blocked_by, out.blocked_by);
+  }
+});
+
+test('P02: resumed finish carries the cleanup blocker', async (t) => {
+  const { c, w } = await fixture(t, 'p02-resumed-blocker');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const file = closureFile(cfg, 'WP-clean');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ wp: 'WP-clean', by: 'owner', claim_token: readClaim(cfg, 'WP-clean').value.token, closed_at: '2026-09-23T13:00:00Z', resources: [] }));
+  const result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+  assert.equal(result.code, 3, result.stderr);
+  const out = json(result);
+  assert.equal(out.blocked_by.check, 'resource-identity');
+  assert.deepEqual(out.blocked_by, out.resources.find((r) => r.id === w.id).blocked_by);
+});
+
+test('P02: resumed finish clears an earlier cleanup blocker', async (t) => {
+  const { c, w } = await fixture(t, 'p02-resumed-clear-blocker');
+  const cfg = loadConfig(c.stateRoot);
+  const record = readResource(cfg, w.id);
+  record.identity.path = '1:2:3';
+  fs.writeFileSync(resourceFile(cfg, w.id), JSON.stringify(record));
+  const file = closureFile(cfg, 'WP-clean');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ wp: 'WP-clean', by: 'owner', claim_token: readClaim(cfg, 'WP-clean').value.token, closed_at: '2026-09-23T13:00:00Z', resources: [] }));
+  const blocked = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+  assert.equal(blocked.code, 3, blocked.stderr);
+  assert.equal(json(blocked).blocked_by.check, 'resource-identity');
+  const decisions = path.join(c.base, 'retain.json');
+  fs.writeFileSync(decisions, JSON.stringify([{ id: w.id, reason: 'inspect identity', revisit: 'after inspection' }]));
+  const resolved = await orch(['finish', 'WP-clean', '--by', 'owner', '--retain', decisions, '--json'], c.env);
+  assert.equal(resolved.code, 0, resolved.stderr);
+  assert.equal(json(resolved).state, 'finished');
+  assert.equal(Object.hasOwn(json(resolved), 'blocked_by'), false);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, 'utf8')), 'blocked_by'), false);
+});
+
 test('P02: a queued dependent run prevents even forced worktree removal', async (t) => {
   const { c, w } = await fixture(t, 'p02-active');
   craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', extra: { status: 'queued' } });
@@ -196,6 +454,40 @@ test('P02: finish rejects unrecorded work and accepts an explicit retained resou
   await orch(['claim', 'WP-clean', '--by', 'codex'], c.env);
   r = await orch(['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'], c.env);
   assert.notEqual(r.code, 0, 'a closed receipt cannot authorize cleanup after a new claim');
+});
+
+test('P02: finish handles old-boot and reused monitor identities', { skip: !['darwin', 'linux'].includes(process.platform) }, async (t) => {
+  const table = await readProcessTable({ pids: [process.pid], deadlineMs: 4000 });
+  const current = table.find((p) => p.pid === process.pid).createdAt;
+  const parts = current.split(':');
+  parts[1] = parts[1] === '00000000-0000-4000-8000-000000000001' ? '00000000-0000-4000-8000-000000000002' : '00000000-0000-4000-8000-000000000001';
+  const oldBoot = parts.join(':');
+  const reused = current.replace(/\d+$/, (n) => String(BigInt(n) + 1n));
+  for (const [name, pid, stamp, finishes] of [
+    ['absent-old-boot', 2147483647, oldBoot, true],
+    ['present-old-boot', process.pid, oldBoot, true],
+    ['present-reused', process.pid, reused, false],
+    ['present-live', process.pid, current, false],
+  ]) {
+    const { c, w } = await fixture(t, `p02-${name}`);
+    const id = craftFinishedRun(c.stateRoot, { dir: w.path, baseline: w.baseline, allow: ['a.txt'], wp: 'WP-clean', slice: 's1' });
+    fs.writeFileSync(path.join(c.stateRoot, 'runs', id, 'spawned.json'), JSON.stringify({ monitor_pid: pid, monitor_created_at: stamp }));
+    assert.equal((await orch(['record', id, '--disposition', 'blocked'], c.env)).code, 0);
+    const result = await orch(['finish', 'WP-clean', '--by', 'owner', '--json'], c.env);
+    assert.equal(result.code, finishes ? 0 : 3, result.stdout + result.stderr);
+    assert.equal(json(result).state, finishes ? 'finished' : 'incomplete');
+    if (!finishes) {
+      const detail = `run ${id} process ${pid} still live or uncertain`;
+      assert.ok(json(result).issues.includes(detail));
+      assert.deepEqual(json(result).blocked_by, { check: 'process-liveness', run: id, pid, detail, operator_action: `Inspect with orch status ${id} and, if the process is truly gone, retry` });
+      const human = await orch(['finish', 'WP-clean', '--by', 'owner'], c.env);
+      assert.equal(human.code, 3);
+      assert.ok(human.stdout.includes(`blocked by process-liveness: ${detail}; Inspect with orch status ${id} and, if the process is truly gone, retry`));
+      const cleanup = await orch(['cleanup', '--wp', 'WP-clean', '--apply', '--by', 'owner', '--json'], c.env);
+      assert.equal(cleanup.code, 3);
+      assert.deepEqual(json(cleanup).blocked_by, { ...json(result).blocked_by, resource: w.id });
+    }
+  }
 });
 
 test('P02: a failed Git removal is pending and retry removes the same verified resource', async (t) => {

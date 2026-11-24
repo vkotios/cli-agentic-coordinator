@@ -13,9 +13,10 @@ import { dependentRunBlock } from '../src/resources.mjs';
 import { callTool } from '../src/mcp.mjs';
 import { cmdMaintain } from '../src/retention.mjs';
 import { beginRunArtifacts, confirmRunArtifacts, maintainOnUse } from '../src/retention.mjs';
-import { beginReviewMetadata, confirmReviewMetadata } from '../src/metadata.mjs';
+import { beginReviewMetadata, confirmReviewMetadata, enrollMetadata } from '../src/metadata.mjs';
+import { cmdLog } from '../src/commands.mjs';
 import { withOperationLock } from '../src/resources.mjs';
-import { readEvidence } from '../src/archive.mjs';
+import { readEvidence, readArchived, readArchivedAsync, digest } from '../src/archive.mjs';
 import { readProcessTable, verifyIdentity } from '../src/procs.mjs';
 
 const old = '2026-01-01T00:00:00.000Z';
@@ -50,6 +51,124 @@ async function seal(f) {
   return r;
 }
 const collect = (f) => orch(['maintain', '--kind', 'metadata', '--apply', '--run', f.id, '--json'], f.c.env);
+const incrementStamp = (value, part) => { const fields = value.split(':'); fields[part] = String(BigInt(fields[part]) + 1n); return fields.join(':'); };
+
+test('P03c: review intent tolerates device changes but rejects changed inode or birth time', (t) => {
+  for (const field of ['state_identity', 'reviews_identity']) for (const part of [0, 1, 2]) {
+    const f = fixture(t, `p03c-review-intent-${field}-${part}`), cfg = loadConfig(f.c.stateRoot);
+    const id = 'rv-20260101-000000-def123', file = path.join(f.c.stateRoot, 'reviews', id + '.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true }); beginReviewMetadata(cfg, id);
+    fs.writeFileSync(file, JSON.stringify({ id, finished_at: old }));
+    const ownedFile = path.join(f.c.stateRoot, 'retention', 'metadata-owned', 'review', id + '.json');
+    const doc = JSON.parse(fs.readFileSync(ownedFile, 'utf8'));
+    doc[field] = incrementStamp(doc[field], part); fs.writeFileSync(ownedFile, JSON.stringify(doc));
+    if (part === 0) {
+      confirmReviewMetadata(cfg, id);
+      const confirmed = JSON.parse(fs.readFileSync(ownedFile, 'utf8'));
+      assert.equal(confirmed.state, 'confirmed'); assert.equal(confirmed[field], doc[field]);
+    } else {
+      assert.throws(() => confirmReviewMetadata(cfg, id), { code: 'retirement-unowned', message: 'review ownership intent invalid' });
+      assert.equal(JSON.parse(fs.readFileSync(ownedFile, 'utf8')).state, 'intent');
+    }
+  }
+});
+
+test('P03c: owned review auto-seal tolerates device changes in each identity', async (t) => {
+  for (const field of ['state_identity', 'reviews_identity', 'identity']) for (const part of [0, 1]) {
+    const f = fixture(t, `p03c-review-auto-${field}-${part}`, { enabled: true, successDays: 1, otherDays: 1 });
+    const rv = reviewFixture(f, true), file = path.join(f.c.stateRoot, 'retention', 'metadata-owned', 'review', rv.id + '.json');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8')); doc[field] = incrementStamp(doc[field], part); fs.writeFileSync(file, JSON.stringify(doc));
+    const out = await cmdMaintain(loadConfig(f.c.stateRoot), { kind: 'metadata', apply: true, review: rv.id }, { log() {} });
+    const sealed = path.join(f.c.stateRoot, 'retention', 'sealed', 'review', rv.id + '.json');
+    assert.equal(fs.existsSync(sealed), part === 0, JSON.stringify(out));
+    assert.equal(out.runs[0].state, part === 0 ? 'protected' : 'legacy');
+    if (part === 0) assert.match(out.runs[0].reason, /age/);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))[field], doc[field]);
+  }
+});
+
+test('P03c: re-enrollment validates sealed state identity across device changes', async (t) => {
+  const f = fixture(t, 'p03c-reenroll-device'); await transcripts(f); await seal(f);
+  const cfg = loadConfig(f.c.stateRoot), file = path.join(f.c.stateRoot, 'retention', 'sealed', 'run', f.id + '.json');
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8')), original = doc.state_identity;
+  const save = (part) => { doc.state_identity = incrementStamp(original, part); const { seal_sha256, ...body } = doc; doc.seal_sha256 = digest(JSON.stringify(body)); fs.writeFileSync(file, JSON.stringify(doc)); };
+  save(0); const before = fs.readFileSync(file);
+  assert.deepEqual(await enrollMetadata(cfg, { enroll: f.id, by: 'another', reason: 'fixture' }), { id: f.id, kind: 'run', state: 'enrolled', by: 'owner' });
+  assert.deepEqual(fs.readFileSync(file), before);
+  save(1);
+  await assert.rejects(enrollMetadata(cfg, { enroll: f.id, by: 'another', reason: 'fixture' }), { code: 'retirement-unreadable', message: 'metadata seal invalid' });
+});
+
+test('P03c: pending original log accepts device changes but rejects inode or birth changes', async (t) => {
+  const f = fixture(t, 'p03c-pending-log-device'); await transcripts(f); await seal(f);
+  const cfg = loadConfig(f.c.stateRoot), archive = path.join(f.c.stateRoot, 'retention', 'archive', 'run', f.id + '.json'), link = fs.linkSync;
+  fs.linkSync = (a, b) => { if (b === archive) throw new Error('fixture publication failure'); return link(a, b); };
+  try { assert.equal((await cmdMaintain(cfg, { kind: 'metadata', apply: true, run: f.id }, { log() {} })).runs[0].state, 'pending'); } finally { fs.linkSync = link; }
+  const journalFile = path.join(f.c.stateRoot, 'retention', 'retired', 'run', f.id + '.json');
+  const journal = JSON.parse(fs.readFileSync(journalFile, 'utf8')), entry = journal.entry, expected = entry.data.source_files['keeper.ndjson'], original = expected.identity;
+  const save = (part) => { expected.identity = incrementStamp(original, part); journal.files['keeper.ndjson'].identity = expected.identity; entry.sha256 = digest(JSON.stringify(entry.data)); journal.archive_sha256 = digest(JSON.stringify(entry)); fs.writeFileSync(journalFile, JSON.stringify(journal)); };
+  const args = { _: [f.id], 'state-root': f.c.stateRoot, stream: 'keeper' }, lines = [];
+  save(0); const before = fs.readFileSync(journalFile);
+  cmdLog(args, /** @type {any} */ ({ log: (line) => lines.push(line) })); assert.match(lines.join('\n'), /worker-exit/); assert.deepEqual(fs.readFileSync(journalFile), before);
+  for (const part of [1, 2]) { save(part); assert.throws(() => cmdLog(args, /** @type {any} */ ({ log() {} })), { code: 'archive-changed', message: 'original log conflicts with compact evidence' }); }
+});
+
+test('P03c: device change permits collection and automatic sealing in one maintenance', async (t) => {
+  const f = fixture(t, 'p03c-reboot-owned', { enabled: true, successDays: 1, otherDays: 1 }, true);
+  const cfg = loadConfig(f.c.stateRoot);
+  await cmdMaintain(cfg, { enroll: f.id, by: 'owner', reason: 'fixture' }, { log() {} });
+  const file = path.join(f.c.stateRoot, 'retention', 'owned', f.id + '.json');
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of ['state_identity', 'runs_identity', 'dir_identity']) doc[key] = incrementStamp(doc[key], 0);
+  for (const key of Object.keys(doc.files)) doc.files[key] = incrementStamp(doc.files[key], 0);
+  fs.writeFileSync(file, JSON.stringify(doc)); const before = fs.readFileSync(file);
+  const out = await cmdMaintain(cfg, { kind: 'all', apply: true, run: f.id }, { log() {} });
+  assert.equal(out.runs[0].state, 'collected');
+  assert.equal(out.metadata.runs[0].state, 'protected');
+  assert.match(out.metadata.runs[0].reason, /age/);
+  assert.ok(fs.existsSync(path.join(f.c.stateRoot, 'retention', 'sealed', 'run', f.id + '.json')));
+  assert.deepEqual(fs.readFileSync(file), before);
+});
+
+test('P03c: sealed device changes retire without rewriting seal; inode and birth changes protect originals', async (t) => {
+  for (const part of [0, 1, 2]) {
+    const f = fixture(t, 'p03c-reboot-seal-' + part); await transcripts(f); await seal(f);
+    const file = path.join(f.c.stateRoot, 'retention', 'sealed', 'run', f.id + '.json');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+    doc.state_identity = incrementStamp(doc.state_identity, 0);
+    doc.original.identity = incrementStamp(doc.original.identity, 0);
+    for (const group of [doc.files, doc.controls, doc.data.source_files, doc.data.control_files]) for (const value of Object.values(group)) value.identity = incrementStamp(value.identity, 0);
+    if (part) doc.files['run.json'].identity = incrementStamp(doc.files['run.json'].identity, part);
+    const { seal_sha256, ...body } = doc; doc.seal_sha256 = digest(JSON.stringify(body));
+    fs.writeFileSync(file, JSON.stringify(doc)); const before = fs.readFileSync(file);
+    const r = await collect(f);
+    if (!part) { assert.equal(json(r).runs[0].state, 'collected', r.stdout); assert.equal(fs.existsSync(f.dir), false); }
+    else { assert.equal(json(r).runs[0].state, 'protected'); assert.equal(json(r).runs[0].reason, 'metadata content or identity changed'); assert.ok(fs.existsSync(path.join(f.dir, 'run.json'))); assert.ok(fs.existsSync(path.join(f.dir, 'keeper.ndjson'))); }
+    assert.deepEqual(fs.readFileSync(file), before);
+  }
+});
+
+test('P03c: compact readers accept device changes and reject inode or birth changes', async (t) => {
+  const f = fixture(t, 'p03c-reboot-archive'); await transcripts(f); await seal(f);
+  const cfg = loadConfig(f.c.stateRoot), archive = path.join(f.c.stateRoot, 'retention', 'archive', 'run', f.id + '.json');
+  const link = fs.linkSync;
+  fs.linkSync = (a, b) => { if (b === archive) throw new Error('fixture publication failure'); return link(a, b); };
+  try { assert.equal((await cmdMaintain(cfg, { kind: 'metadata', apply: true, run: f.id }, { log() {} })).runs[0].state, 'pending'); } finally { fs.linkSync = link; }
+  const journalFile = path.join(f.c.stateRoot, 'retention', 'retired', 'run', f.id + '.json');
+  const journal = JSON.parse(fs.readFileSync(journalFile, 'utf8')), entry = journal.entry;
+  entry.state_identity = incrementStamp(entry.state_identity, 0); entry.original.identity = incrementStamp(entry.original.identity, 0);
+  const save = () => { journal.archive_sha256 = digest(JSON.stringify(entry)); fs.writeFileSync(journalFile, JSON.stringify(journal)); };
+  save(); const before = fs.readFileSync(journalFile);
+  assert.equal(readArchived(cfg, 'run', f.id).metadata.state, 'retirement-pending');
+  assert.equal((await readArchivedAsync(cfg, 'run', f.id)).metadata.state, 'retirement-pending');
+  assert.deepEqual(fs.readFileSync(journalFile), before);
+  for (const part of [1, 2]) {
+    const original = entry.original.identity; entry.original.identity = incrementStamp(original, part); save();
+    assert.throws(() => readArchived(cfg, 'run', f.id), { code: 'archive-changed', message: 'original evidence identity changed' });
+    await assert.rejects(readArchivedAsync(cfg, 'run', f.id), { code: 'archive-changed', message: 'original evidence identity changed' });
+    assert.ok(fs.existsSync(path.join(f.dir, 'run.json'))); entry.original.identity = original;
+  }
+});
 
 test('P04b: native Copilot usage metadata can retire while compact model/result evidence survives',async t=>{
   const f=fixture(t,'p04b-native-usage');f.rec.cli='copilot';f.rec.model_actual='example-served';fs.writeFileSync(path.join(f.dir,'run.json'),JSON.stringify(f.rec));

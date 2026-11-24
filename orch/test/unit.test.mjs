@@ -20,6 +20,8 @@ import { mergeVibeConfig, pickModelFromMeta, findSessionMeta, unifiedActiveModel
 import vibe from '../src/adapters/vibe.mjs';
 import opencode from '../src/adapters/opencode.mjs';
 import { scanNewestMtime, Deadline, withDeadline, readTailLines } from '../src/util.mjs';
+import { sameStamp } from '../src/resources.mjs';
+import { stampsMatch } from '../src/stamp.mjs';
 
 const TMP = path.join(os.tmpdir(), 'orch-unit-' + crypto.randomBytes(4).toString('hex'));
 fs.mkdirSync(TMP, { recursive: true });
@@ -50,6 +52,18 @@ test('parseArgs: booleans, repeatables, = form, and a missing value', () => {
 });
 
 /* --------------------------------------------- T-identity (r2-1, r3-5) ---- */
+
+test('filesystem stamps tolerate only a changed device', () => {
+  assert.equal(stampsMatch('1:5:9', '2:5:9'), true);
+  assert.equal(stampsMatch('1:5:9', '1:6:9'), false);
+  assert.equal(stampsMatch('1:5:9', '1:5:8'), false);
+  assert.equal(stampsMatch('malformed', 'malformed'), false);
+  assert.deepEqual(sameStamp('1:5:9', '2:5:9'), { ok: true, migrate: true });
+  assert.deepEqual(sameStamp('1:5:9', '1:5:9'), { ok: true });
+  for (const [a, b] of [['1:5:9', '1:6:9'], ['1:5:9', '1:5:8'], ['x', '1:5:9'], ['1::9', '1::9'], ['1:5:9:0', '1:5:9:0']]) {
+    assert.deepEqual(sameStamp(a, b), { ok: false });
+  }
+});
 
 test('T-identity: verifyIdentity has four labels and never converts unknown to gone', () => {
   const table = [
