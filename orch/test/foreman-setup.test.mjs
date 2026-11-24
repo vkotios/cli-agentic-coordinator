@@ -270,8 +270,10 @@ test('acceptance: a same-size change, a changed target outside the worktree, and
   fs.mkdirSync(path.join(outside, 'lib'), { recursive: true });
   fs.writeFileSync(path.join(outside, 'python.js'), 'interpreter v1');
   fs.writeFileSync(path.join(outside, 'lib', 'site.js'), 'stdlib v1');
+  // as in a real venv: a real .venv directory with a link inside it (a symlink named `.venv` itself would not match the `.venv/` ignore pattern)
+  fs.mkdirSync(path.join(dir, '.venv', 'bin'), { recursive: true });
   let linked = true;
-  try { fs.symlinkSync(outside, path.join(dir, '.venv'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { linked = false; }
+  try { fs.symlinkSync(outside, path.join(dir, '.venv', 'bin', 'shared'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { linked = false; }
   const snap = snapshotIgnored(dir);
   assert.equal(snap.ok, true, snap.error);
   assert.deepEqual(ignoredOutsideAllowlist(dir, [], [], snap.files).offending, [], 'everything is as setup left it');
