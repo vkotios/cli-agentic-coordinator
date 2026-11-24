@@ -158,6 +158,10 @@ async function overview() {
         el('p', { class: 'small', text: `${o.igm.loaded_model || 'no model'} · queued ${o.igm.admission?.queue?.length ?? 0} · mode ${o.igm.admission?.mode ?? '?'} · reserved ${o.igm.admission?.reserved_now ?? 0}` }));
   const goals = o.goals.map((g) => el('div', { class: 'item' }, el('span', { class: 'grow', text: `${g.project}/${g.id}: ${g.text}` }), el('span', { class: 'state', text: g.status }),
     g.status === 'proposed' ? el('button', { class: 'small', onclick: () => act(`Goal ${g.id} approved.`, () => api(`/api/goals/${g.project}/${encodeURIComponent(g.id)}/approve`, {})) }, 'Approve') : null));
+  const projects = o.projects.map((p) => el('div', { class: 'item' },
+    el('span', { class: 'grow' }, el('b', { text: p.id }), ` ${p.repo}`, el('br'),
+      el('span', { class: 'small', text: p.setup ? `setup: ${p.setup.argv.join(' ')} (timeout ${p.setup.timeout_s} s)` : 'no setup command' })),
+    p.paused ? el('span', { class: 'state', text: 'paused' }) : null));
   const events = o.events.map((e) => el('div', { class: 'item' }, el('span', { class: 'small', text: ago(e.at) }), el('span', { class: 'grow', text: `${e.kind}${e.item ? ' · ' + e.item : ''} · ${e.actor}` })));
   return el('div', { class: 'grid' },
     card('Foreman',
@@ -172,6 +176,8 @@ async function overview() {
     card('Local lane', el('div', { class: 'big', text: `${lane.used}/${lane.total} permits used` }),
       el('p', { class: 'small', text: lane.permits.map((p) => `#${p.permit} ${p.state === 'free' ? 'free' : p.holder_run || p.state}`).join(' · ') })),
     card('Inference gateway', gateway),
+    card('Projects', el('div', { class: 'list' }, projects.length ? projects : el('p', { class: 'small', text: 'No projects. Add one with: orch foreman project add --id <id> --repo <path>' })),
+      el('p', { class: 'small', text: 'A setup command is set from the command line: orch foreman project update <id> --setup \'["npm","ci"]\'' })),
     card('Goals', el('div', { class: 'list' }, goals.length ? goals : el('p', { class: 'small', text: 'No goals yet. enqueue proposes one.' }))),
     card('Recent activity', el('div', { class: 'list' }, events.length ? events : el('p', { class: 'small', text: 'Nothing yet.' }))));
 }

@@ -139,3 +139,32 @@ test('git: a worktree that cannot be set up fails closed, never as "nothing chan
   assert.notEqual(gitSafe(path.join(base, 'notarepo'), ['status']).status, 0);
   assert.equal(openInspection(path.join(base, 'notarepo')).ok, false);
 });
+
+test('git: line-ending settings from the user\'s global config are honoured (a CRLF checkout is not "modified")', (t) => {
+  const base = path.join(TEST_ROOT, `fm-git-global-${process.pid}-${Date.now()}`);
+  const dir = path.join(base, 'repo');
+  const file = path.join(dir, 'a.txt');
+  fs.mkdirSync(base, { recursive: true });
+  const globalConfig = path.join(base, 'global-gitconfig');
+  fs.writeFileSync(globalConfig, '[core]\n\tautocrlf = true\n[filter "evil"]\n\tclean = definitely-not-run\n');
+  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } fs.rmSync(base, { recursive: true, force: true }); });
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  process.env.GIT_CONFIG_GLOBAL = globalConfig;
+  makeRepo(dir, { 'a.txt': 'one\ntwo\n' });
+  fs.rmSync(file);
+  sh(dir, 'checkout', '--', 'a.txt'); // git itself writes the CRLF checkout, as on a Windows machine with core.autocrlf=true
+  assert.match(fs.readFileSync(file, 'utf8'), /\r\n/, 'the scenario: a CRLF working file');
+  // git skips the content comparison while a file's stat data still matches the index, so each check below first changes the mtime
+  let bump = 0;
+  const touch = () => { const when = new Date(Date.now() + 5000 * ++bump); fs.utimesSync(file, when, when); };
+  touch();
+  assert.equal(sh(dir, 'status', '--porcelain'), '', 'ordinary git agrees it is clean');
+  touch();
+  const r = gitSafe(dir, ['status', '--porcelain']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '', 'with the global autocrlf=true copied, Foreman\'s git agrees too');
+  process.env.GIT_CONFIG_GLOBAL = path.join(base, 'no-such-global');
+  touch();
+  assert.match(gitSafe(dir, ['status', '--porcelain']).stdout, /M a\.txt/, 'control: without the setting every CRLF file would look modified');
+});

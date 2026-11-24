@@ -72,7 +72,7 @@ test('schema: paths must stay inside the repository and commands must be argv ar
 test('store: migrations are versioned, reopening keeps data, and a newer database is refused', () => {
   const { root, store, done } = fresh('migrate');
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
     const item = enqueue(store, good(), 'test');
     store.close();
     const again = Store.open(root);

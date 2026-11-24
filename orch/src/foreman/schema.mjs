@@ -11,7 +11,7 @@ export const SIZES = ['XS', 'S', 'M'];
 export const LATENCIES = ['blocking', 'today', 'whenever'];
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 export const REVIEWS = ['full', 'light'];
-export const PARK_TAGS = ['spec-ambiguous', 'flaky-test', 'timeout', 'scope-violation', 'capability-wall', 'needs-input', 'check-failed', 'operator'];
+export const PARK_TAGS = ['spec-ambiguous', 'flaky-test', 'timeout', 'scope-violation', 'capability-wall', 'needs-input', 'check-failed', 'setup-failed', 'operator'];
 export const ACCEPTANCE_KINDS = ['command', 'validator', 'rubric'];
 
 export const MAX_HANDOFF_BYTES = 64 * 1024;
@@ -38,6 +38,29 @@ export function isProjectId(value) {
 
 export function isItemId(value) {
   return typeof value === 'string' && ITEM_ID.test(value);
+}
+
+export const SETUP_DEFAULT_TIMEOUT_S = 900;
+export const SETUP_MAX_TIMEOUT_S = 3600;
+export const SETUP_MAX_ARGV = 32;
+
+/**
+ * A project's setup command: one argv list (never a shell string) that runs once in each fresh
+ * worktree before the worker starts, for example `["npm","ci"]`. Returns `{ok, setup, error}`;
+ * `setup` is `{argv, timeout_s}` or null (clear it).
+ * @param {unknown} argv an array of strings, or null / [] to clear
+ * @param {unknown} [timeoutS]
+ */
+export function validateSetup(argv, timeoutS) {
+  if (argv === null || argv === undefined || (Array.isArray(argv) && argv.length === 0)) return { ok: true, setup: null, error: null };
+  if (!Array.isArray(argv) || argv.length > SETUP_MAX_ARGV || !argv.every((a) => typeof a === 'string' && a.length > 0 && a.length <= 4096 && !a.includes('\0'))) {
+    return { ok: false, setup: null, error: `setup must be a JSON array of 1 to ${SETUP_MAX_ARGV} non-empty strings, for example ["npm","ci"]` };
+  }
+  const seconds = timeoutS === undefined || timeoutS === null || timeoutS === '' ? SETUP_DEFAULT_TIMEOUT_S : Number(timeoutS);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > SETUP_MAX_TIMEOUT_S) {
+    return { ok: false, setup: null, error: `setup timeout must be a whole number of seconds from 1 to ${SETUP_MAX_TIMEOUT_S}` };
+  }
+  return { ok: true, setup: { argv: [...argv], timeout_s: seconds }, error: null };
 }
 
 const isString = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;

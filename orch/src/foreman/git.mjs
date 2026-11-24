@@ -109,18 +109,35 @@ const COPIED = {
   'core.eol': (v) => (['lf', 'crlf', 'native'].includes(v.toLowerCase()) ? v.toLowerCase() : undefined),
 };
 
+/**
+ * The plain settings git would use for a checkout, from the layers git reads in this order: the system config, the user's
+ * global config, then the repository's. The worktree was checked out under those settings (on Windows `core.autocrlf` is
+ * usually set globally), so without them every CRLF file would look modified. Only the whitelisted values above are
+ * taken, each validated; any other key in any layer, a program or not, is ignored. The global config is writable by the
+ * worker too, which is why it is treated exactly like the repository's: as data to pick plain values from.
+ */
 function copiedConfig(configFile, cwd) {
   const out = new Map();
-  let r;
-  try { r = spawnSync('git', ['config', '--file', configFile, '--list', '-z'], { cwd, encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: SMALL, env: { ...safeEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty() } }); } catch { return out; }
-  if (r.status !== 0) return out;
-  for (const entry of r.stdout.split('\0').filter(Boolean)) {
-    const at = entry.indexOf('\n');
-    const key = (at < 0 ? entry : entry.slice(0, at)).toLowerCase();
-    const value = at < 0 ? '' : entry.slice(at + 1);
-    if (Object.hasOwn(COPIED, key)) {
-      const clean = COPIED[key](value);
-      if (clean) out.set(key, clean); // the last valid value wins, as in git
+  const layerEnv = { ...safeEnv() };
+  for (const name of ['GIT_CONFIG_SYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM']) if (process.env[name] !== undefined) layerEnv[name] = process.env[name];
+  const noSystem = /^(1|true|yes|on)$/i.test(String(process.env.GIT_CONFIG_NOSYSTEM || '')); // git's own switch, honoured as git honours it
+  const layers = [
+    ...(noSystem ? [] : [['config', '--system', '--list', '-z']]),
+    ['config', '--global', '--list', '-z'],
+    ['config', '--file', configFile, '--list', '-z'],
+  ];
+  for (const args of layers) {
+    let r;
+    try { r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: SMALL, env: layerEnv }); } catch { continue; }
+    if (r.status !== 0) continue; // a layer that does not exist
+    for (const entry of r.stdout.split('\0').filter(Boolean)) {
+      const at = entry.indexOf('\n');
+      const key = (at < 0 ? entry : entry.slice(0, at)).toLowerCase();
+      const value = at < 0 ? '' : entry.slice(at + 1);
+      if (Object.hasOwn(COPIED, key)) {
+        const clean = COPIED[key](value);
+        if (clean) out.set(key, clean); // a later layer, and a later line, wins, as in git
+      }
     }
   }
   return out;
