@@ -15,6 +15,7 @@ import { dependencies, quiescent, inspectQuiescence, timestamp, transcriptEviden
 import { reconcileHelpers } from './helper-reconciliation.mjs';
 import { readProcessTable, verifyIdentity } from './procs.mjs';
 import { ARCHIVE_LIMIT, DOCUMENT_LIMIT, digest, identity, stamp, safe, evidencePath, evidenceIds, readDocument, readEvidence, readArchived, listReviewEvidence, listRunEvidence, checkedId, readReviewDocument } from './archive.mjs';
+import { stampsMatch } from './stamp.mjs';
 
 const DAY = 86400000;
 const RUN_FILES = new Set(['run.json', 'keeper.ndjson', 'events.monitor.ndjson', 'spawned.json', 'holder.json', 'admission.json', 'monitor.alive', 'dirlatch.json', 'cancel.json', 'cancel-result.json', 'viewer.pid', 'viewer.json', 'scope.json', 'copilot-usage.json']);
@@ -38,7 +39,7 @@ export function beginReviewMetadata(cfg, id) {
 export function confirmReviewMetadata(cfg, id) {
   const file = evidencePath(cfg, 'metadata-owned', 'review', id), doc = readDocument(file);
   if (!doc) return; // pre-existing reviews remain explicit-enrollment only
-  if (!doc || doc.state !== 'intent' || doc.source !== 'orch-review' || doc.id !== id || doc.state_root !== path.resolve(cfg.stateRoot) || doc.state_identity !== stamp(safe(cfg.stateRoot)) || doc.reviews_identity !== stamp(safe(path.dirname(doc.path)))) throw new OrchError('review ownership intent invalid', 'retirement-unowned');
+  if (!doc || doc.state !== 'intent' || doc.source !== 'orch-review' || doc.id !== id || doc.state_root !== path.resolve(cfg.stateRoot) || !stampsMatch(doc.state_identity, stamp(safe(cfg.stateRoot))) || !stampsMatch(doc.reviews_identity, stamp(safe(path.dirname(doc.path))))) throw new OrchError('review ownership intent invalid', 'retirement-unowned');
   const record = readReviewDocument(safe(doc.path));
   if (!record || record.id !== id || !record.finished_at) throw new OrchError('review record not finalized', 'retirement-unowned');
   write(file, { ...doc, state: 'confirmed', identity: stamp(doc.path), record_sha256: digest(JSON.stringify(record)) });
@@ -161,9 +162,9 @@ async function prepareSeal(cfg, kind, id, record, authorization, deadline) {
 }
 function autoOperator(cfg, kind, id) {
   const owned = readDocument(kind === 'run' ? retentionFile(cfg, 'owned', id) : evidencePath(cfg, 'metadata-owned', kind, id));
-  if (!owned || owned.version !== 1 || owned.id !== id || owned.state !== 'confirmed' || owned.state_root !== path.resolve(cfg.stateRoot) || owned.state_identity !== stamp(safe(cfg.stateRoot))) return null;
+  if (!owned || owned.version !== 1 || owned.id !== id || owned.state !== 'confirmed' || owned.state_root !== path.resolve(cfg.stateRoot) || !stampsMatch(owned.state_identity, stamp(safe(cfg.stateRoot)))) return null;
   if (kind === 'run') { if (owned.source !== 'orch-run' || owned.metadata_version !== 1) return null; }
-  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || owned.reviews_identity !== stamp(safe(path.dirname(owned.path))) || owned.identity !== stamp(safe(owned.path)) || owned.record_sha256 !== digest(JSON.stringify(readReviewDocument(owned.path)))) return null;
+  else if (owned.source !== 'orch-review' || owned.path !== originalPath(cfg, kind, id) || !stampsMatch(owned.reviews_identity, stamp(safe(path.dirname(owned.path)))) || !stampsMatch(owned.identity, stamp(safe(owned.path))) || owned.record_sha256 !== digest(JSON.stringify(readReviewDocument(owned.path)))) return null;
   const record = readEvidence(cfg, kind, id)?.record;
   return record?.wp ? readClosure(cfg, record.wp)?.by : kind === 'run' ? owned.finalization?.by : record?.by;
 }
@@ -177,7 +178,7 @@ export async function enrollMetadata(cfg, args) {
     const prior = readDocument(sealFile(cfg, kind, id));
     if (prior) {
       const { seal_sha256, ...body } = prior;
-      if (prior.kind !== kind || prior.id !== id || seal_sha256 !== digest(JSON.stringify(body)) || prior.state_identity !== stamp(safe(cfg.stateRoot)) || !prior.authorization?.by) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
+      if (prior.kind !== kind || prior.id !== id || seal_sha256 !== digest(JSON.stringify(body)) || !stampsMatch(prior.state_identity, stamp(safe(cfg.stateRoot))) || !prior.authorization?.by) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
       return { id, kind, state: 'enrolled', by: prior.authorization.by };
     }
     const deadline = Math.min(Date.now() + 10000, args.deadline || Infinity);
@@ -192,20 +193,20 @@ async function validateRemaining(cfg, kind, id, seal, journal, deadline) {
     const file = controlPath(cfg, id, area);
     if (!fs.existsSync(file)) { if (!['deleting', 'removed'].includes(journal?.controls?.[area]?.state)) throw new OrchError('collector evidence unexpectedly missing', 'retirement-changed'); continue; }
     const actual = await hashFile(file, deadline);
-    if (actual.identity !== before.identity || actual.sha256 !== before.sha256) throw new OrchError('collector evidence changed after sealing', 'retirement-changed');
+    if (!stampsMatch(before.identity, actual.identity) || actual.sha256 !== before.sha256) throw new OrchError('collector evidence changed after sealing', 'retirement-changed');
   }
   const target = safe(originalPath(cfg, kind, id));
   if (!fs.existsSync(target)) {
     if (kind === 'run' ? journal && ['deleting', 'removed'].includes(journal.directory_state) : journal && ['deleting', 'removed'].includes(journal.files[`${id}.json`]?.state)) return;
     throw new OrchError('original evidence unexpectedly missing', 'retirement-changed');
   }
-  if (stamp(target) !== seal.original.identity) throw new OrchError('original identity changed', 'retirement-changed');
+  if (!stampsMatch(seal.original.identity, stamp(target))) throw new OrchError('original identity changed', 'retirement-changed');
   const names = kind === 'run' ? fs.readdirSync(target) : [`${id}.json`];
   for (const name of names) {
     if (!seal.files[name]) throw new OrchError(`unexpected original file: ${name}`, 'retirement-unsafe');
     const file = kind === 'run' ? path.join(target, name) : target;
     const actual = await hashFile(file, deadline), expected = seal.files[name];
-    if (actual.identity !== expected.identity || actual.sha256 !== expected.sha256) throw new OrchError('metadata content or identity changed', 'retirement-changed');
+    if (!stampsMatch(expected.identity, actual.identity) || actual.sha256 !== expected.sha256) throw new OrchError('metadata content or identity changed', 'retirement-changed');
   }
   for (const name of Object.keys(seal.files)) if (!names.includes(name) && !['deleting', 'removed'].includes(journal?.files[name]?.state)) throw new OrchError('metadata unexpectedly missing', 'retirement-changed');
 }
@@ -218,7 +219,7 @@ async function plan(cfg, kind, id, policy, deadline, prospective = null) {
     const seal = prospective || readDocument(sealFile(cfg, kind, id));
     if (!seal) return { ...base, state: 'legacy', reason: 'explicit metadata enrollment required' };
     const { seal_sha256, ...sealedBody } = seal;
-    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || seal.state_identity !== stamp(safe(cfg.stateRoot)) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !allowedRunFile(name, seal.data.record) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
+    if (seal_sha256 !== digest(JSON.stringify(sealedBody)) || seal.version !== 1 || seal.kind !== kind || seal.id !== id || !stampsMatch(seal.state_identity, stamp(safe(cfg.stateRoot))) || seal.state_root !== path.resolve(cfg.stateRoot) || !seal.data || !seal.files || seal.original.path !== originalPath(cfg, kind, id) || Object.keys(seal.files).some((name) => kind === 'run' ? !allowedRunFile(name, seal.data.record) : name !== `${id}.json`) || Object.keys(seal.controls || {}).some((area) => !['owned', 'receipts'].includes(area))) throw new OrchError('metadata seal invalid', 'retirement-unreadable');
     const journal = readDocument(journalFile(cfg, kind, id));
     base.pending_cleanup = !!journal;
     const record = archived ? archived.record : readEvidence(cfg, kind, id)?.record;
@@ -265,7 +266,7 @@ async function collect(cfg, kind, id, policy, deadline, authorization) {
       if (fs.existsSync(target)) {
         data.state = 'deleting'; journal.state = 'partial'; write(file, journal);
         const actual = await hashFile(safe(target), deadline);
-        if (actual.identity !== data.identity || actual.sha256 !== data.sha256) throw new OrchError('metadata changed before unlink', 'retirement-changed');
+        if (!stampsMatch(data.identity, actual.identity) || actual.sha256 !== data.sha256) throw new OrchError('metadata changed before unlink', 'retirement-changed');
         fs.unlinkSync(target); removed += data.bytes;
       } else if (!['deleting', 'removed'].includes(data.state)) throw new OrchError('metadata unexpectedly missing', 'retirement-changed');
       data.state = 'removed'; write(file, journal);
@@ -274,7 +275,7 @@ async function collect(cfg, kind, id, policy, deadline, authorization) {
       const next = await plan(cfg, kind, id, policy, deadline);
       if (next.state !== 'eligible') throw new OrchError(next.reason || 'retirement dependency changed', 'retirement-protected');
       journal.directory_state = 'deleting'; write(file, journal);
-      if (stamp(safe(seal.original.path)) !== seal.original.identity) throw new OrchError('run directory identity changed', 'retirement-changed');
+      if (!stampsMatch(seal.original.identity, stamp(safe(seal.original.path)))) throw new OrchError('run directory identity changed', 'retirement-changed');
       fs.rmdirSync(seal.original.path);
     }
     journal.directory_state = kind === 'run' ? 'removed' : null;
@@ -287,7 +288,7 @@ async function collect(cfg, kind, id, policy, deadline, authorization) {
       if (fs.existsSync(target)) {
         data.state = 'deleting'; write(file, journal);
         const actual = await hashFile(target, deadline);
-        if (actual.identity !== data.identity || actual.sha256 !== data.sha256) throw new OrchError('collector evidence changed before unlink', 'retirement-changed');
+        if (!stampsMatch(data.identity, actual.identity) || actual.sha256 !== data.sha256) throw new OrchError('collector evidence changed before unlink', 'retirement-changed');
         fs.unlinkSync(target); removed += data.bytes;
       } else if (data.state !== 'deleting') throw new OrchError('collector evidence unexpectedly missing', 'retirement-changed');
       data.state = 'removed'; write(file, journal);

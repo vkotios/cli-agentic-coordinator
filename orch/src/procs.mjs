@@ -320,10 +320,10 @@ export function verifyIdentity(pid, recordedCreatedAt, table) {
   if (typeof recorded === 'string' && /^(?:ticks:|linux:|darwin:)/.test(recorded) && !point) return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
   if (point?.kind === 'darwin') {
     if (currentScope?.kind !== 'darwin') return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
-    if (point.boot !== currentScope.boot) return { verdict: 'mismatch', reason: 'boot-changed', found: hit };
+    if (point.boot !== currentScope.boot) return hit ? { verdict: 'mismatch', reason: 'boot-changed', found: hit } : { verdict: 'gone', reason: 'boot-changed' };
   } else if (point?.kind === 'linux') {
     if (currentScope?.kind !== 'linux') return { verdict: 'unknown', reason: 'native-clock-scope-unreadable', found: hit };
-    if (point.boot !== currentScope.boot) return { verdict: 'mismatch', reason: 'boot-changed', found: hit };
+    if (point.boot !== currentScope.boot) return hit ? { verdict: 'mismatch', reason: 'boot-changed', found: hit } : { verdict: 'gone', reason: 'boot-changed' };
     if (point.namespace !== currentScope.namespace) return { verdict: 'unknown', reason: 'pid-namespace-unreadable', found: hit };
   } else if (point?.kind === 'wall' && ['linux', 'darwin'].includes(currentScope?.kind)) return { verdict: 'unknown', reason: 'creation-clock-mismatch', found: hit };
   if (!hit) return { verdict: 'gone', reason: 'pid-not-present' };

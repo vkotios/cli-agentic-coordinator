@@ -226,9 +226,8 @@ export const TOOLS = {
   },
   cleanup: {
     cmd: 'cleanup',
-    description: 'Preview owned WP resources with dry-run, or explicitly apply safe cleanup. Active/uncertain dependencies and valuable content are retained; failed removals can be retried.',
-    opts: { wp: S('--wp <WP>'), 'dry-run': B('--dry-run: read-only inventory'), apply: B('--apply: recheck and remove eligible owned resources'), by: S('--by <claim holder or recorded closing identity>'), retain: S('--retain <JSON decision file: id, reason, revisit>') },
-    required: ['wp'],
+    description: 'Preview owned WP resources with dry-run, explicitly apply safe cleanup, or use --reverify to inspect and adopt changed resource stamps. Active/uncertain dependencies and valuable content are retained; failed removals can be retried.',
+    opts: { wp: S('--wp <WP>'), reverify: S('--reverify <resource-id>: explicitly adopt changed stamps'), 'dry-run': B('--dry-run: read-only inventory'), apply: B('--apply: recheck and remove eligible owned resources'), by: S('--by <claim holder or recorded closing identity>'), retain: S('--retain <JSON decision file: id, reason, revisit>') },
     boundMs: 120000,
   },
   finish: {
