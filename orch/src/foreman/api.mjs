@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { OrchError } from '../errors.mjs';
 import { loadConfig } from '../config.mjs';
 import { Store } from './store.mjs';
-import { validateItem, isProjectId, PARK_TAGS } from './schema.mjs';
+import { validateItem, isProjectId, validateSetup, PARK_TAGS } from './schema.mjs';
 import { VERDICTS } from './progress.mjs';
 
 export function openStore(stateRootArg) {
@@ -21,13 +21,27 @@ function gitTop(repo) {
   }
 }
 
-/** Register a project. The repository must exist and be a git work tree; nothing in it is touched. */
-export function addProject(store, { id, repo, defaultBranch = 'main' }, actor) {
+/**
+ * Register a project. The repository must exist and be a git work tree; nothing in it is touched.
+ * @param {any} store
+ * @param {{id: string, repo: string, defaultBranch?: string, setup?: unknown, setupTimeout?: unknown}} project `setup` is an argv array run in each fresh worktree
+ * @param {string} actor
+ */
+export function addProject(store, { id, repo, defaultBranch = 'main', setup, setupTimeout }, actor) {
   if (!isProjectId(id)) throw new OrchError(`invalid project id "${id}" (lowercase letters, digits, hyphen)`, 'foreman-bad-project');
   if (!repo || !path.isAbsolute(repo) || !fs.existsSync(repo)) throw new OrchError('--repo must be an absolute path to an existing directory', 'foreman-bad-repo');
   if (!gitTop(repo)) throw new OrchError(`${repo} is not inside a git work tree`, 'foreman-bad-repo');
   if (!/^[A-Za-z0-9._/-]{1,100}$/.test(defaultBranch)) throw new OrchError(`invalid branch name "${defaultBranch}"`, 'foreman-bad-branch');
-  return store.addProject({ id, repo: path.resolve(repo), defaultBranch }, actor);
+  const checked = validateSetup(setup, setupTimeout);
+  if (!checked.ok) throw new OrchError(checked.error, 'foreman-bad-setup');
+  return store.addProject({ id, repo: path.resolve(repo), defaultBranch, setup: checked.setup }, actor);
+}
+
+/** Set or clear a project's setup command (`argv` null or empty clears it). It applies to runs that start afterwards. */
+export function setProjectSetup(store, id, argv, timeoutS, actor) {
+  const checked = validateSetup(argv, timeoutS);
+  if (!checked.ok) throw new OrchError(checked.error, 'foreman-bad-setup');
+  return store.setProjectSetup(id, checked.setup, actor);
 }
 
 /**
@@ -61,7 +75,7 @@ export function archiveItem(store, id, actor) {
 export function summary(store) {
   return {
     counts: store.counts(),
-    projects: store.listProjects().map((p) => ({ id: p.id, repo: p.repo, paused: p.paused })),
+    projects: store.listProjects().map((p) => ({ id: p.id, repo: p.repo, paused: p.paused, setup: p.setup })),
     goals: store.listGoals().map((g) => ({ id: g.id, project: g.project, status: g.status })),
     pending_checks: store.listChecks({ status: 'pending' }).length,
   };

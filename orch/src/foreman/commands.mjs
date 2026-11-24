@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { OrchError } from '../errors.mjs';
-import { openStore, addProject, enqueue, parkItem, requeueItem, archiveItem, summary, answerCheck, requestCheckNow } from './api.mjs';
+import { openStore, addProject, setProjectSetup, enqueue, parkItem, requeueItem, archiveItem, summary, answerCheck, requestCheckNow } from './api.mjs';
 import { runForeman } from './daemon.mjs';
 import { foremanHolder } from './lock.mjs';
 import { readSettings, saveSettings } from './settings.mjs';
@@ -103,14 +103,31 @@ export async function cmdForeman(args, io = console) {
         return { ...now, exitCode: 0 };
       }
       case 'project': {
+        // `--setup '["npm","ci"]'` is a JSON array (an argv, never a shell string); `none` clears it.
+        const setupArgv = (value) => {
+          if (value === undefined) return undefined;
+          if (value === 'none' || value === 'off') return null;
+          try {
+            return JSON.parse(value);
+          } catch {
+            throw new OrchError('--setup must be a JSON array of strings, for example \'["npm","ci"]\' (or none)', 'foreman-bad-setup');
+          }
+        };
         if (a1 === 'add') {
-          const p = addProject(store, { id: args.id, repo: args.repo, defaultBranch: args.branch || 'main' }, actor);
-          out(args, io, p, `project ${p.id} registered (${p.repo})`);
+          const p = addProject(store, { id: args.id, repo: args.repo, defaultBranch: args.branch || 'main', setup: setupArgv(args.setup), setupTimeout: args['setup-timeout'] }, actor);
+          out(args, io, p, `project ${p.id} registered (${p.repo})${p.setup ? `; setup: ${p.setup.argv.join(' ')}` : ''}`);
+          return { ...p, exitCode: 0 };
+        }
+        if (a1 === 'update') {
+          if (!a2) throw new OrchError('usage: orch foreman project update <id> --setup <json array|none> [--setup-timeout <seconds>]', 'missing-arg');
+          if (args.setup === undefined) throw new OrchError('nothing to update: pass --setup <json array|none> [--setup-timeout <seconds>]', 'missing-arg');
+          const p = setProjectSetup(store, a2, setupArgv(args.setup), args['setup-timeout'], actor);
+          out(args, io, p, p.setup ? `project ${p.id} setup: ${p.setup.argv.join(' ')} (timeout ${p.setup.timeout_s} s)` : `project ${p.id} setup cleared`);
           return { ...p, exitCode: 0 };
         }
         if (a1 === 'list') {
           const list = store.listProjects();
-          out(args, io, { projects: list }, list.map((p) => `${p.id}${p.paused ? ' (paused)' : ''}  ${p.repo}`).join('\n') || 'no projects');
+          out(args, io, { projects: list }, list.map((p) => `${p.id}${p.paused ? ' (paused)' : ''}  ${p.repo}${p.setup ? `  setup: ${p.setup.argv.join(' ')}` : ''}`).join('\n') || 'no projects');
           return { projects: list, exitCode: 0 };
         }
         if (a1 === 'pause' || a1 === 'resume') {
@@ -118,7 +135,7 @@ export async function cmdForeman(args, io = console) {
           out(args, io, p, `project ${p.id} ${p.paused ? 'paused' : 'resumed'}`);
           return { ...p, exitCode: 0 };
         }
-        throw new OrchError('usage: orch foreman project add --id <id> --repo <abs path> [--branch main] | list | pause <id> | resume <id>', 'missing-arg');
+        throw new OrchError('usage: orch foreman project add --id <id> --repo <abs path> [--branch main] [--setup <json array> [--setup-timeout <s>]] | update <id> --setup <json array|none> [--setup-timeout <s>] | list | pause <id> | resume <id>', 'missing-arg');
       }
       case 'goal': {
         if (a1 === 'list') {

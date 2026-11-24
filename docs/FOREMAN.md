@@ -8,6 +8,7 @@ State lives in `<state root>/foreman/foreman.db`. Run evidence stays in orch's r
 
 ```
 orch foreman project add --id alpha --repo C:\path\to\repo
+orch foreman project update alpha --setup '["npm","ci"]'   # optional: install dependencies in each fresh worktree ("Project setup command")
 orch enqueue --file item.json            # or the `enqueue` MCP tool
 orch foreman goal approve g1 --project alpha
 orch foreman settings --defaultRoute "{\"cli\":\"opencode\",\"model\":\"igm-local/qwen3.8-flash-next-halogen-flash\"}"
@@ -37,22 +38,41 @@ orch foreman status
 
 ## What happens to an item
 
-`ready` -> `running` (claim, worktree, `orch run`) -> `verifying` -> `needs-review`, or `parked` with a tag (`spec-ambiguous`, `flaky-test`, `timeout`, `scope-violation`, `capability-wall`, `needs-input`, `check-failed`, `operator`) and a reason.
+`ready` -> `running` (claim, worktree, the project's setup command if it has one, `orch run`) -> `verifying` -> `needs-review`, or `parked` with a tag (`spec-ambiguous`, `flaky-test`, `timeout`, `scope-violation`, `capability-wall`, `needs-input`, `check-failed`, `setup-failed`, `operator`) and a reason.
 
 When the worker has finished, in this order:
 
 1. `orch scope` (tracked and untracked files against the allowlist). A violation parks the item **before anything is run**.
-2. A check for **git-ignored files** the worker created outside the allowlist (orch's scope guard cannot see them). Caches in `toleratedIgnored` are ignored. Also parks before anything is run.
+2. A check for **git-ignored files** the worker created outside the allowlist (orch's scope guard cannot see them). Caches in `toleratedIgnored` are ignored, and so are the files the project's setup command made, as long as they are byte-for-byte unchanged (see below). Also parks before anything is run.
 3. The acceptance commands, in the worktree, with a reduced environment (no keys or tokens), a time limit and a log cap. A bare program name is resolved through `PATH`, never the worktree.
 4. All passed: `needs-review`. The worktree is kept and the claim released. **Reviewing, grading findings and merging stay with a person or a frontier session**: a deterministic daemon cannot grade, and nothing here merges.
 
 A failed run is never retried automatically (orch's rule: a second attempt needs a recorded change). Requeue with `orch foreman requeue <id>` after amending. After you merge a verified item yourself, record it with `orch foreman accept <id>`.
 
+## Project setup command
+
+A fresh worktree has no dependencies installed, so a worker (and the acceptance commands) cannot run the project's tests. A project can name one **setup command** that the Foreman runs once in each fresh worktree, after it is created and before the worker starts:
+
+```
+orch foreman project add --id alpha --repo C:\path\to\repo --setup '["npm","ci"]' [--setup-timeout 900]
+orch foreman project update alpha --setup '["uv","sync"]' [--setup-timeout 1800]
+orch foreman project update alpha --setup none          # clear it
+orch foreman project list                                # shows it
+```
+
+- It is an **argv array** (never a shell string), at most 32 strings; the timeout is 1 to 3600 s (default 900). It applies to runs that start after the change. Setting it needs the command line: the web GUI shows it (Overview, Projects) but does not edit it, and the MCP tools do not set it. Like `enqueue` and acceptance commands, it runs with the Foreman's privileges (see Trust boundary).
+- **Environment:** the acceptance environment (no keys or tokens) plus package-manager settings: `NPM_CONFIG_*`, `PIP_*`, `UV_*`, `PNPM_*`, `YARN_*`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`. A variable whose name contains TOKEN, SECRET, PASSWORD, AUTH, KEY or CREDENTIAL is dropped even under those prefixes. A private registry's credentials belong in the tool's own user-level config (`.npmrc`, `pip.conf`). A proxy URL that embeds a password is passed as it is.
+- **Limits:** the same output cap as acceptance, and its own timeout. The log is `<state root>/foreman/setup/<item>-a<attempt>.log`.
+- **It may only create git-ignored files** (`node_modules`, `.venv`). Afterwards `git status` must show nothing changed or new; otherwise the item is parked, because orch's scope guard compares the worktree with its starting commit and would blame the worker. Add what setup creates to `.gitignore`.
+- **What it created is baselined, not trusted.** After a successful setup the Foreman records every git-ignored file with its size and SHA-256 (at most 200,000 files and 4 GiB). At acceptance time those files are accepted only while unchanged: a new file or a changed one under `node_modules` is still a `scope-violation`, so a worker cannot hide code where `npm test` would run it.
+- **A failure parks the item as `setup-failed`**, with the exit code, a timeout or a "could not run" message and the tail of the log in the reason. No worker is started, the claim is released and the worktree is kept. Fix the project's setup or the cause, then `orch foreman requeue <id>`.
+- **Windows:** `npm` and `npx` work (they are started through node, because a `.cmd` file cannot be spawned without a shell). Another `.cmd` or `.bat` is refused with a message; name the program it wraps instead.
+
 ## Trust boundary
 
-An item's `acceptance` argv runs with the Foreman's privileges on the machine, and `handoff` is the worker's prompt. Whoever can call `enqueue` (the MCP server, the CLI, the web GUI) can therefore run commands there, exactly like anyone who can call `orch run`. The gate is who has that access, plus goal approval. `route.flags` (adapter flags that can loosen a worker's own sandbox) is accepted for the test adapter only. There is no per-item approval step; add one before exposing `enqueue` to anything less trusted than your own sessions.
+An item's `acceptance` argv runs with the Foreman's privileges on the machine, and `handoff` is the worker's prompt. Whoever can call `enqueue` (the MCP server, the CLI, the web GUI) can therefore run commands there, exactly like anyone who can call `orch run`. The gate is who has that access, plus goal approval. A project's setup command is the same kind of command and is set from the command line. `route.flags` (adapter flags that can loosen a worker's own sandbox) is accepted for the test adapter only. There is no per-item approval step; add one before exposing `enqueue` to anything less trusted than your own sessions.
 
-**Git in a worker's worktree.** The worker can write the repository's git config, and git runs programs that config names (a clean filter during `git status`, `core.fsmonitor`, an external diff). Checking the config and then running git would leave a window between the two, so the Foreman's own git calls (the ignored-file check and the progress fingerprint) never read it: each call runs against a git directory the Foreman builds for that call, with its own config (no programs, plus a short list of plain values such as `core.filemode` and `core.autocrlf` copied after validation), the commit id read from the worktree's `HEAD`, the real object store through `alternates`, a copy of `info/exclude`, and the worktree's real index. With `GIT_DIR` set, git never opens the worktree's `.git` again, so a config change at any moment has no effect. Index, objects, `.gitignore` and `.gitattributes` stay worker-controlled but are data once no program is configured. If the worktree cannot be set up this way, the call fails and the item parks; it is never read as "nothing changed". Limits: LFS-style filters configured in the repository are not applied, so such files may show as modified in the fingerprint; orch's own scope-guard git calls (`orch scope`, review, cleanup) are not covered by this and still use the repository's config (see "Limits").
+**Git in a worker's worktree.** The worker can write the repository's git config, and git runs programs that config names (a clean filter during `git status`, `core.fsmonitor`, an external diff). Checking the config and then running git would leave a window between the two, so the Foreman's own git calls (the ignored-file check and the progress fingerprint) never read it: each call runs against a git directory the Foreman builds for that call, with its own config (no programs, plus a short list of plain values such as `core.filemode` and `core.autocrlf`, picked after validation from the system, the user's global and the repository's config, in git's order, so a CRLF checkout made under a global `autocrlf=true` is not reported as modified), the commit id read from the worktree's `HEAD`, the real object store through `alternates`, a copy of `info/exclude`, and the worktree's real index. With `GIT_DIR` set, git never opens the worktree's `.git` again, so a config change at any moment has no effect. Index, objects, `.gitignore` and `.gitattributes` stay worker-controlled but are data once no program is configured. If the worktree cannot be set up this way, the call fails and the item parks; it is never read as "nothing changed". Limits: LFS-style filters configured in the repository are not applied, so such files may show as modified in the fingerprint; orch's own scope-guard git calls (`orch scope`, review, cleanup) are not covered by this and still use the repository's config (see "Limits").
 
 ## Progress checks
 

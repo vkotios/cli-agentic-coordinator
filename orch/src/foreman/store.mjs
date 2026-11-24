@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { OrchError } from '../errors.mjs';
 import { TRANSITIONS, PRIORITIES, isProjectId, isItemId, STATES, PARK_TAGS } from './schema.mjs';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const MIGRATIONS = [
   // 1
@@ -117,6 +117,10 @@ const MIGRATIONS = [
   ALTER TABLE checks ADD COLUMN applied INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE checks ADD COLUMN tag TEXT;
   `,
+  // 4: a per-project setup command ({argv, timeout_s} as JSON), run once in each fresh worktree before the worker.
+  `
+  ALTER TABLE projects ADD COLUMN setup_json TEXT;
+  `,
 ];
 
 const PRIORITY_RANK = Object.fromEntries(PRIORITIES.map((p, i) => [p, i]));
@@ -126,6 +130,12 @@ export function foremanDir(stateRoot) {
 }
 
 const nowIso = () => new Date().toISOString();
+
+function rowProject(row) {
+  if (!row) return null;
+  const { setup_json: setup, ...rest } = row;
+  return { ...rest, paused: !!rest.paused, setup: setup ? JSON.parse(setup) : null };
+}
 
 function rowItem(row) {
   if (!row) return null;
@@ -216,23 +226,33 @@ export class Store {
 
   // ---- projects and goals ------------------------------------------------------------
 
-  addProject({ id, repo, defaultBranch }, actor) {
+  addProject({ id, repo, defaultBranch, setup = null }, actor) {
     if (!isProjectId(id)) throw new OrchError(`invalid project id "${id}"`, 'foreman-bad-project');
     return this.tx(() => {
       if (this.getProject(id)) throw new OrchError(`project ${id} is already registered`, 'foreman-project-exists');
-      this.q('INSERT INTO projects(id, repo, default_branch, created_at) VALUES (?,?,?,?)').run(id, repo, defaultBranch, nowIso());
-      this.event('project-added', { actor, data: { id, repo, default_branch: defaultBranch } });
+      this.q('INSERT INTO projects(id, repo, default_branch, setup_json, created_at) VALUES (?,?,?,?,?)').run(id, repo, defaultBranch, setup ? JSON.stringify(setup) : null, nowIso());
+      this.event('project-added', { actor, data: { id, repo, default_branch: defaultBranch, setup } });
       return this.getProject(id);
     });
   }
 
   getProject(id) {
-    const row = this.q('SELECT * FROM projects WHERE id = ?').get(id);
-    return row ? { ...row, paused: !!row.paused } : null;
+    return rowProject(this.q('SELECT * FROM projects WHERE id = ?').get(id));
   }
 
   listProjects() {
-    return this.q('SELECT * FROM projects ORDER BY id').all().map((r) => ({ ...r, paused: !!r.paused }));
+    return this.q('SELECT * FROM projects ORDER BY id').all().map(rowProject);
+  }
+
+  /** Set (`{argv, timeout_s}`) or clear (null) a project's setup command. Applies to runs that start afterwards. */
+  setProjectSetup(id, setup, actor) {
+    return this.tx(() => {
+      const before = this.getProject(id);
+      if (!before) throw new OrchError(`no such project: ${id}`, 'foreman-no-project');
+      this.q('UPDATE projects SET setup_json = ? WHERE id = ?').run(setup ? JSON.stringify(setup) : null, id);
+      this.event('project-setup-changed', { actor, data: { id, from: before.setup, to: setup } });
+      return this.getProject(id);
+    });
   }
 
   setProjectPaused(id, paused, actor) {

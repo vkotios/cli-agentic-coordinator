@@ -76,6 +76,7 @@
         "orch/test/foreman-daemon.test.mjs",
         "orch/test/foreman-progress.test.mjs",
         "orch/test/foreman-git.test.mjs",
+        "orch/test/foreman-setup.test.mjs",
         "orch/test/foreman-gui.test.mjs",
         "orch/test/keeper.test.mjs",
         "orch/test/monitor.test.mjs",

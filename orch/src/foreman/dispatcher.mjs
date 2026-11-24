@@ -15,7 +15,9 @@ import { getAdapter } from '../adapters/index.mjs';
 import { laneOccupancy } from '../commands.mjs';
 import { foremanDir } from './store.mjs';
 import { readSettings } from './settings.mjs';
-import { runAcceptance, tailOf, ignoredOutsideAllowlist } from './acceptance.mjs';
+import { runAcceptance, runCheck, tailOf, ignoredOutsideAllowlist, snapshotIgnored } from './acceptance.mjs';
+import { setupEnv } from './env.mjs';
+import { gitSafe } from './git.mjs';
 import { needsReview } from './schema.mjs';
 
 const TERMINAL_RUN = new Set(['completed', 'failed', 'cancelled', 'interrupted', 'blocked', 'blocked-quota', 'turn-cap']);
@@ -149,7 +151,7 @@ export class Dispatcher {
     }
     // orch's scope guard sees tracked and untracked files but not git-ignored ones; a worker could
     // hide code there for an acceptance command to run. Nothing executes until that is ruled out.
-    const ignored = ignoredOutsideAllowlist(run.worktree, item.spec.allowlist, settings.toleratedIgnored);
+    const ignored = ignoredOutsideAllowlist(run.worktree, item.spec.allowlist, settings.toleratedIgnored, this.setupBaseline(run));
     if (!ignored.ok || ignored.offending.length) {
       this.store.event('ignored-files', { item: item.id, run: run.run_id, actor, data: { error: ignored.error, offending: ignored.offending.slice(0, 20) } });
       this.store.transition(item.id, 'parked', {
@@ -240,6 +242,54 @@ export class Dispatcher {
     return item.id;
   }
 
+  /** Where the ignored-file baseline of a run's setup is kept. */
+  setupBaselineFile(run) {
+    return path.join(this.dir, 'setup', `run-${run.id}.baseline.json`);
+  }
+
+  /** The ignored files the project's setup made for this run (path to signature), or null when no setup ran. */
+  setupBaseline(run) {
+    try {
+      return JSON.parse(fs.readFileSync(this.setupBaselineFile(run), 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Run the project's setup command in a fresh worktree. It gets the acceptance environment plus package-manager
+   * settings (no keys or tokens), the same output cap, and its own time limit. Afterwards git must show nothing
+   * changed that it tracks or would add (the scope guard compares the worktree with its starting commit, so setup may
+   * only create git-ignored files), and those ignored files are recorded as the baseline for the acceptance-time check.
+   * @returns {Promise<{ok: boolean, reason?: string, log?: string}>} `reason` and `log` are set when `ok` is false
+   */
+  async runSetup(item, project, run, worktree, settings) {
+    const { argv, timeout_s: timeoutS } = project.setup;
+    const logFile = path.join(this.dir, 'setup', `${item.id}-a${item.attempt + 1}.log`);
+    const result = await runCheck({ kind: 'command', argv, timeout_s: timeoutS }, { root: worktree, logFile, defaultTimeoutS: timeoutS, maxLogBytes: settings.maxLogBytes, env: setupEnv() });
+    const finish = (ok, reason, extra = {}) => {
+      this.store.event('setup', { item: item.id, actor: settings.actor, data: { project: project.id, argv, status: ok ? 'pass' : result.status === 'pass' ? 'fail' : result.status, exit_code: result.exit_code ?? null, ms: result.ms ?? null, log: logFile, ...extra } });
+      return ok ? { ok: true } : { ok: false, reason, log: logFile };
+    };
+    const command = argv.join(' ');
+    if (result.status !== 'pass') {
+      const why = result.status === 'timeout' ? `timed out after ${timeoutS} s` : result.status === 'error' ? `could not run (${result.error})` : `exited ${result.exit_code}`;
+      const tail = tailOf(logFile);
+      return finish(false, `setup (${command}) ${why}${tail ? '\n' + tail : ''}`);
+    }
+    const status = gitSafe(worktree, ['status', '--porcelain', '--ignore-submodules=all']);
+    if (status.status !== 0) return finish(false, `setup (${command}) finished, but git could not check the worktree afterwards (${status.stderr?.slice(0, 200) || 'exit ' + status.status})`);
+    const changed = status.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (changed.length) {
+      return finish(false, `setup (${command}) changed files git tracks or would add: ${changed.slice(0, 5).join('; ')}${changed.length > 5 ? ` and ${changed.length - 5} more` : ''}. Setup may only create git-ignored files (for example node_modules or .venv); add what it creates to .gitignore.`);
+    }
+    const snapshot = snapshotIgnored(worktree);
+    if (!snapshot.ok) return finish(false, `setup (${command}) finished, but its output could not be recorded: ${snapshot.error}`);
+    fs.mkdirSync(path.dirname(this.setupBaselineFile(run)), { recursive: true });
+    fs.writeFileSync(this.setupBaselineFile(run), JSON.stringify(snapshot.files));
+    return finish(true, '', { ignored_files: snapshot.count, ignored_bytes: snapshot.bytes });
+  }
+
   async start(item, project, run, route, settings) {
     const actor = settings.actor;
     const wp = item.id;
@@ -256,6 +306,17 @@ export class Dispatcher {
     const wt = await this.call(['worktree', 'create', '--repo', project.repo, '--wp', wp, '--slice', run.slice, '--by', actor, '--base', project.default_branch]);
     if (!wt.ok || !wt.out?.path) throw new Error(`worktree create failed: ${wt.error || wt.text.slice(0, 300)}`);
     this.store.updateRun(run.id, { worktree: wt.out.path });
+
+    // The project's setup command (`npm ci`, `uv sync`) runs once in the fresh worktree, before the worker exists.
+    if (project.setup) {
+      const setup = await this.runSetup(item, project, run, wt.out.path, settings);
+      if (!setup.ok) {
+        this.store.updateRun(run.id, { state: 'abandoned', ended_at: new Date(this.now()).toISOString(), result: { setup: 'failed', log: setup.log } });
+        this.store.transition(item.id, 'parked', { actor, parkTag: 'setup-failed', reason: setup.reason });
+        await this.releaseClaim(item, settings);
+        return;
+      }
+    }
 
     const handoffDir = path.join(this.dir, 'handoffs');
     fs.mkdirSync(handoffDir, { recursive: true });
