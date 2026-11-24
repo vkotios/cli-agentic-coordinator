@@ -153,3 +153,11 @@ tripped independently: a symlinked stored `common_dir` also fails the later 'com
 - Low, MCP `cleanup` without `wp` and without `reverify` now fails with the CLI's `missing-arg` instead of the MCP layer's `invalid-arguments`
   (the `required: ['wp']` entry was dropped so `--reverify` can be called alone). Check automation that matches the old error shape.
 
+FU-10 update (slice-scoped reviews of s3, s4, s5b, s5c, 2026-11-24; all Low, filed, not fixed):
+- `processBlock` labels every `dependentRunBlock` failure `process-liveness`, including unreadable run inventory or incomplete retirement; `blocked_by.resource`
+  is omitted when the blocking run is a review run without `scope.worktree_id`; in human output the blocked-by line prints at the top level and again per resource.
+- `--reverify`: stray positionals and unknown flags are ignored; a repeat reverify overwrites `reverified_*` (audit trail of the first adoption is lost);
+  a record with a non-string `path` throws a TypeError instead of an OrchError; negative paths (flag combinations, missing resource, closed-package authority,
+  text output) untested; top-level usage text (`orch/bin/orch.mjs`, README) does not mention `--reverify`.
+- Owner decision filed separately: docs/OPEN_QUESTIONS.md OQ-1 (continuity evidence for ordinary worktrees).
+
