@@ -57,7 +57,7 @@ logs `Auth mode is unspecified, skipping fetchAvailableModels`). That line is no
 The model that was selected shows up in `Propagating selected model override to backend: label="Gemini 4 Argon
 (Medium)"` in the run's `agy.log`, and orch records `model_actual: null` for all agy runs (adapter cannot read
 it). Remaining gap: orch cannot machine-verify an agy model, so reviewer-differs-from-implementer rests on the
-requested id plus that log line. Probe 2026-11-20 (run 20261120-211251-3a68d6, `--model "Gemini 4 Argon (Medium)"`,
+requested id plus that log line. Probe 2026-11-20 (a one-word-prompt probe run, `--model "Gemini 4 Argon (Medium)"`,
 one-word prompt): the display-label form logs the identical `not in local config, defaulting to CCPA` line and the
 same `label="Gemini 4 Argon (Medium)"` propagation as the slug form, so passing the display name changes nothing
 observable and the warning is unconditional. Open: add argon to `orch/roster.json` (it is accepted without a roster entry

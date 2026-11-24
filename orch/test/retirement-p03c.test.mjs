@@ -109,8 +109,8 @@ test('P03c: pending original log accepts device changes but rejects inode or bir
   const save = (part) => { expected.identity = incrementStamp(original, part); journal.files['keeper.ndjson'].identity = expected.identity; entry.sha256 = digest(JSON.stringify(entry.data)); journal.archive_sha256 = digest(JSON.stringify(entry)); fs.writeFileSync(journalFile, JSON.stringify(journal)); };
   const args = { _: [f.id], 'state-root': f.c.stateRoot, stream: 'keeper' }, lines = [];
   save(0); const before = fs.readFileSync(journalFile);
-  cmdLog(args, { log: (line) => lines.push(line) }); assert.match(lines.join('\n'), /worker-exit/); assert.deepEqual(fs.readFileSync(journalFile), before);
-  for (const part of [1, 2]) { save(part); assert.throws(() => cmdLog(args, { log() {} }), { code: 'archive-changed', message: 'original log conflicts with compact evidence' }); }
+  cmdLog(args, /** @type {any} */ ({ log: (line) => lines.push(line) })); assert.match(lines.join('\n'), /worker-exit/); assert.deepEqual(fs.readFileSync(journalFile), before);
+  for (const part of [1, 2]) { save(part); assert.throws(() => cmdLog(args, /** @type {any} */ ({ log() {} })), { code: 'archive-changed', message: 'original log conflicts with compact evidence' }); }
 });
 
 test('P03c: device change permits collection and automatic sealing in one maintenance', async (t) => {
