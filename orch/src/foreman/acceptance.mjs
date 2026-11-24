@@ -176,19 +176,39 @@ function fileDigest(file) {
 const EXTERNAL_MAX_ENTRIES = 20000;
 
 /**
- * A digest of a directory tree (or a single file) that a baseline entry depends on: names, symlink texts, sizes and
- * contents. Nested symlinks are recorded by their text, not followed. Spends the shared hashing budget; null when the
- * target has too many entries, is too big for what is left of the budget, or cannot be read (so it cannot be verified).
- * @param {string} target
- * @param {{left: number}} ctx
+ * A digest of a directory tree (or a single file) that a baseline entry depends on: names, sizes and contents, with every
+ * symlink inside it followed and digested too (its text, then what it resolves to), so nothing a link leads to can change
+ * unseen. A target is digested once per check (`ctx.cache`, by real path) and a loop is cut by `visited`. Spends the shared
+ * hashing budget; null when the tree has too many entries, is too big for what is left of the budget, or cannot be read
+ * (so it cannot be verified).
+ * @param {string} target a real path
+ * @param {{left: number, entriesLeft: number, cache: Map<string, string | null>}} ctx
+ * @param {Set<string>} [visited]
+ * @returns {string | null}
  */
-function treeDigest(target, ctx) {
+function treeDigest(target, ctx, visited = new Set()) {
+  if (ctx.cache.has(target)) return ctx.cache.get(target) ?? null;
+  visited.add(target);
   const hash = crypto.createHash('sha256');
   let entries = 0;
   const walk = (p, name) => {
-    if (++entries > EXTERNAL_MAX_ENTRIES) return false;
+    if (++entries > EXTERNAL_MAX_ENTRIES || --ctx.entriesLeft < 0) return false;
     const st = fs.lstatSync(p);
-    if (st.isSymbolicLink()) { hash.update(`L${name}\0${fs.readlinkSync(p)}\0`); return true; }
+    if (st.isSymbolicLink()) {
+      hash.update(`L${name}\0${fs.readlinkSync(p)}\0`);
+      let real;
+      try {
+        real = fs.realpathSync(p);
+      } catch {
+        hash.update('dangling\0');
+        return true;
+      }
+      if (visited.has(real)) { hash.update('loop\0'); return true; } // already being digested further up
+      const inner = treeDigest(real, ctx, visited);
+      if (!inner) return false;
+      hash.update(`${inner}\0`);
+      return true;
+    }
     if (st.isDirectory()) {
       hash.update(`D${name}\0`);
       for (const entry of fs.readdirSync(p).sort()) if (!walk(path.join(p, entry), `${name}/${entry}`)) return false;
@@ -202,11 +222,15 @@ function treeDigest(target, ctx) {
     }
     return false; // a socket, device or pipe: not something a baseline can vouch for
   };
+  let digest = null;
   try {
-    return walk(target, '') ? hash.digest('hex') : null;
+    digest = walk(target, '') ? hash.digest('hex') : null;
   } catch {
-    return null;
+    digest = null;
   }
+  visited.delete(target);
+  ctx.cache.set(target, digest);
+  return digest;
 }
 
 /**
@@ -217,11 +241,11 @@ function treeDigest(target, ctx) {
  * `expected` is the baseline's signature: a size that no longer matches is reported without reading the file.
  * @param {string} dir
  * @param {string} rel
- * @param {{root: string, left: number}} ctx `root` is the real path of `dir`; `left` is the remaining hashing budget in bytes
+ * @param {{root: string, left: number, entriesLeft: number, cache: Map<string, string | null>}} ctx from `hashingContext`: `left` is the remaining hashing budget in bytes
  * @param {string} [expected]
  * @returns {string | null}
  */
-function signatureOf(dir, rel, ctx, expected) {
+export function signatureOf(dir, rel, ctx, expected) {
   const full = path.join(dir, rel);
   let st;
   try {
@@ -237,9 +261,10 @@ function signatureOf(dir, rel, ctx, expected) {
     } catch {
       return `${text}|dangling`;
     }
-    if (insideRoot(ctx.root, real)) return text; // what it points at is itself an entry that is checked (ignored) or watched (tracked)
+    // Always digest what it resolves to, inside the worktree or not: an in-tree target is not necessarily checked by anything
+    // else (a tolerated cache directory, an allowlisted path and `.git` are all skipped by the ignored-file check).
     const digest = treeDigest(real, ctx);
-    return digest ? `${text}|outside:${digest}` : null;
+    return digest ? `${text}|to:${digest}` : null;
   }
   if (st.isFile()) {
     const recorded = expected === undefined ? null : /^(\d+):/.exec(expected);
@@ -255,10 +280,11 @@ function signatureOf(dir, rel, ctx, expected) {
   return null;
 }
 
-function hashingContext(dir, left) {
+/** The state one check or snapshot shares: the hashing budget, an entry budget and the digests already computed. */
+export function hashingContext(dir, left) {
   let root = dir;
   try { root = fs.realpathSync(dir); } catch { /* use the path as given */ }
-  return { root, left };
+  return { root, left, entriesLeft: 400000, cache: new Map() };
 }
 
 /**

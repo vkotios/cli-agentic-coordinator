@@ -13,7 +13,7 @@ import { makeCall } from '../src/foreman/engine.mjs';
 import { addProject, setProjectSetup, enqueue, summary } from '../src/foreman/api.mjs';
 import { validateSetup, PARK_TAGS } from '../src/foreman/schema.mjs';
 import { setupEnv, safeEnv } from '../src/foreman/env.mjs';
-import { launchPlan, runCheck, snapshotIgnored, ignoredOutsideAllowlist, resolveExecutable } from '../src/foreman/acceptance.mjs';
+import { launchPlan, runCheck, snapshotIgnored, ignoredOutsideAllowlist, resolveExecutable, signatureOf, hashingContext } from '../src/foreman/acceptance.mjs';
 
 const NODE_OK = ['node', '-e', "process.exit(require('fs').existsSync('out.txt') ? 0 : 1)"];
 const MAKE_DEP = ['node', '-e', "const fs=require('fs');fs.mkdirSync('node_modules',{recursive:true});fs.writeFileSync('node_modules/dep.js','original')"];
@@ -321,4 +321,56 @@ test('dispatcher: a baseline file that no longer matches the digest the Foreman 
   const rejected = store.events().filter((e) => e.kind === 'setup-baseline-rejected');
   assert.equal(rejected.length, 2);
   assert.deepEqual(rejected.map((e) => e.data.reason), ['no digest recorded', 'digest mismatch']);
+});
+
+test('acceptance: a symlink is vouched for by what it resolves to, in the tree or not, and through nested links', (t) => {
+  const base = path.join(TEST_ROOT, `fm-baseline4-${process.pid}-${Date.now()}`);
+  const dir = path.join(base, 'repo');
+  makeRepo(dir, { '.gitignore': 'node_modules/\n.cache/\n', 'a.txt': '1\n' });
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const kind = process.platform === 'win32' ? 'junction' : 'dir';
+  const link = (target, at) => { try { fs.symlinkSync(target, at, kind); return true; } catch { return false; } };
+  const sig = (rel) => signatureOf(dir, rel, hashingContext(dir, 1024 ** 3));
+
+  // 1. a link inside the worktree into a tolerated cache directory: the ignored-file check skips that directory, so the link must vouch for it
+  fs.mkdirSync(path.join(dir, '.cache', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.cache', 'tools', 'x.js'), 'tool v1');
+  fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+  const inTree = link(path.join(dir, '.cache', 'tools'), path.join(dir, 'node_modules', 'tools'));
+  if (inTree) {
+    const before = sig('node_modules/tools');
+    assert.match(before, /^link:.*\|to:[0-9a-f]{64}$/);
+    assert.equal(sig('node_modules/tools'), before, 'stable while nothing changes');
+    fs.writeFileSync(path.join(dir, '.cache', 'tools', 'x.js'), 'tool v2');
+    assert.notEqual(sig('node_modules/tools'), before, 'a change to an in-tree target is visible through the link');
+  }
+
+  // 2. a link to a tree that itself contains a link to somewhere else outside: the second hop is followed too
+  const far = path.join(base, 'far');
+  fs.mkdirSync(far, { recursive: true });
+  fs.writeFileSync(path.join(far, 'deep.js'), 'deep v1');
+  const near = path.join(base, 'near');
+  fs.mkdirSync(near, { recursive: true });
+  fs.writeFileSync(path.join(near, 'near.js'), 'near v1');
+  const nested = link(far, path.join(near, 'hop'));
+  const outer = link(near, path.join(dir, 'node_modules', 'outer'));
+  if (nested && outer) {
+    const before = sig('node_modules/outer');
+    fs.writeFileSync(path.join(far, 'deep.js'), 'deep v2 (planted)');
+    assert.notEqual(sig('node_modules/outer'), before, 'a change two links away is visible');
+    fs.writeFileSync(path.join(far, 'deep.js'), 'deep v1');
+    assert.equal(sig('node_modules/outer'), before);
+  }
+
+  // 3. a link loop does not hang or throw; it is cut
+  const loopA = path.join(base, 'loop-a');
+  const loopB = path.join(base, 'loop-b');
+  fs.mkdirSync(loopA, { recursive: true });
+  fs.mkdirSync(loopB, { recursive: true });
+  if (link(loopB, path.join(loopA, 'to-b')) && link(loopA, path.join(loopB, 'to-a')) && link(loopA, path.join(dir, 'node_modules', 'loop'))) {
+    assert.match(sig('node_modules/loop'), /^link:/);
+  }
+  if (!inTree || !nested || !outer) t.diagnostic('this platform would not create some of the directory links; those parts were skipped');
+  // 4. a budget too small for the target means it cannot be vouched for
+  if (inTree) assert.equal(signatureOf(dir, 'node_modules/tools', hashingContext(dir, 1)), null);
 });
