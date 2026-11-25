@@ -5,7 +5,7 @@
 // store (items, run rows) and in orch's own records, so a restart simply calls `tick()` again:
 // `reconcile()` finds what was running and carries on from the evidence, never from memory.
 //
-// Nothing here merges, pushes or deletes. A verified item stops at `needs-review` with its
+// A verified item stops at `needs-review` with its
 // worktree retained; a failed one is parked with a tag and a reason. A run is never cancelled
 // on a number (tier-1 signals only raise a check; see progress.mjs).
 import fs from 'node:fs';
@@ -16,7 +16,7 @@ import { getAdapter } from '../adapters/index.mjs';
 import { laneOccupancy } from '../commands.mjs';
 import { foremanDir } from './store.mjs';
 import { readSettings } from './settings.mjs';
-import { runAcceptance, runCheck, tailOf, ignoredOutsideAllowlist, snapshotIgnored } from './acceptance.mjs';
+import { runAcceptance, runCheck, tailOf, ignoredOutsideAllowlist, purgeIgnored, snapshotIgnored } from './acceptance.mjs';
 import { setupEnv } from './env.mjs';
 import { gitSafe } from './git.mjs';
 import { needsReview } from './schema.mjs';
@@ -152,7 +152,16 @@ export class Dispatcher {
     }
     // orch's scope guard sees tracked and untracked files but not git-ignored ones; a worker could
     // hide code there for an acceptance command to run. Nothing executes until that is ruled out.
-    const ignored = ignoredOutsideAllowlist(run.worktree, item.spec.allowlist, settings.toleratedIgnored, this.setupBaseline(run));
+    const baseline = this.setupBaseline(run);
+    const purged = purgeIgnored(run.worktree, settings.purgeIgnored, baseline);
+    if (purged.count) {
+      const { count, bytes, paths } = purged;
+      this.store.event('purged', { item: item.id, run: run.run_id, actor, data: { count, bytes, paths } });
+    }
+    const ignored = purged.error
+      ? { ok: false, error: purged.error, offending: [] }
+      : ignoredOutsideAllowlist(run.worktree, item.spec.allowlist, settings.toleratedIgnored, baseline);
+    ignored.offending = [...new Set([...purged.offending, ...ignored.offending])];
     if (!ignored.ok || ignored.offending.length) {
       this.store.event('ignored-files', { item: item.id, run: run.run_id, actor, data: { error: ignored.error, offending: ignored.offending.slice(0, 20) } });
       this.store.transition(item.id, 'parked', {

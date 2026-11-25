@@ -233,7 +233,7 @@ test('dispatcher: a git-ignored file the worker planted parks the item before an
   const saved = {};
   for (const key of ['ORCH_STATE_ROOT', 'ORCH_LANE_ID', 'ORCH_ALLOW_FAKE', 'ORCH_FAKE_WORKER']) { saved[key] = process.env[key]; process.env[key] = c.env[key]; }
   const repo = path.join(c.base, 'repo');
-  makeRepo(repo, { 'README.md': 'r\n', '.gitignore': '*.log\n.pytest_cache/\n' });
+  makeRepo(repo, { 'README.md': 'r\n', '.gitignore': '*.log\n.pytest_cache/\n*.tsbuildinfo\n' });
   const store = Store.open(c.stateRoot);
   t.after(() => { store.close(); c.cleanup(); for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   addProject(store, { id: 'alpha', repo }, 'test');
@@ -251,6 +251,20 @@ test('dispatcher: a git-ignored file the worker planted parks the item before an
   const allowed = enqueue(store, item({ title: 'ignored file is allowed', allowlist: ['hidden.log'], route: { cli: 'fake', model: 'localai/qwen3-coder-30b', flags: ['--write-file', 'hidden.log'] }, acceptance: [check] }), 'test');
   const ok = await drive(d, store, allowed.id, ['parked', 'needs-review']);
   assert.equal(ok.state, 'needs-review', ok.park_reason);
+
+  const filename = 'tsconfig.tsbuildinfo';
+  const absent = { kind: 'command', argv: ['node', '-e', `process.exit(Number(require('fs').existsSync(${JSON.stringify(filename)})))`] };
+  const cache = enqueue(store, item({
+    title: 'worker cache is purged before acceptance',
+    route: { cli: 'fake', model: 'localai/qwen3-coder-30b', flags: ['--write-file', filename] },
+    acceptance: [absent],
+  }), 'test');
+  const verified = await drive(d, store, cache.id, ['parked', 'needs-review']);
+  assert.equal(verified.state, 'needs-review', verified.park_reason);
+  const purged = store.events({ item: cache.id }).find((e) => e.kind === 'purged');
+  assert.equal(purged.data.count, 1);
+  assert.ok(purged.data.bytes > 0);
+  assert.deepEqual(purged.data.paths, [filename]);
 });
 
 test('acceptance: ignored-file listing honours the allowlist and the tolerated cache directories', async (t) => {

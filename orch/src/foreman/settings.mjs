@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = {
   maxLogBytes: 262144,
   /** Ignored directories a worker may create without it being a scope violation (tests often make these). */
   toleratedIgnored: ['.pytest_cache/', '.mypy_cache/', '.ruff_cache/', '.cache/'],
+  /** Ignored worker caches to remove before acceptance, at any depth. */
+  purgeIgnored: ['__pycache__/', 'node_modules/.vite/', 'tsconfig.tsbuildinfo'],
   /** Gateway base URL (for example http://gateway.example:9000); null turns IGM event reading off. */
   igmUrl: null,
   /** The environment variable holding the gateway control key. The key itself is never stored. */
@@ -30,6 +32,10 @@ export function saveSettings(store, patch, actor) {
   const current = store.getSetting('foreman', {}).value || {};
   for (const key of Object.keys(patch)) {
     if (!(key in DEFAULT_SETTINGS)) throw new Error(`unknown Foreman setting: ${key}`);
+  }
+  if (Object.hasOwn(patch, 'purgeIgnored') &&
+      (!Array.isArray(patch.purgeIgnored) || !patch.purgeIgnored.every((pattern) => typeof pattern === 'string'))) {
+    throw new Error('purgeIgnored must be a JSON array of strings');
   }
   return store.setSetting('foreman', { ...current, ...patch }, actor);
 }

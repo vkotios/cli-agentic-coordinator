@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 
 import { safeEnv } from './env.mjs';
-import { gitSafe } from './git.mjs';
+import { gitSafe, openInspection } from './git.mjs';
 
 export { safeEnv };
 
@@ -287,6 +287,190 @@ export function hashingContext(dir, left) {
   return { root, left, entriesLeft: 400000, cache: new Map() };
 }
 
+const IGNORED_BUFFER = 256 * 1024 * 1024;
+
+function gitFailure(action, r) {
+  return `git could not ${action} (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`;
+}
+
+function listIgnored(dir, timeout) {
+  const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout, maxBuffer: IGNORED_BUFFER });
+  return r.status === 0
+    ? { files: r.stdout.split('\0').filter(Boolean), error: null }
+    : { files: [], error: gitFailure('list ignored files', r) };
+}
+
+function worktreePath(root, real) {
+  const rel = path.relative(root, real).split(path.sep).join('/');
+  if (!rel || rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) return null;
+  // Repository metadata is not covered by the scope guard.
+  return rel.split('/').some((part) => part.toLowerCase() === '.git') ? null : rel;
+}
+
+function gitQuoted(name) {
+  // check-ignore quotes control characters, quotes and backslashes even with core.quotePath=false.
+  const escapes = { '\x07': 'a', '\b': 'b', '\t': 't', '\n': 'n', '\v': 'v', '\f': 'f', '\r': 'r', '"': '"', '\\': '\\' };
+  const quoted = name.replace(/[\x01-\x1f\x7f"\\]/g, (c) => '\\' + (escapes[c] ?? c.charCodeAt(0).toString(8).padStart(3, '0')));
+  return quoted === name ? name : '"' + quoted + '"';
+}
+
+/** Resolve a directory once, then inspect each child at its resolved parent for additional links. */
+function workspaceAliases(dir, root, files) {
+  const directories = new Map([['.', root]]);
+  const inspect = (full) => {
+    try {
+      const stat = fs.lstatSync(full);
+      if (!stat.isSymbolicLink()) return { real: full, directory: stat.isDirectory() };
+      const real = fs.realpathSync.native(full);
+      return { real, directory: fs.lstatSync(real).isDirectory() };
+    } catch {
+      return null; // An unresolved path must still go through the ignored-file check.
+    }
+  };
+  const resolveDirectory = (name) => {
+    if (directories.has(name)) return directories.get(name);
+    const parent = resolveDirectory(path.posix.dirname(name));
+    const real = parent && inspect(path.join(parent, path.posix.basename(name)))?.real;
+    directories.set(name, real);
+    return real;
+  };
+
+  const aliases = new Map();
+  for (const file of files) {
+    const name = file.replace(/\/$/, '');
+    const parent = resolveDirectory(path.posix.dirname(name));
+    const entry = parent && inspect(path.join(parent, path.posix.basename(name)));
+    if (!entry || path.relative(path.join(root, name), entry.real) === '') continue;
+    const target = worktreePath(root, entry.real);
+    if (target) {
+      // A directory-only ignore rule also applies to the target of a directory link.
+      // Prefix with ./ so Git treats a leading colon as part of the filename.
+      const key = './' + target + (entry.directory ? '/' : '');
+      if (!aliases.has(key)) aliases.set(key, []);
+      aliases.get(key).push(file);
+    }
+  }
+  if (!aliases.size) return { skipped: new Set(), error: null };
+
+  const inspection = openInspection(dir);
+  if ('error' in inspection) return { skipped: new Set(), error: inspection.error };
+  const ignored = new Set();
+  try {
+    let batch = [];
+    let length = 0;
+    const checkBatch = () => {
+      const r = inspection.run(['-c', 'core.quotePath=false', 'check-ignore', '--', ...batch], { timeout: 30000 });
+      if (r.status !== 0 && r.status !== 1) return gitFailure('check linked targets', r);
+      const queried = new Set(batch.map(gitQuoted));
+      for (const name of r.stdout.split('\n').filter(Boolean)) {
+        if (!queried.has(name)) return 'git returned an unexpected path while checking linked targets';
+        ignored.add(name);
+      }
+      return null;
+    };
+    for (const target of aliases.keys()) {
+      // Leave room for command-line quoting and Git's own arguments on Windows.
+      const size = Buffer.byteLength(target) + 3;
+      if (length + size > 12000 && batch.length) {
+        const error = checkBatch();
+        if (error) return { skipped: new Set(), error };
+        batch = [];
+        length = 0;
+      }
+      batch.push(target);
+      length += size;
+    }
+    if (batch.length) {
+      const error = checkBatch();
+      if (error) return { skipped: new Set(), error };
+    }
+  } finally {
+    inspection.close();
+  }
+  const skipped = new Set();
+  for (const [target, names] of aliases) {
+    if (!ignored.has(gitQuoted(target))) for (const name of names) skipped.add(name);
+  }
+  return { skipped, error: null };
+}
+
+/** Remove ignored worker caches, keeping setup's unchanged files and refusing unsafe paths. */
+export function purgeIgnored(dir, patterns, baseline = null, { maxBytes = 4 * 1024 ** 3 } = {}) {
+  const result = { count: 0, bytes: 0, paths: [], offending: [], error: null };
+  if (!patterns.length) return result;
+  const { files, error } = listIgnored(dir, 30000);
+  if (error) return { ...result, error };
+  const ctx = hashingContext(dir, maxBytes);
+  const ignored = new Set(files);
+  const removals = new Map();
+  const emptyDirs = new Set();
+  const matching = patterns.filter(Boolean).map((pattern) => pattern.replace(/\\/g, '/'));
+  const unchanged = (name) => {
+    if (!baseline || !Object.hasOwn(baseline, name)) return false;
+    const sig = signatureOf(dir, name, ctx, baseline[name]);
+    if (sig === null) throw new Error('cannot verify the setup file before purging');
+    return sig === baseline[name];
+  };
+
+  for (const name of files) {
+    const rel = name.replace(/\/$/, '');
+    const parents = '/' + path.posix.dirname(rel) + '/';
+    const basename = path.posix.basename(rel);
+    const matches = (directory) => matching.some((p) => p.endsWith('/')
+      ? parents.includes('/' + p) || (directory && ('/' + rel + '/').endsWith('/' + p))
+      : basename === p);
+    if (!matches(true)) continue;
+
+    const full = path.join(dir, rel);
+    try {
+      const st = fs.lstatSync(full);
+      if (!matches(st.isDirectory() || (st.isSymbolicLink() && fs.statSync(full).isDirectory()))) continue;
+      const real = fs.realpathSync.native(full);
+      const realParent = fs.realpathSync.native(path.dirname(full));
+      // Unlinking a symlink removes the link entry. For a file below a junction,
+      // require Git to have listed the physical entry itself as ignored.
+      const entry = worktreePath(ctx.root, path.join(realParent, basename));
+      if (!worktreePath(ctx.root, real) || !entry) {
+        result.offending.push(name);
+        continue;
+      }
+      if (!ignored.has(entry) && !ignored.has(entry + '/')) continue;
+      if (unchanged(name) || (entry !== name && unchanged(entry))) continue;
+      if (st.isFile() || st.isSymbolicLink()) removals.set(entry, { name, size: st.size });
+      else result.offending.push(name);
+    } catch {
+      result.offending.push(name);
+    }
+  }
+  for (const [entry, { name, size }] of removals) {
+    const full = path.join(ctx.root, entry);
+    try {
+      const parent = path.dirname(full);
+      if (path.relative(parent, fs.realpathSync.native(parent)) !== '' ||
+          !worktreePath(ctx.root, fs.realpathSync.native(full))) {
+        result.offending.push(name);
+        continue;
+      }
+      fs.unlinkSync(full);
+      result.count++;
+      result.bytes += size;
+      if (result.paths.length < 50) result.paths.push(entry);
+      emptyDirs.add(parent);
+    } catch {
+      result.offending.push(name);
+    }
+  }
+  for (const parent of emptyDirs) {
+    for (let dir = parent; worktreePath(ctx.root, dir); dir = path.dirname(dir)) {
+      try {
+        if (path.relative(dir, fs.realpathSync.native(dir)) !== '') break;
+        fs.rmdirSync(dir);
+      } catch { break; } // Nonempty directories and links are left in place.
+    }
+  }
+  return result;
+}
+
 /**
  * The git-ignored files a worktree holds right now, each with a signature (size and sha-256, or a symlink's target).
  * Taken after a project's setup command ran: the setup legitimately creates ignored files (`node_modules`, a venv),
@@ -295,13 +479,15 @@ export function hashingContext(dir, left) {
  * @returns {{ok: boolean, error?: string, files?: Record<string, string>, count?: number, bytes?: number}} `files`, `count` and `bytes` are set when `ok`, `error` when not
  */
 export function snapshotIgnored(dir, { maxFiles = 200000, maxBytes = 4 * 1024 ** 3 } = {}) {
-  const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 120000, maxBuffer: 256 * 1024 * 1024 });
-  if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})` };
-  const names = r.stdout.split('\0').filter(Boolean);
+  const listed = listIgnored(dir, 120000);
+  if (listed.error) return { ok: false, error: listed.error };
+  const ctx = hashingContext(dir, maxBytes);
+  const { skipped, error } = workspaceAliases(dir, ctx.root, listed.files);
+  if (error) return { ok: false, error };
+  const names = listed.files.filter((name) => !skipped.has(name));
   if (names.length > maxFiles) return { ok: false, error: `setup left ${names.length} ignored files (the limit is ${maxFiles})` };
   /** @type {Record<string, string>} */
   const files = Object.create(null);
-  const ctx = hashingContext(dir, maxBytes);
   for (const name of names) {
     const sig = signatureOf(dir, name, ctx);
     if (sig === null) return { ok: false, error: `setup left "${name}", which cannot be recorded (a special file, or more than ${Math.round(maxBytes / 1024 ** 3)} GiB or ${EXTERNAL_MAX_ENTRIES} entries to hash)` };
@@ -322,13 +508,14 @@ export function snapshotIgnored(dir, { maxFiles = 200000, maxBytes = 4 * 1024 **
  */
 export function ignoredOutsideAllowlist(dir, allowlist, tolerated = [], baseline = null, { maxBytes = 4 * 1024 ** 3 } = {}) {
   const ctx = hashingContext(dir, maxBytes); // one budget for everything hashed in this check
-  const r = gitSafe(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], { timeout: 30000, maxBuffer: 256 * 1024 * 1024 });
-  if (r.status !== 0) return { ok: false, error: `git could not list ignored files (${r.error?.message || r.stderr?.slice(0, 200) || 'exit ' + r.status})`, offending: [] };
-  const files = r.stdout.split('\0').filter(Boolean);
+  const { files, error } = listIgnored(dir, 30000);
+  if (error) return { ok: false, error, offending: [] };
+  const aliases = workspaceAliases(dir, ctx.root, files);
+  if (aliases.error) return { ok: false, error: aliases.error, offending: [] };
   // Tolerated cache directories count only at the worktree root: a `.cache` folder deeper down
   // could hide code, and a nested one the item really needs can be named in its allowlist.
   const offending = files.filter((f) => {
-    if (underAllowlist(f, allowlist) || tolerated.some((t) => underAllowlist(f, [t]))) return false;
+    if (aliases.skipped.has(f) || underAllowlist(f, allowlist) || tolerated.some((t) => underAllowlist(f, [t]))) return false;
     if (baseline && Object.hasOwn(baseline, f)) {
       const sig = signatureOf(dir, f, ctx, baseline[f]);
       return sig === null || sig !== baseline[f]; // what cannot be verified is not accepted

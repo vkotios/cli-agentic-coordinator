@@ -97,6 +97,7 @@ export async function cmdForeman(args, io = console) {
         if (args.igmUrl !== undefined) patch.igmUrl = args.igmUrl === 'off' ? null : String(args.igmUrl);
         if (args.progress) patch.progress = JSON.parse(args.progress);
         if (args.defaultRoute) patch.defaultRoute = JSON.parse(args.defaultRoute);
+        if (args.purgeIgnored !== undefined) patch.purgeIgnored = JSON.parse(args.purgeIgnored);
         if (Object.keys(patch).length) saveSettings(store, patch, actor);
         const now = readSettings(store);
         out(args, io, now, Object.entries(now).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n'));
