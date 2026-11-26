@@ -1,7 +1,7 @@
 // agy (Gemini) adapter (slice 2). CLI facts: docs/CLI_GUIDE.md "agy" + `agy --help`
 // (v1.2.5, read not run).
 //
-//  - `agy.exe` spawned directly: `--model <m> --mode plan --dangerously-skip-permissions
+//  - `agy.exe` spawned directly: `--model <m> --mode <accept-edits|plan> --dangerously-skip-permissions
 //    --print-timeout <t> --log-file <run dir>/agy.log -p <prompt>`.
 //  - NEVER `--sandbox` (it hangs on the first shell command, and combined with the
 //    skip-permissions flag it is bypassed anyway). A `--flag --sandbox...` is refused.
@@ -136,7 +136,7 @@ export default {
     fs.writeFileSync(stdinFile, '');
     const args = [
       '--model', String(ctx.model),
-      '--mode', 'plan',
+      '--mode', ctx.role === 'implement' ? 'accept-edits' : 'plan',
       '--dangerously-skip-permissions',
       '--print-timeout', String(printTimeout),
       '--log-file', logFile,

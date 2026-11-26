@@ -67,7 +67,7 @@ escalates.
   | [opencode](https://opencode.ai) | local models through an OpenAI-compatible gateway (llama.cpp, llama-swap, LocalAI, ...) | npm package `opencode-ai`; orch launches the real `opencode.exe`, not the `.cmd` shim |
   | vibe (Mistral) | cloud implementer / reviewer | the model is selected through the worktree's `.vibe/config.toml` |
   | codex (OpenAI) | cloud implementer / reviewer | `codex exec`, model always pinned |
-  | agy (Gemini) | cloud reviewer | print mode, plan mode |
+  | agy (Gemini) | cloud implementer and reviewer | print mode with `accept-edits` for implementation and `plan` for review |
   | GitHub Copilot CLI | subscription implementer / reviewer | direct native executable; explicit model or Auto access route |
   | Muse Code (Meta) | subscription implementer / reviewer | native versioned executable; saved device sign-in |
   | aider | cloud implementer (BYOK/API-key) | headless `--message-file`; model always pinned; never commits (review role unsupported) |

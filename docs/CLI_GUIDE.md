@@ -156,12 +156,13 @@ shims npm installs are deliberately **not** accepted (see opencode below).
   a turn can exceed the threshold before the next check. Select turn/token limits and quota
   handling appropriate to the configured account; do not classify every Vibe route as metered.
 
-## agy (Gemini)
+## agy (Gemini implementer and reviewer)
 
 - Observed on **1.2.5**.
-- Launch (verified): `agy.exe --model <model> --mode plan --dangerously-skip-permissions
-  --print-timeout <t> --log-file <run dir>\agy.log -p <prompt>`, from a throwaway detached worktree only.
-  The skip-permissions flag is required headless; allow-rules were ignored (upstream bug).
+- Launch: `agy.exe --model <model> --mode <mode> --dangerously-skip-permissions
+  --print-timeout <t> --log-file <run dir>\agy.log -p <prompt>`. `orch run` uses `accept-edits`
+  in the implementation worktree. `orch review` uses `plan` in a throwaway detached worktree.
+  The skip-permissions flag is required headless; allow-rules were ignored on 1.2.5.
 - **Never `--sandbox`** (verified): it hangs on the first shell command, and combined with the flag above
   it is bypassed anyway. orch refuses `--flag --sandbox`.
 - The prompt goes on argv to the real `.exe`: direct `.exe` argv survived multi-line prompts of 32 000
