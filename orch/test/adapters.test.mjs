@@ -171,7 +171,8 @@ test('S7 agy: argv exactly as specified; never --sandbox; stdin empty; too-long 
     assert.ok(!b.args.some((a) => /^--sandbox/.test(a)), 'never --sandbox');
     assert.equal(b.stdinFile, path.join(rd, 'stdin-empty.txt'));
     assert.equal(fs.readFileSync(b.stdinFile, 'utf8'), '', 'stdin is empty: the prompt is not delivered twice');
-    const b2 = agy.build({ model: 'm', dir: wt, flags: ['--effort', 'high'], promptPath: path.join(rd, 'prompt.txt'), runDir: rd, printTimeout: '10m' });
+    const b2 = agy.build({ model: 'gemini-4-neon-high', dir: wt, flags: ['--effort', 'high'], promptPath: path.join(rd, 'prompt.txt'), runDir: rd, printTimeout: '10m', role: 'implement' });
+    assert.deepEqual(b2.args.slice(0, 4), ['--model', 'gemini-4-neon-high', '--mode', 'accept-edits']);
     assert.deepEqual(b2.args.slice(5, 7), ['--print-timeout', '10m']);
     assert.deepEqual(b2.args.slice(-4), ['--effort', 'high', '-p', prompt]);
     for (const f of ['--sandbox', '--sandbox=true', '--mode', '-p', '--log-file']) {
